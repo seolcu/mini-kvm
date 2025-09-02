@@ -24,3 +24,8 @@
 | 15주 | 12월 8일      | 문서화 및 프로젝트 마무리                              | 최종 문서, Git 원격 저장소            |
 | 16주 | 12월 15일     | 문서화 및 프로젝트 마무리                              | 최종 문서, Git 원격 저장소            |
 | 기말 | **12월 19일** | 결과 보고서, 연구 노트, 기타 증빙 제출                 | **결과 보고서, 연구 노트, 기타 증빙** |
+
+## References
+
+- [KVM Documentation](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
+- [QEMU Repository](https://gitlab.com/qemu-project/qemu)
