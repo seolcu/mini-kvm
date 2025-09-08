@@ -29,10 +29,16 @@
 
 ### Repositories
 
-- [KVM Documentation](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
 - [Bochs Repository](https://github.com/bochs-emu/Bochs)
 - [xv6 Repository](https://github.com/mit-pdos/xv6-public)
 - [QEMU Repository](https://gitlab.com/qemu-project/qemu)
+
+### Docs
+
+- [KVM Documentation](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
+- [Bochs Documentation](https://bochs.sourceforge.io/cgi-bin/topper.pl?name=New+Bochs+Documentation&url=https://bochs.sourceforge.io/doc/docbook/)
+- [Slides - Virtualization without direct execution - designing a portable VM](https://bochs.sourceforge.io/VirtNoJit.pdf)
+- [Paper - Virtualization Without Direct Execution or Jitting: Designing a Portable Virtual Machine Infrastructure](https://bochs.sourceforge.io/Virtualization_Without_Hardware_Final.pdf)
 
 ### Tutorials
 
