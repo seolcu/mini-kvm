@@ -25,9 +25,19 @@
 | 16주 | 12월 15일     | 문서화 및 프로젝트 마무리                              | 최종 문서, Git 원격 저장소            |
 | 기말 | **12월 19일** | 결과 보고서, 연구 노트, 기타 증빙 제출                 | **결과 보고서, 연구 노트, 기타 증빙** |
 
-## References
+## Links
+
+### Repositories
 
 - [KVM Documentation](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
 - [Bochs Repository](https://github.com/bochs-emu/Bochs)
 - [xv6 Repository](https://github.com/mit-pdos/xv6-public)
 - [QEMU Repository](https://gitlab.com/qemu-project/qemu)
+
+### Tutorials
+
+- [How to compile xv6 on Linux](https://www.youtube.com/watch?v=TLiV_sK77jg)
+
+### Etc.
+
+- [LMDE 6](https://linuxmint.com/edition.php?id=308)
