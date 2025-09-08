@@ -28,4 +28,6 @@
 ## References
 
 - [KVM Documentation](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
+- [Bochs Repository](https://github.com/bochs-emu/Bochs)
+- [xv6 Repository](https://github.com/mit-pdos/xv6-public)
 - [QEMU Repository](https://gitlab.com/qemu-project/qemu)
