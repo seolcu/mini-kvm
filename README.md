@@ -39,11 +39,14 @@
 - [Bochs Documentation](https://bochs.sourceforge.io/cgi-bin/topper.pl?name=New+Bochs+Documentation&url=https://bochs.sourceforge.io/doc/docbook/)
 - [Slides - Virtualization without direct execution - designing a portable VM](https://bochs.sourceforge.io/VirtNoJit.pdf)
 - [Paper - Virtualization Without Direct Execution or Jitting: Designing a Portable Virtual Machine Infrastructure](https://bochs.sourceforge.io/Virtualization_Without_Hardware_Final.pdf)
+- [4.3. The configuration file bochsrc](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html)
 
 ### Tutorials
 
 - [How to compile xv6 on Linux](https://www.youtube.com/watch?v=TLiV_sK77jg)
+- [Bochs 설정법](https://yohda.tistory.com/entry/BOCHS-%EC%9E%91%EC%84%B1%EC%A4%91)
 
 ### Etc.
 
 - [LMDE 6](https://linuxmint.com/edition.php?id=308)
+- [dot-bochsrc by Thomas Nguyen](https://gitlab07.cs.washington.edu/tomn/lvisor-18wi/-/blob/master/tests/xv6-src/dot-bochsrc)

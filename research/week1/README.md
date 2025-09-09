@@ -210,20 +210,38 @@ sudo dnf install glibc-devel.i686 libstdc++-devel.i686
 
 하지만, 2번은 확실한 문제입니다. 따라서 지금 집중해야 하는 부분은 Bochs에 대한 문서를 수집하고, `.bochsrc`를 가져오거나 작성하는 것, 그리고 `make bochs`를 성공시키는 것입니다. 이를 성공하면 2주차 과정에서 구조를 설계하는 데 큰 도움이 될 것입니다.
 
-#### 문서 수집
+#### 문서 수집 및 학습
 
-우선 [GitHub](https://github.com/bochs-emu/Bochs)의 README.md를 읽어보면, Bochs는 C++로 짜여진 x86 **에뮬레이터**입니다. 즉, VMware나 Virtualbox에서 구현하는 가상화와 다릅니다. 에뮬레이터라는 특성 덕분에, x86 뿐만 아니라 ARM, MIPS 등의 다양한 아키텍처 위에서도 x86 환경을 흉내낼 수 있습니다.
+주요 문서들은 메인 README.md에 정리했습니다.
+
+우선 [GitHub](https://github.com/bochs-emu/Bochs)의 README.md를 읽어보면, Bochs는 C++로 짜여진 x86 **에뮬레이터**입니다. 즉, VMware나 Virtualbox에서 구현하는 가상화 또는 JVM같은 JIT 컴파일러와 다릅니다. 에뮬레이터라는 특성 덕분에, x86 뿐만 아니라 ARM, MIPS 등의 다양한 아키텍처 위에서도 x86 환경을 에뮬레이팅 할 수 있습니다.
 
 제가 진행할 프로젝트는 KVM을 이용한 가상화에 초점을 맞췄기에, 이런 부분에서 Bochs와 차이점을 가집니다.
 
-README 아래에는 베이징 ISCA-35에서 발표된 [PPT 파일](https://bochs.sourceforge.io/VirtNoJit.pdf)이 있습니다. 이 자료에서는 여러 가상화/에뮬레이션 기술들을 소개하는데, 그 중 Bochs 부분을 읽어보자면,
+README 아래에는 베이징 ISCA-35에서 발표된, Portable VM에 관한 발표의 [PPT 파일](https://bochs.sourceforge.io/VirtNoJit.pdf)이 있습니다. 이 자료에서는 여러 가상화/에뮬레이션 기술들을 소개합니다. 대부분의 내용을 이해하지는 못했지만, 이해한 부분을 정리하자면:
 
-- JIT를 사용하지 않는다.
-- 하드웨어 기반 가상화를 사용하지 않는다.
+- JIT나 하드웨어 기반 가상화가 아닌, 한줄씩 번역하는 인터프리터 방식을 차용한다.
+  - 따라서 디버깅이 쉽고, 이식성이 좋다. 이를 통해 CPU와의 완전한 격리를 이뤄낼 수 있다.
 - fetch-decode-dispatch 순서대로 명령을 처리한다.
+  - Bochs는 50% 이상의 시간을 이 사이클에 소요한다.
+  - decode된 명령어는 i-cache에 저장된다.
+- Lazy Flag 방식을 사용한다.
+
+#### xv6 구동하기
+
+앞선 단계에서, `make bochs`는 에러를 출력하며 구동되지 않았습니다. 그리고 그 문제는 `.bochsrc` 파일이 없어서 그런 것 같습니다.
+
+QEMU는 구동 옵션을 인라인으로 다 넣기 때문에 따로 설정파일을 만들지 않아도 작동한 것 같지만, Bochs는 그렇지 않아 `.bochsrc` 파일을 만들거나, 또는 누군가 만들어 놓은 설정 파일을 가져와야 할 것 같습니다.
+
+우선 검색을 통해 다음 설정 파일을 찾았습니다: [dot-bochsrc by Thomas Nguyen](https://gitlab07.cs.washington.edu/tomn/lvisor-18wi/-/blob/master/tests/xv6-src/dot-bochsrc)
+
+해당 파일을 복사해 그대로 .bochsrc로 만들어보았으나, 여전히 같은 에러를 출력하며 잘 작동하지 않았습니다.
+
+추가적으로 정보를 더 찾아봤으나 마땅한 설정 파일을 찾지 못하여, 2차시에 Bochs에 대해 공부하면서 .bochsrc 또한 [공식 Documentation](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html)과 같이 공부하겠습니다.
 
 ## 다음주 todo:
 
+- `.bochsrc` 설정 파일 세팅하기
 - `Bochs`를 레퍼런스로, 실질적인 VMM 구조 설계하기
 - 개발 환경 구축 (C)
 - (시간이 남는다면,) Fedora에서 xv6이 컴파일되지 않은 이유 조사. (만약 Fedora가 문제라면 Distrobox를 이용해 컨테이너 위 컴파일 진행)
