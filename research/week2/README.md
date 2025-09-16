@@ -7,8 +7,8 @@
 - `.bochsrc` 설정 파일 세팅하기
 - `Bochs`를 레퍼런스로, 실질적인 VMM 구조 설계하기
 - 개발 환경 구축 (C)
-- (시간이 남는다면,) Fedora에서 xv6이 컴파일되지 않은 이유 조사. (만약 Fedora가 문제라면 Distrobox를 이용해 컨테이너 위 컴파일 진행)
-- (시간이 남는다면,) xv6 소스 코드를 포크하고 개선해 `-Werror` 플래그를 지우지 않고도 성공적으로 컴파일되도록 개선
+- Fedora에서 xv6이 컴파일되지 않은 이유 조사. (만약 Fedora가 문제라면 Distrobox를 이용해 컨테이너 위 컴파일 진행)
+- xv6 소스 코드를 포크하고 개선해 `-Werror` 플래그를 지우지 않고도 성공적으로 컴파일되도록 개선
 
 ## 연구 내용
 
@@ -298,7 +298,7 @@ int bxmain () {
 }
 ```
 
-초반부에서 `bx_init_simulator` 함수를 실행해 시뮬레이터를 세팅합니다. 이와 관련한 주석을 `gui/siminterface.cc`에서 발견할 수 있었습니다.
+초반부에서 `bx_init_siminterface` 함수를 실행해 시뮬레이터를 세팅합니다. 이와 관련한 주석을 `gui/siminterface.cc`에서 발견할 수 있었습니다.
 
 ```C
 bx_simulator_interface_c *SIM = NULL;
@@ -320,7 +320,7 @@ logfunctions *siminterface_log = NULL;
 ```
 
 이를 읽어보면, `bx_simulator_interface`라는 구조체는 Bochs와 GUI의 통신을 담당하는 인터페이스라고 합니다. 그래서 기본적으로 `bx_simulator_interface` 구조체에는 실제 메서드가 구현되어 있지 않고, 비어있습니다.
-실제 메서드들은 `bx_real_sim_c`를 통해 구현되는데, 이를 방금 본 `bx_init_simulator` 함수에서 발견할 수 있습니다. `bx_init_simulator` 함수는 아래와 같습니다.
+실제 메서드들은 `bx_real_sim_c`라는 클래스를 통해 구현되는데, 이를 생성하는 과정은 방금 본 `bx_init_siminterface` 함수에서 발견할 수 있습니다. `bx_init_siminterface` 함수는 아래와 같습니다.
 
 ```C
 void bx_init_siminterface ()
@@ -333,7 +333,7 @@ void bx_init_siminterface ()
 }
 ```
 
-이를 통해 보면, `bxmain` 함수에서 `bx_init_simulator`를 실행하는 순간부터 `SIM` 인스턴스가 실제로 사용 가능한 형태가 된다는 사실을 알 수 있습니다.
+이를 통해 보면, `bxmain` 함수에서 `bx_init_siminterface`를 실행하는 순간부터 `SIM` 인스턴스가 실제로 사용 가능한 형태가 된다는 사실을 알 수 있습니다.
 
 그 아래를 보면 `bx_init_main` 함수를 실행하는 것을 볼 수 있습니다.
 
@@ -344,4 +344,66 @@ void bx_init_siminterface ()
 
 리턴값이 0보다 작은 경우에 0을 리턴하는 것을 보아, `bx_init_main` 함수에서 에러가 발생하면 즉시 종료하는 것 같습니다.
 
-우선, `bx_init_main` 함수를 더 자세히 보도록 했습니다.
+따라서 `bx_init_main` 함수를 살펴보기로 했습니다.
+
+```C
+  int norcfile = 1;
+
+  if (load_rcfile) {
+    /* parse configuration file and command line arguments */
+#ifdef WIN32
+    int length;
+    if (bochsrc_filename != NULL) {
+      lstrcpy(bx_startup_flags.initial_dir, bochsrc_filename);
+      length = lstrlen(bx_startup_flags.initial_dir);
+      while ((length > 1) && (bx_startup_flags.initial_dir[length-1] != 92)) length--;
+      bx_startup_flags.initial_dir[length] = 0;
+    } else {
+      bx_startup_flags.initial_dir[0] = 0;
+    }
+#endif
+    if (bochsrc_filename == NULL) bochsrc_filename = bx_find_bochsrc ();
+    if (bochsrc_filename)
+      norcfile = bx_read_configuration (bochsrc_filename);
+  }
+
+  if (norcfile) {
+    // No configuration was loaded, so the current settings are unusable.
+    // Switch off quick start so that we will drop into the configuration
+    // interface.
+    if (SIM->get_param_enum(BXP_BOCHS_START)->get() == BX_QUICK_START) {
+      if (!SIM->test_for_text_console ())
+        BX_PANIC(("Unable to start Bochs without a bochsrc.txt and without a text console"));
+      else
+        BX_ERROR (("Switching off quick start, because no configuration file was found."));
+    }
+    SIM->get_param_enum(BXP_BOCHS_START)->set (BX_LOAD_START);
+  }
+
+  // parse the rest of the command line.  This is done after reading the
+  // configuration file so that the command line arguments can override
+  // the settings from the file.
+  if (bx_parse_cmdline (arg, argc, argv)) {
+    BX_PANIC(("There were errors while parsing the command line"));
+    return -1;
+  }
+  // initialize plugin system. This must happen before we attempt to
+  // load any modules.
+  plugin_startup();
+  return 0;
+}
+```
+
+코드가 길어서 조금씩 나눠서 보기로 했습니다. 앞부분에서는 옵션 설정 등 기본적인 init 과정을 거칩니다.
+
+주목한 점은 끝부분에서 `.bochsrc`를 처리한다는 점입니다. 이 과정을 담당하는 함수들은 `bx_find_bochsrc`, `bx_read_configuration`, `bx_parse_cmdline` 등으로 보입니다. 그리고 이 모든 함수들은 `config.cc`에 있습니다. 이 다음으로는 `config.cc`를 살펴보면 될 것 같습니다.
+
+그러나, `config.cc`는 3000줄이 넘어갈 정도로 길어서, `main.cc`에서 했던 것처럼 하나하나 뜯어보며 읽기는 어려울 것 같습니다.
+
+따라서, 3주차부터는 코드를 리뷰하는데 있어서 좀 다른 방법을 생각해봐야 할 것 같습니다.
+
+## 다음주 todo:
+
+- Bochs 코드 리뷰
+- 프로젝트 코드 구조 설계
+- (KVM) VM 생성 및 메모리 할당 코드 작성
