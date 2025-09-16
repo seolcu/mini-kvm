@@ -85,7 +85,7 @@ cd xv6-public
 
 [https://github.com/seolcu/xv6-public](https://github.com/seolcu/xv6-public)
 
-#### Bochs를 이용한 부팅 도전
+### Bochs를 이용한 부팅 도전
 
 우선 컨테이너에 bochs를 설치해줬습니다.
 
@@ -209,3 +209,139 @@ sudo apt install xorg-dev
 컴파일러 버전 문제를 의심하여, Ubuntu 16.04에서 다시 해 보았으나 여전히 같은 문제가 발생했습니다.
 
 따라서 우선 이 문제는 보류해두고, 오늘의 주 목표인 코드 구조 설계 및 개발 환경 구축을 진행했습니다.
+
+### 코드 구조 설계
+
+Bochs의 코드를 참고해 코드를 작성할 것이므로, 우선 Bochs 2.2.6의 코드를 읽어보았습니다.
+
+Bochs 코드를 컴파일해 실행해보지는 못해도, 전체적인 로직을 보는 것은 가능하겠다고 생각했습니다.
+
+우선 그 전에, Bochs 2.2.6 코드를 온라인으로 볼 수 있는 곳이 적어, 편한 브라우징과 기록을 위해 코드를 [GitHub](https://github.com/seolcu/bochs-2.2.6)에 올렸습니다. (LGPL 라이선스 파일도 같이 올렸으니 괜찮을 것 같습니다.)
+
+#### `main.cc`
+
+우선 코드의 가장 중심인 `main.cc`를 살펴봤습니다.
+
+그 중 `main` 함수는 아래와 같습니다:
+
+```C
+int main (int argc, char *argv[])
+{
+  bx_startup_flags.argc = argc;
+  bx_startup_flags.argv = argv;
+#if BX_WITH_SDL && defined(WIN32)
+  // if SDL/win32, try to create a console window.
+  RedirectIOToConsole ();
+#endif
+#if defined(WIN32)
+  SetConsoleTitle("Bochs for Windows - Console");
+#endif
+  return bxmain ();
+}
+```
+
+처음에 입력하는 인자를 `bx_startup_flags`라는 구조체 인스턴스에 저장하는 것을 볼 수 있습니다. 해당 인스턴스는 전역변수로 선언되어있습니다. 이후 `bxmain` 함수를 실행합니다.
+
+이어지는 `bxmain` 함수는 다음과 같습니다.
+
+```C
+int bxmain () {
+#ifdef HAVE_LOCALE_H
+  // Initialize locale (for isprint() and other functions)
+  setlocale (LC_ALL, "");
+#endif
+  bx_user_quit = 0;
+  bx_init_siminterface ();   // create the SIM object
+  static jmp_buf context;
+  if (setjmp (context) == 0) {
+    SIM->set_quit_context (&context);
+    if (bx_init_main (bx_startup_flags.argc, bx_startup_flags.argv) < 0)
+      return 0;
+    // read a param to decide which config interface to start.
+    // If one exists, start it.  If not, just begin.
+    bx_param_enum_c *ci_param = SIM->get_param_enum (BXP_SEL_CONFIG_INTERFACE);
+    char *ci_name = ci_param->get_choice (ci_param->get());
+    if (!strcmp(ci_name, "textconfig")) {
+#if BX_USE_TEXTCONFIG
+      init_text_config_interface ();   // in textconfig.h
+#else
+      BX_PANIC(("configuration interface 'textconfig' not present"));
+#endif
+    }
+#if BX_WITH_WX
+    else if (!strcmp(ci_name, "wx")) {
+      PLUG_load_plugin(wx, PLUGTYPE_CORE);
+    }
+#endif
+    else {
+      BX_PANIC (("unsupported configuration interface '%s'", ci_name));
+    }
+    int status = SIM->configuration_interface (ci_name, CI_START);
+    if (status == CI_ERR_NO_TEXT_CONSOLE)
+      BX_PANIC (("Bochs needed the text console, but it was not usable"));
+    // user quit the config interface, so just quit
+  } else {
+    // quit via longjmp
+  }
+  SIM->set_quit_context (NULL);
+#if defined(WIN32)
+  if (!bx_user_quit) {
+    // ask user to press ENTER before exiting, so that they can read messages
+    // before the console window is closed. This isn't necessary after pressing
+    // the power button.
+    fprintf (stderr, "\nBochs is exiting. Press ENTER when you're ready to close this window.\n");
+    char buf[16];
+    fgets (buf, sizeof(buf), stdin);
+  }
+#endif
+  return SIM->get_exit_code ();
+}
+```
+
+초반부에서 `bx_init_simulator` 함수를 실행해 시뮬레이터를 세팅합니다. 이와 관련한 주석을 `gui/siminterface.cc`에서 발견할 수 있었습니다.
+
+```C
+bx_simulator_interface_c *SIM = NULL;
+logfunctions *siminterface_log = NULL;
+#define LOG_THIS siminterface_log->
+
+// bx_simulator_interface just defines the interface that the Bochs simulator
+// and the gui will use to talk to each other.  None of the methods of
+// bx_simulator_interface are implemented; they are all virtual.  The
+// bx_real_sim_c class is a child of bx_simulator_interface_c, and it
+// implements all the methods.  The idea is that a gui needs to know only
+// definition of bx_simulator_interface to talk to Bochs.  The gui should
+// not need to include bochs.h.
+//
+// I made this separation to ensure that all guis use the siminterface to do
+// access bochs internals, instead of accessing things like
+// bx_keyboard.s.internal_buffer[4] (or whatever) directly. -Bryce
+//
+```
+
+이를 읽어보면, `bx_simulator_interface`라는 구조체는 Bochs와 GUI의 통신을 담당하는 인터페이스라고 합니다. 그래서 기본적으로 `bx_simulator_interface` 구조체에는 실제 메서드가 구현되어 있지 않고, 비어있습니다.
+실제 메서드들은 `bx_real_sim_c`를 통해 구현되는데, 이를 방금 본 `bx_init_simulator` 함수에서 발견할 수 있습니다. `bx_init_simulator` 함수는 아래와 같습니다.
+
+```C
+void bx_init_siminterface ()
+{
+  siminterface_log = new logfunctions ();
+  siminterface_log->put ("CTRL");
+  siminterface_log->settype(CTRLLOG);
+  if (SIM == NULL)
+    SIM = new bx_real_sim_c();
+}
+```
+
+이를 통해 보면, `bxmain` 함수에서 `bx_init_simulator`를 실행하는 순간부터 `SIM` 인스턴스가 실제로 사용 가능한 형태가 된다는 사실을 알 수 있습니다.
+
+그 아래를 보면 `bx_init_main` 함수를 실행하는 것을 볼 수 있습니다.
+
+```C
+    if (bx_init_main (bx_startup_flags.argc, bx_startup_flags.argv) < 0)
+      return 0;
+```
+
+리턴값이 0보다 작은 경우에 0을 리턴하는 것을 보아, `bx_init_main` 함수에서 에러가 발생하면 즉시 종료하는 것 같습니다.
+
+우선, `bx_init_main` 함수를 더 자세히 보도록 했습니다.
