@@ -27,7 +27,11 @@
 
 ## Links
 
-### Repositories
+### Other Repos
+
+- [Fork of xv6-public](https://github.com/seolcu/xv6-public)
+
+### Reference Projects
 
 - [Bochs Repository](https://github.com/bochs-emu/Bochs)
 - [xv6 Repository](https://github.com/mit-pdos/xv6-public)
