@@ -30,6 +30,7 @@
 ### Other Repos
 
 - [Fork of xv6-public](https://github.com/seolcu/xv6-public)
+- [Copy of bochs-2.2.6](https://github.com/seolcu/bochs-2.2.6)
 
 ### Reference Projects
 
