@@ -26,10 +26,10 @@
 ERROR: X windows gui was selected, but X windows libraries were not found.
 ```
 
-저번주에는 xorg를 설치해 해결하려 했으나, 교수님과 상담 후 `--with-term` 옵션을 주기로 결정했습니다. 또한, 최적화와 페이징과 관련된 옵션들인 `--enable-all-optimizations --enable-4meg-pages --enable-global-pages --enable-pae`도 모두 삭제하기로 했습니다.
+저번주에는 xorg를 설치해 해결하려 했으나, 교수님과 상담 후 `--with-term` 옵션을 주기로 결정했습니다. 또한, 멀티코어를 활성화하는 `--enable-smp` 옵션과, 최적화 및 페이징과 관련된 옵션들인 `--enable-all-optimizations --enable-4meg-pages --enable-global-pages --enable-pae`도 모두 삭제하기로 했습니다.
 
 ```bash
-./configure --enable-smp --enable-disasm --enable-debugger --disable-reset-on-triple-fault --with-term
+./configure --enable-disasm --enable-debugger --disable-reset-on-triple-fault --with-term
 ```
 
 그랬더니, 다음과 같은 에러가 발생했습니다.
@@ -37,5 +37,13 @@ ERROR: X windows gui was selected, but X windows libraries were not found.
 ```
 Curses library not found: tried curses, ncurses, termlib and pdcurses.
 ```
+
+Curses 관련 라이브러리가 없다고 떠서, 아래 명령어로 설치해줬습니다. (Ubuntu 22.04 기준)
+
+```bash
+sudo apt install libncurses-dev
+```
+
+이후 같은 옵션으로 configure가 정상적으로 진행되었습니다. 따라서 바로 `make`를 진행해봤습니다.
 
 ## 다음주 todo
