@@ -113,4 +113,117 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 여전히 같은 문제로 컴파일에 실패했습니다.
 
+#### hdimage.h 고치기
+
+컴파일러 버전을 최대한 낮췄음에도 컴파일이 되지 않으니, 직접 코드를 수정해 컴파일되도록 만들기로 했습니다.
+
+컴파일 에러는 다음과 같습니다:
+
+```
+hdimage.h: At global scope:
+hdimage.h:277:8: error: extra qualification ‘sparse_image_t::’ on member ‘get_physical_offset’ [-fpermissive]
+hdimage.h:282:8: error: extra qualification ‘sparse_image_t::’ on member ‘set_virtual_page’ [-fpermissive]
+```
+
+해당하는 부분은 `iodev/hdimage.h` 파일입니다. 문제가 되는 부분은 아래와 같습니다:
+
+```C
+off_t
+#ifndef PARANOID
+       sparse_image_t::
+#endif
+                       get_physical_offset();
+ void
+#ifndef PARANOID
+       sparse_image_t::
+#endif
+                       set_virtual_page(Bit32u new_virtual_page);
+```
+
+`sparse_image_t` 클래스 안에서 그 클래스를 스스로 호출해 생긴 문제인 것 같습니다. 이 코드를 다음과 같이 고쳤습니다:
+
+```C
+off_t get_physical_offset();
+void set_virtual_page(Bit32u new_virtual_page);
+```
+
+그랬더니, 다음과 같은 에러가 발생했습니다:
+
+![alt text](image-2.png)
+
+#### symbols.cc 고치기
+
+에러 메시지는 다음과 같았습니다:
+
+```
+symbols.cc: At global scope:
+symbols.cc:135:10: error: ‘hash_map’ does not name a type
+symbols.cc:143:1: error: ‘hash_map’ does not name a type
+symbols.cc: In constructor ‘context_t::context_t(Bit32u)’:
+symbols.cc:150:5: error: ‘map’ was not declared in this scope
+symbols.cc: In static member function ‘static context_t* context_t::get_context(Bit32u)’:
+symbols.cc:171:12: error: ‘map’ was not declared in this scope
+Makefile:72: recipe for target 'symbols.o' failed
+make[1]: *** [symbols.o] Error 1
+make[1]: Leaving directory '/home/seolcu/문서/코드/bochs-2.2.6/bx_debug'
+Makefile:264: recipe for target 'bx_debug/libdebug.a' failed
+make: *** [bx_debug/libdebug.a] Error 2
+```
+
+문제가 되는 부분은 `bx_debug/symbols.cc` 파일이었습니다. 라인 135 근처를 확인했습니다.
+
+```C
+private:
+  static hash_map<int,context_t*>* map;
+  // Forvard references (find name by address)
+  set<symbol_entry_t*,lt_symbol_entry_t>* syms;
+  // Reverse references (find address by name)
+  set<symbol_entry_t*,lt_rsymbol_entry_t>* rsyms;
+  Bit32u id;
+};
+
+hash_map<int,context_t*>* context_t::map = new hash_map<int,context_t*>;
+```
+
+hash_map이라는 것을 타입을 사용하지만, 컴파일러가 이를 못 찾는 것 같습니다.
+
+따라서 이 타입을 불러오는 include 부분을 살펴봤습니다.
+
+```C
+/* Haven't figured out how to port this code to OSF1 cxx compiler.
+   Until a more portable solution is found, at least make it easy
+   to disable the template code:  just set BX_HAVE_HASH_MAP=0
+   in config.h */
+#if BX_HAVE_HASH_MAP
+#include <hash_map>
+#elif BX_HAVE_HASH_MAP_H
+#include <hash_map.h>
+#endif
+```
+
+OSF1 cxx 컴파일러와의 호환성을 위해 임시로 사용한 전역변수의 흔적이 남아있습니다. 또한 `hash_map`이라는 타입이, `unordered_map`이 등장하며 비표준으로 옮겨졌으므로, `<ext/hash_map>`으로 바꿔줬습니다.
+
+```C
+#include <ext/hash_map>
+using namespace __gnu_cxx;
+```
+
+make 해보니 다음과 같은 에러가 발생했습니다:
+
+```
+yacc -p bx -d parser.y
+make[1]: yacc: Command not found
+Makefile:104: recipe for target 'parser.c' failed
+make[1]: *** [parser.c] Error 127
+make[1]: Leaving directory '/home/seolcu/문서/코드/bochs-2.2.6/bx_debug'
+Makefile:264: recipe for target 'bx_debug/libdebug.a' failed
+make: *** [bx_debug/libdebug.a] Error 2
+```
+
+yacc가 설치되지 않은 것 같아, 터미널에 입력하니 `bison` 패키지 설치를 권유받았습니다. 따라서 `bison`을 설치하고 `make`를 진행해보았더니, 드디어 정상적으로 컴파일되었습니다. 따라서 바로 `sudo make install`로 설치까지 진행했습니다.
+
+그리고, 지금까지의 과정을 통해 알아낸 Bochs 2.2.6 컴파일 방법을 [seolcu/bochs-2.2.6](https://github.com/seolcu/bochs-2.2.6) 레포에 가이드로 작성했습니다.
+
+### Bochs 2.2.6으로 xv6 부팅
+
 ## 다음주 todo
