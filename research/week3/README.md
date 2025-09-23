@@ -267,4 +267,68 @@ Makefile:210: recipe for target 'bochs' failed
 make: *** [bochs] Error 1
 ```
 
+이 부분과 관련된 설정은 다음 부분인 것 같았습니다:
+
+```
+ata0-master: type=disk, mode=flat, path="xv6.img", cylinders=100, heads=10, spt=10
+ata0-slave: type=disk, mode=flat, path="fs.img", cylinders=1024, heads=1, spt=1
+```
+
+뒤에 있는 cylinders, heads, spt 값이 올바르지 않아서 부팅에 문제가 생긴건지 확인하기 위해, [bochsrc 공식 문서](https://bochs.sourceforge.io/doc/docbook/user/bochsrc.html)와 [위키피디아 CHS 문서](https://ko.wikipedia.org/wiki/%EC%8B%A4%EB%A6%B0%EB%8D%94-%ED%97%A4%EB%93%9C-%EC%84%B9%ED%84%B0)를 읽으며 값을 계산헀습니다.
+
+디스크 사이즈 계산식은 다음과 같습니다:
+
+```
+총 크기 (바이트) = 실린더 수 × 헤드 수 × 트랙당 섹터 수 × 섹터당 바이트 수(512)
+```
+
+따라서, 다음과 같이 정리가 가능합니다:
+
+```
+총 크기 (바이트) = cylinders * heads * spt(secter per track) * 512
+```
+
+##### ata0-master
+
+따라서 ata0-master의 디스크 사이즈 기대값은, 100 \* 10 \* 10 \* 512 = 5120000입니다. 이 값이 xv6.img의 크기와 일치해야합니다. 확인해보면:
+
+```
+$ ls -l xv6.img
+-rw-r--r--. 1 seolcu seolcu 5120000  9월 23 12:08 xv6.img
+```
+
+이미지 사이즈가 5120000이므로, ata0-master의 디스크 사이즈는 맞습니다.
+
+##### ata0-slave
+
+다음으로 ata0-slave의 디스크 사이즈 기대값은, 1024 \* 1 \* 1 \* 512 = 524288입니다. fs.img를 확인해보면:
+
+```
+$ ls -l fs.img
+-rw-r--r--. 1 seolcu seolcu 512000  9월 23 12:08 fs.img
+```
+
+이미지 사이즈가 512000으로, 일치하지 않는 것을 확인할 수 있었습니다.
+
+이를 해결하기 위해 cylinders를 1024에서 1000으로 조정했습니다.:
+
+```
+ata0-master: type=disk, mode=flat, path="xv6.img", cylinders=100, heads=10, spt=10
+ata0-slave: type=disk, mode=flat, path="fs.img", cylinders=1000, heads=1, spt=1
+```
+
+#### 디버거 때문? 인풋 안 들어감
+
+이후 make bochs를 하니, 아래와 같이 뭔가 이상하게 돌아갔습니다. 아무 입력이 들어가지 않았습니다.
+
+![alt text](image-4.png)
+
+bochs 컴파일할 때 `--enable-debugger` 옵션을 켜서 디버거로 들어간건가 하는 생각에, 그 플래그를 빼고 다시 컴파일하고 실행해보았습니다.
+
+#### SMP
+
+![alt text](image-5.png)
+
+SMP가 꺼져 있어서 커널 패닉이 발생한 것 같습니다. xv6에서 듀얼코어 이상을 요구하는 것 같습니다. 우선은 다음주로 넘겨둬야겠습니다.
+
 ## 다음주 todo
