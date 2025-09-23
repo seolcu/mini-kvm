@@ -226,4 +226,45 @@ yacc가 설치되지 않은 것 같아, 터미널에 입력하니 `bison` 패키
 
 ### Bochs 2.2.6으로 xv6 부팅
 
+바로 xv6를 실행하기 위해, `make` 후 `make bochs` 해봤습니다.
+
+![alt text](image-3.png)
+
+CPU 개수 관련 에러가 발생했습니다. 역시 `.bochsrc` 파일을 수정할 필요가 있어보입니다.
+
+#### CPU 설정
+
+원래 설정:
+
+```
+cpu: count=2, ips=10000000
+```
+
+CPU 개수 1개로 조정:
+
+```
+cpu: count=1, ips=10000000
+```
+
+#### ATA 설정
+
+CPU 설정 이후 다음과 같은 에러가 발생했습니다:
+
+```
+========================================================================
+                       Bochs x86 Emulator 2.2.6
+              Build from CVS snapshot on January 29, 2006
+========================================================================
+00000000000i[     ] reading configuration from .bochsrc
+00000000000i[     ] installing term module as the Bochs GUI
+00000000000i[     ] Warning: no rc file specified.
+00000000000i[     ] using log file bochsout.txt
+========================================================================
+Bochs is exiting with the following message:
+[HD   ] ata0/1 image size doesn't match specified geometry
+========================================================================
+Makefile:210: recipe for target 'bochs' failed
+make: *** [bochs] Error 1
+```
+
 ## 다음주 todo
