@@ -175,3 +175,41 @@ lapicid 0: panic: Expect to run on an SMP
 ```
 
 여전히 xv6에서 SMP 관련 에러가 발생합니다. 아무래도 xv6에서 SMP 요구 자체를 끌 필요가 있을 것 같습니다.
+
+### xv6 코드 수정
+
+main.c 파일에서 멀티코어와 관련되어보이는 함수 `mpinit()`와 `startothers()` 등의 함수를 비활성화하면서 멀티코어 처리를 끄려고 해 보았으나, bochs에서 잘 작동하지 않았습니다. 따라서 코드는 다시 되돌렸습니다.
+
+### qemu로 시도해보기
+
+qemu 기준으로 xv6를 다시 보도록 했습니다.
+
+xv6 부팅에서 qemu는 다음과 같은 옵션을 사용합니다.
+
+```makefile
+ifndef CPUS
+CPUS := 2
+endif
+QEMUOPTS = -drive file=fs.img,index=1,media=disk,format=raw -drive file=xv6.img,index=0,media=disk,format=raw -smp $(CPUS) -m 512 $(QEMUEXTRA)
+```
+
+CPUS로 CPU 개수를 설정한 후, qemu 옵션으로 바로 넣는 모습입니다. 여기서 사용된 CPUS 변수는 qemu에서만 사용됩니다. 여기서 우선 CPUS를 1로 바꾸고 돌려보았습니다.
+
+![alt text](image-4.png)
+
+아무 문제 없이 부팅되었습니다.
+
+`make qemu-gdb` 옵션도 있어서, 시도해보았습니다.
+
+```bash
+$ make qemu-gdb
+sed "s/localhost:1234/localhost:26000/" < .gdbinit.tmpl > .gdbinit
+*** Now run 'gdb'.
+qemu-system-i386 -serial mon:stdio -drive file=fs.img,index=1,media=disk,format=raw -drive file=xv6.img,index=0,media=disk,format=raw -smp 1 -m 512  -S -gdb tcp::26000
+```
+
+포트 26000을 열어주어서, gdb로 attach 해보았습니다.
+
+![alt text](image-5.png)
+
+바로 gdb가 붙었습니다.
