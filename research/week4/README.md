@@ -14,6 +14,12 @@
 
 ![alt text](image.png)
 
+```
+Booting from Hard Disk...
+lapicid 0: panic: Expect to run on an SMP
+ 801031a1 80102e80 0 0 0 0 0 0 0
+```
+
 교수님께서 xv6가 듀얼코어를 요구할 것 같지는 않다고 하셨기에, .bochsrc 수정 없이 bochs 2.2.6 컴파일 옵션만 수정해보기로 했습니다.
 
 따라서 `--enable-smp` 옵션을 주어 컴파일해보았습니다.
@@ -161,5 +167,11 @@ qTStatus: Target returns error code 'NN'.
 뭔가 경고가 뜨긴 하지만 되는 것 같습니다. `c` 명령어로 계속 실행하도록 했습니다.
 
 ![alt text](image-3.png)
+
+```
+Booting from Hard Disk...
+lapicid 0: panic: Expect to run on an SMP
+ 801031a1 80102e80 0 0 0 0 0 0 0
+```
 
 여전히 xv6에서 SMP 관련 에러가 발생합니다. 아무래도 xv6에서 SMP 요구 자체를 끌 필요가 있을 것 같습니다.
