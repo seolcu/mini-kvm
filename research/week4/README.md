@@ -86,7 +86,7 @@ xv6가 아닌 bochs 에러로 보여 bochs 소스 코드에서 `exception with n
 
 저번에 디버거 붙였을 때랑 같은 에러가 발생했습니다. 아무래도 configure 옵션을 더 살펴봐야겠습니다.
 
-### bochs에 gdb 붙여보기
+### bochs gdb stub
 
 `./configure --help`로 `--enable-debugger`의 설명을 읽어보았습니다.
 
