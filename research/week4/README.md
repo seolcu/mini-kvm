@@ -212,4 +212,8 @@ qemu-system-i386 -serial mon:stdio -drive file=fs.img,index=1,media=disk,format=
 
 ![alt text](image-5.png)
 
-바로 gdb가 붙었습니다.
+바로 gdb가 붙었습니다. `c`를 입력하니 정상적으로 작동합니다.
+
+gdb에 편의성 기능들을 추가해주는 `pwndbg`를 사용하니 gdbinit을 자동으로 읽어 attach 해주고 symbol도 가져와줬습니다.
+
+Bochs에서 안 돼서 아쉽지만, 우선 이 방식이라도 [xv6-public 레포](https://github.com/seolcu/xv6-public)의 README.md에 정리해뒀습니다.
