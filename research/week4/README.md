@@ -8,7 +8,7 @@
 
 ## 연구내용
 
-### SMP 관련 문제 해결하기
+### Bochs에서 SMP 지원 해제하기
 
 저번주에 Bochs 2.2.6을 컴파일하고 xv6를 디버거 없이 부팅해보았을때, 다음과 같은 에러가 발생했습니다.
 
@@ -86,7 +86,7 @@ xv6가 아닌 bochs 에러로 보여 bochs 소스 코드에서 `exception with n
 
 저번에 디버거 붙였을 때랑 같은 에러가 발생했습니다. 아무래도 configure 옵션을 더 살펴봐야겠습니다.
 
-### bochs gdb stub
+### Bochs gdb stub 활성화하기
 
 `./configure --help`로 `--enable-debugger`의 설명을 읽어보았습니다.
 
@@ -176,11 +176,11 @@ lapicid 0: panic: Expect to run on an SMP
 
 여전히 xv6에서 SMP 관련 에러가 발생합니다. 아무래도 xv6에서 SMP 요구 자체를 끌 필요가 있을 것 같습니다.
 
-### xv6 코드 수정
+### 멀티코어 요구 제거를 위한 xv6 코드 수정
 
 main.c 파일에서 멀티코어와 관련되어보이는 함수 `mpinit()`와 `startothers()` 등의 함수를 비활성화하면서 멀티코어 처리를 끄려고 해 보았으나, bochs에서 잘 작동하지 않았습니다. 따라서 코드는 다시 되돌렸습니다.
 
-### qemu로 시도해보기
+### qemu에서 gdb 붙여보기
 
 qemu 기준으로 xv6를 다시 보도록 했습니다.
 
