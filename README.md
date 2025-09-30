@@ -54,5 +54,3 @@
 ### Etc.
 
 - [Bochs Releases](https://sourceforge.net/projects/bochs/files/bochs/)
-- [LMDE 6](https://linuxmint.com/edition.php?id=308)
-- [dot-bochsrc by Thomas Nguyen](https://gitlab07.cs.washington.edu/tomn/lvisor-18wi/-/blob/master/tests/xv6-src/dot-bochsrc)
