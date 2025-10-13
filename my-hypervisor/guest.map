@@ -1,0 +1,16 @@
+             VMA              LMA     Size Align Out     In      Symbol
+          100000           100000       1e     2 .text
+          100000           100000       1e     2         /tmp/guest-e459a8.o:(.text)
+          100000           100000        0     1                 $x
+          100000           100000        0     1                 guest_boot
+          10001c           10001c        0     1                 halt
+               0                0       45     1 .riscv.attributes
+               0                0       45     1         <internal>:(.riscv.attributes)
+               0                0       13     1 .comment
+               0                0       13     1         <internal>:(.comment)
+               0                0       78     8 .symtab
+               0                0       78     8         <internal>:(.symtab)
+               0                0       3c     1 .shstrtab
+               0                0       3c     1         <internal>:(.shstrtab)
+               0                0       17     1 .strtab
+               0                0       17     1         <internal>:(.strtab)
