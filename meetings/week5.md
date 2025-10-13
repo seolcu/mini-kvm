@@ -22,3 +22,9 @@
 - **학습 후 x86에 적용**: RISC-V 예제에서 얻은 지식을 바탕으로, `ioctl`을 통해 호스트 KVM과 통신하는 간단한 x86 하이퍼바이저를 구현하는 것을 최종 목표로 설정.
 
 - **향후 일정**: 다음 2주(추석 연휴 포함) 동안 해당 튜토리얼을 진행하고, 다음 상담 시간에 진행 상황을 검토하기로 함.
+
+## 교수님께서 주신 참고 링크
+
+- [Hypervisor in 1,000 Lines](https://1000hv.seiya.me/en/)
+- [OSDev](https://wiki.osdev.org/Expanded_Main_Page)
+- [Hypervisor From Scratch](https://rayanfam.com/topics/hypervisor-from-scratch-part-1/)
