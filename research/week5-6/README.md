@@ -328,9 +328,153 @@ while (1) {
 
 "simple kvm example c" 같은 키워드로 예제 코드를 검색했는데, 대부분 QEMU 같은 복잡한 VMM의 일부거나, 오래돼서 현재 KVM API와 맞지 않는 경우가 많았습니다.
 
+### Chapter 7: Hello from Guest
+
+Chapter 7에서 드디어 게스트가 하이퍼바이저랑 통신하는 부분을 구현했습니다. 게스트가 `ecall`로 하이퍼콜을 호출하면 하이퍼바이저가 받아서 처리하는 식입니다.
+
+#### VCpu 구조체
+
+게스트 CPU 상태를 저장하려고 `VCpu` 구조체를 만들었습니다(`src/vcpu.rs`):
+
+```rust
+#[repr(C)]
+pub struct VCpu {
+    pub regs: [u64; 31],
+    pub host_sp: u64,
+}
+```
+
+x1부터 x31까지 31개 레지스터를 저장합니다. x0는 항상 0이니까 저장 안 해도 됩니다. VM exit이 발생하면 여기에 전부 저장하고, 다시 들어갈 때 복원하는 식입니다.
+
+#### Trap Handler 수정
+
+기존 trap handler를 naked function으로 다시 짰습니다(`src/trap.rs`). 이전엔 Rust 함수로 대충 했었는데, 레지스터를 제대로 저장하고 복원하려면 순수 어셈블리로 짜야 합니다:
+
+```rust
+#[naked]
+#[no_mangle]
+#[link_section = ".text"]
+pub unsafe extern "C" fn trap_vector() {
+    asm!(
+        "csrrw sp, sscratch, sp",
+        "sd x1, 0*8(sp)",
+        "sd x2, 1*8(sp)",
+        // ... (x3-x31까지)
+        "mv a0, sp",
+        "call {trap_handler}",
+        "ld x1, 0*8(sp)",
+        // ... (복원)
+        "csrrw sp, sscratch, sp",
+        "sret",
+        trap_handler = sym trap_handler,
+        options(noreturn)
+    );
+}
+```
+
+`sscratch` CSR로 게스트 스택이랑 호스트 스택을 교환하는 게 핵심입니다. 레지스터 전부 저장하고, Rust 함수 호출하고, 다시 복원해서 `sret`로 돌아갑니다.
+
+#### Hypercall 처리
+
+`ecall`이 발생하면 이렇게 처리합니다:
+
+```rust
+pub fn trap_handler(vcpu: &mut VCpu) {
+    let scause = read_csr!("scause");
+    let sepc = read_csr!("sepc");
+    
+    match scause {
+        0xa => {
+            let extension = vcpu.regs[16];
+            let function = vcpu.regs[15];
+            
+            if extension == 0x1 && function == 0x0 {
+                let ch = vcpu.regs[9] as u8 as char;
+                print!("{}", ch);
+                vcpu.regs[9] = 0;
+            }
+            
+            write_csr!("sepc", sepc + 4);
+        }
+        _ => {
+            panic!("Unhandled trap: scause={:#x}", scause);
+        }
+    }
+}
+```
+
+`scause=0xa`가 VS-mode의 `ecall`입니다. SBI 규약 보니까 `a7`(x17)에 extension ID, `a6`(x16)에 function ID가 들어있습니다. `console_putchar`는 extension=0x1, function=0x0이고, `a0`(x10)에 문자가 들어있습니다.
+
+`sepc`를 4 증가시켜야 다음 명령으로 넘어갑니다. 이거 안 하면 같은 `ecall`을 계속 반복합니다.
+
+#### 게스트 코드
+
+게스트 코드(`guest.S`)를 수정했습니다:
+
+```asm
+.section .text
+.global guest_boot
+guest_boot:
+    li a7, 1
+    li a6, 0
+    
+    li a0, 'A'
+    ecall
+    
+    li a0, 'B'
+    ecall
+    
+    li a0, 'C'
+    ecall
+    
+loop:
+    j loop
+```
+
+'A', 'B', 'C'를 차례로 출력하는 코드입니다.
+
+실행하니까 이렇게 나왔습니다:
+
+```
+Booting hypervisor...
+v = ['a', 'b', 'c']
+map: 00100000 -> 80309000
+ABC
+```
+
+됐습니다! 게스트에서 하이퍼바이저로 문자를 전달해서 출력하는 데 성공했습니다.
+
+이 챕터에서 배운 게 몇 가지 있는데, VM exit 시 레지스터 상태를 전부 저장해야 한다는 거, `sscratch`로 스택을 교환하는 트릭, 그리고 `ecall` 같은 trap instruction은 PC를 수동으로 증가시켜야 한다는 점입니다. Rust의 naked function도 처음 써봤는데 컴파일러 간섭 없이 순수 어셈블리를 쓸 수 있어서 괜찮았습니다.
+
+### 튜토리얼 8-10챕터 확인
+
+Chapter 7까지 끝내고, 남은 챕터들을 봤습니다.
+
+#### Chapter 8-10 코드가 이미 있음
+
+튜토리얼 저장소(`tutorial-risc-v/src/`)를 보니까 Chapter 8-10 구현이 다 돼있었습니다:
+
+- **Chapter 8**: Docker로 Linux 커널 크로스 컴파일하는 스크립트가 `linux/Dockerfile`, `build.sh`에 있습니다.
+- **Chapter 9**: `linux_loader.rs`에 커널 로더랑 device tree 생성하는 코드 다 있습니다. `hedeleg`로 exception을 게스트가 직접 처리하도록 설정하는 것도 포함입니다.
+- **Chapter 10**: `trap.rs`에 여러 SBI extension 구현돼있습니다. Console buffering, timer, PLIC MMIO 처리까지 있습니다.
+
+저장소 코드로 Linux 부팅 시도했는데, 초기 커널 메시지 몇 개 나오다가 PLIC 접근할 때 guest page fault 나면서 멈췄습니다.
+
+#### Chapter 11-13은 빈껍데기
+
+Chapter 11(Memory Mapped I/O), 12(Interrupt Injection), 13(Outro)는 stub만 있고 실제 코드가 없었습니다.
+
+#### 따라가지 않기로 함
+
+Chapter 8-10을 할지 말지 고민했는데, 안 하기로 했습니다.
+
+코드가 이미 다 있어서 복사만 하는 꼴이 될 것 같았습니다. Linux도 제대로 부팅이 안 되니까 성공 경험도 못 얻고요. PLIC, device tree, SBI 같은 건 RISC-V 전용이라 x86 갈 때는 어차피 못 씁니다 (x86은 ACPI, BIOS/UEFI 씀).
+
+그리고 Chapter 1-7에서 게스트 모드 진입, VM exit 처리, hypercall, 2-stage translation 같은 핵심 개념은 다 배웠습니다. 이걸로 충분한 것 같습니다.
+
 ### 앞으로 할 일
 
-이번 주차에서 RISC-V로 하이퍼바이저 기본 구조를 배웠으니, 다음 주차부터는 x86 KVM으로 실제 구현을 시작할 계획입니다.
+RISC-V 튜토리얼로 하이퍼바이저의 핵심 구조를 이해했으니, 이제 x86 KVM으로 전환할 시점입니다.
 
 **Week 7-8: 최소 KVM 프로그램**
 
