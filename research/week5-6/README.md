@@ -44,11 +44,11 @@
 
 #### Chapter 1: Getting Started
 
-Rust bare-metal 프로젝트를 생성하고 `#![no_std]`, `#![no_main]` 속성을 추가했습니다. RISC-V 64비트 타겟(`riscv64gc-unknown-none-elf`)으로 컴파일하도록 설정하고, QEMU virt 머신으로 OpenSBI 펌웨어 부팅에 성공했습니다.
+개발 환경을 구성했습니다. Rust 툴체인과 QEMU를 설치하고, RISC-V 64비트 타겟(`riscv64gc-unknown-none-elf`)을 추가했습니다.
 
 #### Chapter 2: Boot
 
-부팅 과정을 구현했습니다. `boot()` 함수에서 스택 포인터를 초기화하고 main으로 점프하도록 했습니다. 링커 스크립트(`hypervisor.ld`)로 베이스 주소를 `0x80200000`으로 설정하고, BSS 섹션을 초기화했습니다. OpenSBI가 실행 후 하이퍼바이저로 제어권을 넘겨주는 걸 확인했습니다.
+Rust bare-metal 프로젝트를 생성하고 `#![no_std]`, `#![no_main]` 속성을 추가했습니다. 부팅 과정을 구현했습니다. `boot()` 함수에서 스택 포인터를 초기화하고 main으로 점프하도록 했습니다. 링커 스크립트(`hypervisor.ld`)로 베이스 주소를 `0x80200000`으로 설정하고, BSS 섹션을 초기화했습니다. 커널 스택 크기는 1MB입니다. Panic handler도 구현했습니다. QEMU virt 머신에서 OpenSBI 펌웨어가 먼저 실행된 후 하이퍼바이저로 제어권을 넘겨주는 걸 확인했습니다.
 
 #### Chapter 3: Hello World
 
@@ -337,73 +337,97 @@ Chapter 7에서 드디어 게스트가 하이퍼바이저랑 통신하는 부분
 게스트 CPU 상태를 저장하려고 `VCpu` 구조체를 만들었습니다(`src/vcpu.rs`):
 
 ```rust
-#[repr(C)]
+#[derive(Debug, Default)]
 pub struct VCpu {
-    pub regs: [u64; 31],
+    pub hstatus: u64,
+    pub hgatp: u64,
+    pub sstatus: u64,
+    pub sepc: u64,
     pub host_sp: u64,
+    pub ra: u64,
+    pub sp: u64,
+    pub gp: u64,
+    pub tp: u64,
+    pub t0: u64,
+    pub t1: u64,
+    pub t2: u64,
+    pub s0: u64,
+    pub s1: u64,
+    pub a0: u64,
+    pub a1: u64,
+    pub a2: u64,
+    pub a3: u64,
+    pub a4: u64,
+    pub a5: u64,
+    pub a6: u64,
+    pub a7: u64,
+    pub s2: u64,
+    pub s3: u64,
+    pub s4: u64,
+    pub s5: u64,
+    pub s6: u64,
+    pub s7: u64,
+    pub s8: u64,
+    pub s9: u64,
+    pub s10: u64,
+    pub s11: u64,
+    pub t3: u64,
+    pub t4: u64,
+    pub t5: u64,
+    pub t6: u64,
 }
 ```
 
-x1부터 x31까지 31개 레지스터를 저장합니다. x0는 항상 0이니까 저장 안 해도 됩니다. VM exit이 발생하면 여기에 전부 저장하고, 다시 들어갈 때 복원하는 식입니다.
+CSR 레지스터들과 범용 레지스터 31개를 개별 필드로 저장합니다. x0는 항상 0이니까 저장 안 해도 됩니다. VM exit이 발생하면 여기에 전부 저장하고, 다시 들어갈 때 복원하는 식입니다. `host_sp`는 하이퍼바이저의 trap handler 스택 포인터입니다.
 
 #### Trap Handler 수정
 
 기존 trap handler를 naked function으로 다시 짰습니다(`src/trap.rs`). 이전엔 Rust 함수로 대충 했었는데, 레지스터를 제대로 저장하고 복원하려면 순수 어셈블리로 짜야 합니다:
 
 ```rust
-#[naked]
-#[no_mangle]
-#[link_section = ".text"]
-pub unsafe extern "C" fn trap_vector() {
-    asm!(
-        "csrrw sp, sscratch, sp",
-        "sd x1, 0*8(sp)",
-        "sd x2, 1*8(sp)",
-        // ... (x3-x31까지)
-        "mv a0, sp",
-        "call {trap_handler}",
-        "ld x1, 0*8(sp)",
-        // ... (복원)
-        "csrrw sp, sscratch, sp",
-        "sret",
-        trap_handler = sym trap_handler,
-        options(noreturn)
+#[unsafe(link_section = ".text.stvec")]
+#[unsafe(naked)]
+pub extern "C" fn trap_handler() -> ! {
+    naked_asm!(
+        "csrrw a0, sscratch, a0",
+        "sd ra, {ra_offset}(a0)",
+        "sd sp, {sp_offset}(a0)",
+        // ... (나머지 레지스터들)
+        "csrr t0, sscratch",
+        "sd t0, {a0_offset}(a0)",
+        "ld sp, {host_sp_offset}(a0)",
+        "call {handle_trap}",
+        handle_trap = sym handle_trap,
+        // ... (오프셋 정의)
     );
 }
 ```
 
-`sscratch` CSR로 게스트 스택이랑 호스트 스택을 교환하는 게 핵심입니다. 레지스터 전부 저장하고, Rust 함수 호출하고, 다시 복원해서 `sret`로 돌아갑니다.
+`sscratch` CSR에는 VCpu 구조체 포인터가 들어있습니다. `csrrw`로 a0와 sscratch를 교환해서 VCpu 포인터를 가져오고, 모든 레지스터를 VCpu 구조체에 저장합니다. 그 다음 호스트 스택으로 전환하고 Rust 함수를 호출합니다.
 
 #### Hypercall 처리
 
 `ecall`이 발생하면 이렇게 처리합니다:
 
 ```rust
-pub fn trap_handler(vcpu: &mut VCpu) {
+pub fn handle_trap(vcpu: *mut VCpu) -> ! {
+    let vcpu = unsafe { &mut *vcpu };
     let scause = read_csr!("scause");
     let sepc = read_csr!("sepc");
     
-    match scause {
-        0xa => {
-            let extension = vcpu.regs[16];
-            let function = vcpu.regs[15];
-            
-            if extension == 0x1 && function == 0x0 {
-                let ch = vcpu.regs[9] as u8 as char;
-                print!("{}", ch);
-                vcpu.regs[9] = 0;
-            }
-            
-            write_csr!("sepc", sepc + 4);
-        }
-        _ => {
-            panic!("Unhandled trap: scause={:#x}", scause);
-        }
+    if scause == 10 {  // environment call from VS-mode
+        println!("SBI call: eid={:#x}, fid={:#x}, a0={:#x} ('{}')", 
+                 vcpu.a7, vcpu.a6, vcpu.a0, vcpu.a0 as u8 as char);
+        vcpu.sepc = sepc + 4;
+    } else {
+        panic!("trap handler: {} at {:#x}", scause, sepc);
     }
+    
+    vcpu.run();
 }
 ```
 
-`scause=0xa`가 VS-mode의 `ecall`입니다. SBI 규약 보니까 `a7`(x17)에 extension ID, `a6`(x16)에 function ID가 들어있습니다. `console_putchar`는 extension=0x1, function=0x0이고, `a0`(x10)에 문자가 들어있습니다.
+`scause=10`이 VS-mode의 `ecall`입니다. SBI 규약에 따르면 `a7`에 extension ID, `a6`에 function ID가 들어있습니다. `console_putchar`는 extension=0x1, function=0x0이고, `a0`에 문자가 들어있습니다.
 
 `sepc`를 4 증가시켜야 다음 명령으로 넘어갑니다. 이거 안 하면 같은 `ecall`을 계속 반복합니다.
 
