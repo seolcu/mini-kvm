@@ -36,11 +36,13 @@
 12. Interrupt Injection - 인터럽트
 13. Outro - 마무리
 
+이 중 챕터 8부터는 미완성인 듯 합니다.
+
 ### Chapter 1-2: 개발 환경 및 부팅 구조 만들기
 
 #### Rust 툴체인 설치
 
-Rustup으로 설치했습니다:
+패키지 매니저 대신 튜토리얼에서 권장하는 Rustup으로 설치했습니다:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -50,7 +52,7 @@ QEMU는 이미 설치되어 있었기 때문에 넘어갔습니다.
 
 #### Rust 프로젝트 생성
 
-새 프로젝트를 만들고 RISC-V 타겟을 추가했습니다:
+새 프로젝트를 만들었습니다:
 
 ```bash
 cargo init --bin hypervisor
@@ -190,7 +192,7 @@ chmod +x run.sh
 ./run.sh
 ```
 
-OpenSBI 부팅 메시지가 출력된 후 멈췄습니다. 아직 아무것도 출력하지 않지만, `main()` 함수의 무한 루프가 실행되고 있습니다.
+OpenSBI 부팅 메시지가 출력된 후 멈췄습니다. 아직 아무것도 출력하지 않지만, `main()` 함수의 무한 루프가 실행되고 있는 듯 합니다.
 
 ### Chapter 3: Hello World
 
@@ -312,7 +314,7 @@ fn main() -> ! {
 Booting hypervisor...
 ```
 
-드디어 출력이 됐습니다!
+드디어 출력에 성공했습니다.
 
 ### Chapter 4: Memory Allocation
 
@@ -320,13 +322,13 @@ Booting hypervisor...
 
 `no_std` 환경에서 `Vec`, `Box` 같은 자료구조를 쓰려면 메모리 할당자를 직접 구현해야 합니다. 가장 단순한 bump allocator를 구현했습니다.
 
-`spin` 크레이트를 추가했습니다:
+`spin` 크레이트를 추가합니다.
 
 ```bash
 cargo add spin
 ```
 
-`src/allocator.rs`를 만들었습니다:
+`src/allocator.rs`를 만듭니다.
 
 ```rust
 use core::alloc::{GlobalAlloc, Layout};
@@ -367,7 +369,7 @@ static ALLOCATOR: Mutex<BumpAllocator> = Mutex::new(BumpAllocator {
 });
 ```
 
-링커 스크립트에 힙 영역을 추가했습니다:
+링커 스크립트에 힙 영역을 추가합니다.
 
 ```ld
     . = ALIGN(16);
@@ -419,7 +421,7 @@ pub fn alloc_pages(size: usize) -> *mut u8 {
 
 #### 테스트
 
-`Vec`을 테스트해봤습니다:
+`Vec`을 테스트해봤습니다
 
 ```rust
 extern crate alloc;
@@ -440,14 +442,14 @@ fn main() -> ! {
 }
 ```
 
-실행 결과:
+다음과 같은 실행 결과가 출력되었습니다:
 
 ```
 Booting hypervisor...
 vec test: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 ```
 
-잘 작동합니다!
+잘 작동합니다.
 
 ### Chapter 5-6: Guest Mode 및 Page Table
 
@@ -505,7 +507,7 @@ panic: trap: scause=0xc at 0x80200b7a (stval=0x80200b7a)
 
 #### Guest Page Table 구현
 
-2-stage address translation을 구현해야 합니다. `src/guest_page_table.rs`를 만들었습니다:
+2-stage address translation을 구현해야 합니다. `src/guest_page_table.rs`를 만듭니다.
 
 ```rust
 use crate::allocator::alloc_pages;
@@ -570,7 +572,7 @@ riscv64-linux-gnu-objcopy -O binary guest.elf guest.bin
 
 #### 메모리 로딩 및 매핑
 
-게스트 코드를 메모리에 로드하고 page table에 매핑했습니다:
+게스트 코드를 메모리에 로드하고 page table에 매핑합니다.
 
 ```rust
 fn main() -> ! {
@@ -625,7 +627,7 @@ Booting hypervisor...
 map: 00100000 -> 80305000
 ```
 
-멈췄습니다. 게스트 코드가 무한 루프를 실행하고 있기 때문입니다. 게스트 모드 진입에 성공했습니다!
+멈췄습니다. 게스트 코드가 무한 루프를 실행하고 있기 때문으로 보입니다.
 
 #### 문제: alloc_pages 길이 처리
 
@@ -664,7 +666,7 @@ halt:
     j halt
 ```
 
-빌드하고 실행하면 트랩이 발생합니다:
+빌드하고 실행하면 이렇게 트랩이 발생합니다.
 
 ```
 panic: trap: scause=0xa at 0x100008 (stval=0x0)
@@ -674,7 +676,7 @@ panic: trap: scause=0xa at 0x100008 (stval=0x0)
 
 #### VCpu 구조체 도입
 
-Hypercall을 구현하기 전에, 게스트 상태를 관리할 `VCpu` 구조체를 만들겠습니다. 새 파일 `src/vcpu.rs`를 만들었습니다:
+Hypercall을 구현하기 전에, 게스트 상태를 관리할 `VCpu` 구조체를 만들겠습니다. 새 파일 `src/vcpu.rs`를 만듭니다.
 
 ```rust
 use core::{arch::asm, mem::offset_of};
@@ -832,7 +834,7 @@ impl VCpu {
 
 #### main() 수정
 
-`src/main.rs`에서 `VCpu`를 사용하도록 수정했습니다:
+`src/main.rs`에서 `VCpu`를 사용하도록 수정합니다.
 
 ```rust
 mod vcpu;
@@ -934,37 +936,25 @@ SBI call: eid=0x1, fid=0x0, a0=0x42 ('B')
 SBI call: eid=0x1, fid=0x0, a0=0x43 ('C')
 ```
 
-됐습니다! 게스트에서 하이퍼바이저로 문자를 전달해서 출력하는 데 성공했습니다.
+성공했습니다. 게스트에서 하이퍼바이저로 문자를 전달해서 출력되는 모습입니다.
 
 ### 튜토리얼 8-10챕터 확인
 
 Chapter 7까지 끝내고, 남은 챕터들을 봤습니다.
 
-#### Chapter 8-10 코드가 이미 있음
+#### 나머지 챕터
 
-튜토리얼 저장소를 보니까 Chapter 8-10 구현이 다 돼있었습니다:
+챕터 8~10까지는 튜토리얼에는 미완성이라고 되어있지만, 튜토리얼 저장소를 보니까 Chapter 8-10 구현이 어느정도 되어있는 것 같았습니다.
 
-- **Chapter 8**: Docker로 Linux 커널 크로스 컴파일하는 스크립트
-- **Chapter 9**: 커널 로더와 device tree 생성 코드
-- **Chapter 10**: 여러 SBI extension 구현 (Console buffering, timer, PLIC)
+그래서 코드를 복사해서 실행해봤는데, Linux 부팅 시도하니까 초기 커널 메시지 몇 개 나오다가 guest page fault 나면서 멈췄습니다.
 
-코드를 복사해서 실행해봤는데, Linux 부팅 시도하니까 초기 커널 메시지 몇 개 나오다가 PLIC 접근할 때 guest page fault 나면서 멈췄습니다.
+Chapter 11(MMIO), 12(Interrupt), 13(Outro)는 아예 작업이 되지 않은 것 같습니다.
 
-#### Chapter 11-13은 빈껍데기
-
-Chapter 11(MMIO), 12(Interrupt), 13(Outro)는 stub만 있고 실제 코드가 없었습니다.
-
-#### 따라가지 않기로 함
-
-Chapter 8-10을 할지 말지 고민했는데, 안 하기로 했습니다.
-
-코드가 이미 다 있어서 복사만 하는 꼴이 될 것 같았고, Linux도 제대로 부팅이 안 됩니다. 그리고 PLIC, device tree, SBI 같은 건 RISC-V 전용이라 x86 갈 때는 어차피 못 씁니다.
-
-Chapter 1-7에서 게스트 모드 진입, VM exit 처리, hypercall, 2-stage translation 같은 핵심 개념은 다 배운 것 같습니다.
+따라서 우선은 여기까지 하기로 했습니다.
 
 ### x86 KVM으로 전환 준비
 
-RISC-V 튜토리얼로 하이퍼바이저의 핵심 구조를 이해했으니, 이제 x86 KVM으로 전환할 차례입니다.
+RISC-V 튜토리얼로 하이퍼바이저의 핵심 구조를 어느 정도 이해했으니, 이제 x86 KVM으로 전환할 계획을 세웠습니다.
 
 RISC-V에서 배운 걸 정리하면:
 
@@ -975,139 +965,17 @@ RISC-V에서 배운 걸 정리하면:
 - Guest 실행: CSR 설정 (`hgatp`, `hstatus`, `sepc`) → `sret`
 - VM Exit: trap handler → 레지스터 저장 → Rust 코드 처리 → 레지스터 복원 → `sret`
 
-이걸 x86 KVM으로 대응시키면:
+이걸 x86 KVM에 대응하는 코드로 바꾸면 될 것 같습니다.
 
-- `alloc_pages()` → `mmap()` + `KVM_SET_USER_MEMORY_REGION`
-- `guest_page_table.map()` → `KVM_SET_USER_MEMORY_REGION`
-- `csrw hgatp` → `KVM_SET_SREGS` (CR3, EFER)
-- `csrw sepc; sret` → `KVM_SET_REGS` (RIP) + `KVM_RUN`
-- `trap_handler()` → VM exit reason 처리 루프
 
-#### KVM API 문서 살펴보기
+### 다음주 todo
 
-Linux 커널의 [KVM API 문서](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)를 봤습니다.
-
-핵심 API:
-
-```c
-// KVM 초기화
-int kvm_fd = open("/dev/kvm", O_RDWR);
-int vm_fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
-
-// vCPU 생성
-int vcpu_fd = ioctl(vm_fd, KVM_CREATE_VCPU, 0);
-
-// 메모리 매핑
-struct kvm_userspace_memory_region region = {
-    .slot = 0,
-    .guest_phys_addr = 0,
-    .memory_size = 0x1000,
-    .userspace_addr = (unsigned long)mmap(...),
-};
-ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION, &region);
-
-// 레지스터 설정
-struct kvm_regs regs;
-ioctl(vcpu_fd, KVM_GET_REGS, &regs);
-regs.rip = 0x1000;
-ioctl(vcpu_fd, KVM_SET_REGS, &regs);
-
-// 게스트 실행
-struct kvm_run *run = mmap(..., vcpu_fd, 0);
-while (1) {
-    ioctl(vcpu_fd, KVM_RUN, 0);
-    switch (run->exit_reason) {
-        case KVM_EXIT_HLT:
-            return 0;
-        case KVM_EXIT_IO:
-            // I/O 처리
-            break;
-    }
-}
-```
-
-RISC-V와 비교하면:
-
-```
-1. [RISC-V] let guest_memory = alloc_pages(size)
-   [x86 KVM] mmap(..., size, ...)
-
-2. [RISC-V] guest_page_table.map(gpa, hpa, flags)
-   [x86 KVM] KVM_SET_USER_MEMORY_REGION
-
-3. [RISC-V] csrw hgatp, page_table.hgatp()
-   [x86 KVM] KVM_SET_SREGS (CR3)
-
-4. [RISC-V] csrw sepc, entry; sret
-   [x86 KVM] KVM_SET_REGS (RIP); KVM_RUN
-
-5. [RISC-V] trap_handler() → match scause
-   [x86 KVM] KVM_RUN 반환 → switch (exit_reason)
-```
-
-### 앞으로 할 일
-
-**Week 7-8: 최소 KVM 프로그램**
-
-간단한 게스트 코드 실행:
-
-```asm
-.code16
-start:
-    jmp start
-```
-
-구현 단계:
-1. KVM 초기화 (`/dev/kvm`, `KVM_CREATE_VM`)
-2. 게스트 메모리 매핑 (`mmap` + `KVM_SET_USER_MEMORY_REGION`)
-3. vCPU 생성 및 레지스터 설정 (real mode)
-4. 게스트 코드 실행 (`KVM_RUN`)
-5. VM exit 처리 루프 (HLT)
-
-**Week 8-9: I/O 에뮬레이션**
-
-Serial port(0x3F8) 에뮬레이션으로 게스트에서 문자 출력
-
-**Week 9-10: Protected Mode 전환**
-
-GDT 설정, real mode → protected mode 전환, page table 설정
-
-**Week 10-11: 부트로더 실행**
-
-MBR 부트 섹터 실행, xv6 부트로더 분석
-
-**Week 11-15: xv6 커널 부팅**
-
-커널 로딩, 인터럽트/디스크 I/O 에뮬레이션
+- KVM: 간단한 게스트 코드 실행
 
 ### 참고 자료
 
 - [RISC-V Hypervisor Tutorial](https://1000hv.seiya.me/en/)
 - [Tutorial GitHub Repository](https://github.com/nuta/tutorial-risc-v)
-- [KVM API Documentation](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
-- [RISC-V Privileged Specification](https://riscv.org/technical/specifications/)
 
 구현한 코드는 `hypervisor/` 폴더에 있습니다.
 
-## 결론
-
-이번 5-6주차에는 교수님이 추천하신 RISC-V 튜토리얼로 하이퍼바이저의 핵심 구조를 직접 구현해봤습니다.
-
-총 7개 챕터를 완료했습니다:
-1. Getting Started - 개발 환경 구성
-2. Boot - 하이퍼바이저 부팅
-3. Hello World - SBI 콘솔 출력
-4. Memory Allocation - Bump allocator, page allocator 구현
-5. Guest Mode - 게스트 모드 진입
-6. Guest Page Table - 2-stage address translation 구현
-7. Hello from Guest - VCpu 추상화와 hypercall 구현
-
-약 500줄 정도의 Rust 코드로 bare-metal 하이퍼바이저를 만들었습니다. OpenSBI 펌웨어 위에서 부팅하고, bump allocator와 page allocator로 메모리를 관리합니다. 4-level guest page table(Sv48x4)로 2-stage address translation을 구현했고, VCpu 구조체로 게스트 상태를 관리하며 hypercall을 통해 게스트-호스트 간 통신을 구현했습니다.
-
-하이퍼바이저가 어떻게 작동하는지 이해할 수 있었습니다. 부팅 과정, 메모리 관리, 게스트 모드 전환(`sret` 명령), VM exit 처리(trap handler) 같은 것들입니다. 2-stage address translation으로 각 VM이 독립적인 메모리를 가진 것처럼 격리하는 방법도 배웠습니다.
-
-Bare-metal programming도 처음 해봤습니다. `#![no_std]`로 표준 라이브러리 없이 개발하고, 링커 스크립트로 메모리 레이아웃을 제어하고, CSR 레지스터를 직접 제어하고, inline assembly를 쓰는 것들입니다.
-
-튜토리얼 8장 이후는 미완성이었지만, 초반 7개 챕터만으로도 핵심 개념은 충분히 배운 것 같습니다. RISC-V에서 배운 걸 x86 KVM으로 적용할 준비가 됐습니다. RISC-V가 단순하고 일관성 있어서 하이퍼바이저 개념을 이해하기 좋았습니다.
-
-다음 주차부터는 x86 KVM API로 최소한의 VMM을 구현할 계획입니다.
