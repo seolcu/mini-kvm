@@ -34,6 +34,7 @@
 
 ### Reference Projects
 
+- [HLeOs](https://github.com/HLe4s/HLeOs)
 - [Bochs Repository](https://github.com/bochs-emu/Bochs)
 - [xv6 Repository](https://github.com/mit-pdos/xv6-public)
 - [QEMU Repository](https://gitlab.com/qemu-project/qemu)
