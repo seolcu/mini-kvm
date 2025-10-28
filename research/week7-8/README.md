@@ -223,44 +223,7 @@ run : $(IMAGE_DIR)
 
 ![alt text](image.png)
 
-QEMU가 실행되고 화면에 엄청나게 빠른 속도로 `Hello!Hi!Hello!Hi!...` 같은 문자들이 출력되기 시작했습니다.
-
-### 코드 분석 - 멀티태스킹
-
-HLeOs가 정상적으로 실행되고 있는 것 같은데, 왜 이렇게 빠르게 "Hello!"와 "Hi!"가 번갈아 출력되는지 궁금해서 코드를 살펴봤습니다.
-
-`src/main.rs`를 확인해보니, 다음과 같이 여러 개의 스레드를 생성하고 있었습니다:
-
-```rust
-let print_hello = thread::Thread::new_with_func(jobs::print_hello as usize, 1, None);
-let print_hi = thread::Thread::new_with_func(jobs::print_hi as usize, 1, None);
-let getch_main = thread::Thread::new_with_func(jobs::getch_main as usize, 0, None);
-let dummy = thread::Thread::new_with_func(dummy_c as usize, 0, None);
-```
-
-`src/hleos/thread/jobs.rs`를 보니, `print_hello`와 `print_hi` 함수가 각각 무한 루프를 돌면서 "Hello!"와 "Hi!"를 출력하고 있었습니다:
-
-```rust
-pub extern "C" fn print_hello() {
-    loop {
-        print!("Hello!");
-    }
-}
-
-pub extern "C" fn print_hi() {
-    loop {
-        print!("Hi!");
-    }
-}
-```
-
-그리고 `src/main.rs`에서 타이머 인터럽트를 설정하는 부분을 발견했습니다:
-
-```rust
-timer::init_timer(&TIMER_INFO);
-```
-
-타이머 인터럽트가 발생할 때마다 스케줄러가 스레드를 전환하는 방식으로 멀티태스킹이 구현되어 있는 것 같습니다. 그래서 `print_hello`와 `print_hi` 스레드가 타이머에 의해 번갈아가며 실행되면서, 화면에 "Hello!"와 "Hi!"가 빠르게 출력되는 것입니다.
+QEMU가 실행되고 화면에 엄청나게 빠른 속도로 `Hello!Hi!Hello!Hi!...` 같은 문자들이 출력되기 시작했습니다. 정상적으로 실행되고 있는 것으로 보입니다.
 
 ### 다음주 todo
 
