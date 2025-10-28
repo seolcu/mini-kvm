@@ -36,7 +36,7 @@ README에 Quick Start 가이드가 있어서 그대로 따라가보기로 했습
 
 #### Rust 설치
 
-시스템에 Rust의 stable 버전이 설치되어 있어서, nightly로 전환했습니다.
+시스템에 Rust의 stable 버전이 설치되어 있어서, rustup을 이용해 nightly로 전환했습니다.
 
 ```bash
 cd HLeOs/HLeOs
@@ -158,74 +158,35 @@ SSE를 비활성화했는데 (`"-mmx,-sse"`), SSE 레지스터를 사용하는 �
 
 #### 과거 Rust nightly 버전 설치
 
-HLeOs의 마지막 커밋 날짜를 확인해봤더니,
-2024년 2월 22일이었습니다. 하지만 이건 README 업데이트 커밋이고, 실제 개발 커밋들을 확인해봤습니다.
-
-```bash
-$ git log --format="%ci %s" | grep -E "(Ch\.|bug fix final|enable)" | head -5
-2023-09-24 15:27:55 +0900 enable c include
-2023-09-23 17:04:32 +0900 bug fix final
-2023-09-20 12:16:19 +0900 enable to link a c object file
-2022-05-12 21:40:12 +0900 Ch.06 Multi Tasking
-```
-
-실제 주요 개발은 2023년 9월에 이루어진 것으로 보입니다! 그렇다면 2023년 9월경의 Rust nightly를 사용해야 할 것 같습니다.
-
-2023년 9월 24일경의 Rust nightly를 설치해봤습니다:
-
-```bash
-rustup install nightly-2023-09-24
-rustup override set nightly-2023-09-24
-rustup component add rust-src --toolchain nightly-2023-09-24-x86_64-unknown-linux-gnu
-rustup component add llvm-tools-preview --toolchain nightly-2023-09-24-x86_64-unknown-linux-gnu
-```
-
-### 여섯 번째 빌드 시도
-
-2023-09-24 nightly로 빌드를 시도했습니다:
-
-```bash
-cargo clean
-make
-```
-
-하지만 x86_64 크레이트에서 40개의 에러가 발생했습니다. 2023년 9월은 너무 오래된 것 같습니다.
-
-생각해보니, "bug fix final" 커밋이 2023년 9월 23일이고, 그 이후 2024년 2월까지 README 업데이트만 있었다는 건, 2023년 10월~2024년 1월 사이 어느 시점의 Rust nightly가 정상 작동했을 것입니다.
-
-2023년 11월경을 시도해봤습니다:
-
-```bash
-rustup install nightly-2023-11-01
-rustup override set nightly-2023-11-01
-rustup component add rust-src --toolchain nightly-2023-11-01-x86_64-unknown-linux-gnu
-rustup component add llvm-tools-preview --toolchain nightly-2023-11-01-x86_64-unknown-linux-gnu
-```
-
-### 일곱 번째 빌드 시도
-
-2023-11-01 nightly로도 여전히 x86_64 크레이트에서 같은 에러가 발생했습니다. 문제는 bootloader 0.9.8이 사용하는 x86_64 크레이트 버전이 오래되어, 최신 Rust와 호환되지 않는 것으로 판단했습니다.
-
-#### bootloader 버전 변경
-
-따라서 bootloader 버전을 0.9.23으로 올려봤습니다:
-
-```toml
-bootloader = "=0.9.23"
-```
-
-그리고 2024-01-15 nightly로 빌드를 시도했습니다:
+HLeOs의 마지막 커밋 날짜를 확인해봤더니 2024년 2월 22일이었습니다. 따라서 이 시점에서 한 달 전 정도인 2024-01-15 버전의 Rust nightly를 설치했습니다.
 
 ```bash
 rustup install nightly-2024-01-15
 rustup override set nightly-2024-01-15
 rustup component add rust-src --toolchain nightly-2024-01-15-x86_64-unknown-linux-gnu
 rustup component add llvm-tools-preview --toolchain nightly-2024-01-15-x86_64-unknown-linux-gnu
+```
+
+### 다섯 번째 빌드 시도
+
+2024-01-15 nightly로 빌드를 시도했습니다:
+
+```bash
 cargo clean
 make
 ```
 
-드디어 빌드에 성공했습니다!
+이번엔 x86_64 크레이트에서 에러가 발생했습니다. bootloader 0.9.8이 사용하는 x86_64 크레이트 버전이 오래되어, 최신 Rust와 호환되지 않는 것으로 판단했습니다.
+
+#### bootloader 버전 변경
+
+해당 프로젝트 README의 Troubleshooting 부분에서 비슷한 부분을 발견하여, bootloader 버전을 0.9.23으로 올려봤습니다:
+
+```toml
+bootloader = "=0.9.23"
+```
+
+그랬더니, 빌드 성공했습니다.
 
 ```
 Created bootimage for `HLeOs` at `/home/seolcu/문서/코드/mini-kvm/HLeOs/HLeOs/target/x86_64-HLeos/debug/bootimage-HLeOs.bin`
@@ -250,7 +211,7 @@ xauth:  file /home/seolcu/.Xauthority does not exist
 xauth: (argv):1:  bad "add" command line
 ```
 
-Makefile 24번째 줄의 xauth 라인은 X11 forwarding을 위한 것인데, 저는 Wayland를 사용중이라 `.Xauthority` 파일이 없어서 문제가 발생했습니다. 이 라인을 주석 처리했습니다:
+Makefile 24번째 줄의 xauth 라인은 X11 forwarding을 위한 것인데, 저는 Wayland를 사용중이라 `.Xauthority` 파일이 없어서 문제가 발생한 것 같았습니다. 따라서 이 라인을 주석 처리했습니다:
 
 ```makefile
 run : $(IMAGE_DIR)
@@ -262,7 +223,7 @@ run : $(IMAGE_DIR)
 
 ![alt text](image.png)
 
-QEMU가 실행되고 화면에 엄청나게 빠른 속도로 `Hello!Hi!Hello!Hi!...` 같은 문자들이 출력되기 시작했습니다!
+QEMU가 실행되고 화면에 엄청나게 빠른 속도로 `Hello!Hi!Hello!Hi!...` 같은 문자들이 출력되기 시작했습니다.
 
 ### 코드 분석 - 멀티태스킹
 
@@ -301,13 +262,6 @@ timer::init_timer(&TIMER_INFO);
 
 타이머 인터럽트가 발생할 때마다 스케줄러가 스레드를 전환하는 방식으로 멀티태스킹이 구현되어 있는 것 같습니다. 그래서 `print_hello`와 `print_hi` 스레드가 타이머에 의해 번갈아가며 실행되면서, 화면에 "Hello!"와 "Hi!"가 빠르게 출력되는 것입니다.
 
-## 결론
+### 다음주 todo
 
-HLeOs를 성공적으로 빌드하고 실행했습니다! 과정에서 여러 호환성 문제들을 만났지만, 결국 다음과 같은 해결책으로 성공할 수 있었습니다:
-
-1. **bootloader 버전 업데이트**: 0.9.8 → 0.9.23
-2. **Rust nightly 버전**: nightly-2024-01-15 사용
-3. **C 코드 수정**: 포인터 캐스팅 추가
-4. **Makefile 수정**: 경로 업데이트 및 xauth 라인 주석 처리
-
-HLeOs는 베어메탈 환경에서 실행되는 간단한 OS로, 타이머 기반의 멀티태스킹을 구현하고 있습니다. 다음 주에는 이 코드를 더 자세히 분석하고, 메모리 관리나 인터럽트 핸들링 같은 부분을 공부해볼 예정입니다.
+- 코드 분석, 개발
