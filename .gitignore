@@ -1,1 +1,39 @@
-HLeOs/HLeOs/target/
+# Linux kernel source (too large)
+linux-*/
+*.tar.xz
+*.tar.gz
+*.tar.bz2
+
+# Busybox (not used in final implementation)
+busybox-*/
+
+# Build artifacts
+*.o
+*.elf
+*.bin
+*.a
+*.so
+build/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Kernel build artifacts
+.config.old
+.tmp_versions/
+
+# Initramfs build artifacts (keep source, ignore build)
+initramfs/*.o
+initramfs/init
+
+# Python
+__pycache__/
+*.pyc
+
+# Rust (for future VMM)
+target/
+Cargo.lock
