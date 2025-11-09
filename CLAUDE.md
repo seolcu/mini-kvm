@@ -6,6 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a self-directed university project (Ajou University) to develop a minimal Virtual Machine Monitor (VMM) using Linux KVM API. The project is currently implemented as a bare-metal RISC-V hypervisor written in Rust, following the tutorial at https://1000hv.seiya.me/en/. The goal is to learn hypervisor concepts on RISC-V before eventually transitioning to x86 KVM.
 
+## Repository Structure
+
+- **hypervisor/** - Main RISC-V hypervisor implementation (primary development area)
+  - `src/` - Rust source code (main.rs, vcpu.rs, trap.rs, guest_page_table.rs, allocator.rs, print.rs)
+  - `guest.S` - Guest assembly code (minimal test program)
+  - `build.sh` - Build script for guest and hypervisor
+  - `run.sh` - Script to build and run in QEMU
+  - `hypervisor.ld` - Custom linker script defining memory layout
+  - `Cargo.toml` - Rust project configuration
+  - `rust-toolchain.toml` - Rust toolchain specification
+- **HLeOs/** - Reference x86_64 educational OS project (separate codebase)
+- **research/** - Weekly research notes documenting learning progress
+- **meetings/** - Weekly supervisor meeting logs
+- **README.md** - 16-week project timeline and references
+
 The hypervisor implements:
 - Guest mode execution using RISC-V H-extension
 - 2-stage address translation (guest PA → host PA)
@@ -39,6 +54,29 @@ cd hypervisor
 RUSTFLAGS="-C link-arg=-Thypervisor.ld -C linker=rust-lld" \
   cargo build --bin hypervisor --target riscv64gc-unknown-none-elf
 ```
+
+## Development Tools
+
+### Rust Toolchain
+- **Edition**: 2024
+- **Target**: riscv64gc-unknown-none-elf
+- **Toolchain**: stable
+- **Dependencies**:
+  - `spin = "0.10.0"` (for spinlocks/mutexes in no_std environment)
+
+The project uses a custom linker script (hypervisor.ld) and the Rust LLD linker (rust-lld).
+
+### GitHub Actions
+This repository has two automated Claude Code workflows:
+
+1. **Claude Code Review** (`.github/workflows/claude-code-review.yml`)
+   - Runs on all pull requests
+   - Provides automated code review feedback
+   - Checks: code quality, bugs, performance, security, test coverage
+
+2. **Claude Code Assistant** (`.github/workflows/claude-code.yml`)
+   - Triggered by @claude mentions in issues/PRs
+   - Provides interactive assistance with GitHub operations
 
 ## Architecture
 
@@ -124,12 +162,20 @@ The hypervisor requires:
 
 ## Current Project Status
 
-The project is at Week 7-9 (around mid-term report). Chapters 1-7 of the RISC-V tutorial are complete:
-- ✅ Boot, memory allocation, guest mode entry, page tables, hypercalls
-- ⏸️ Chapters 8-10 (Linux boot) partially implemented but incomplete
-- ❌ Chapters 11-13 (MMIO, interrupts) not started
+**Current Week**: Week 10 (of 16-week timeline)
+**Timeline Context**: Mid-term report submitted Week 8 (Oct 24); Final report due Week 16 (Dec 19)
 
-Next steps: Testing executable binaries and preparing for transition to x86 KVM.
+**Progress**:
+- ✅ Chapters 1-7: Boot, memory allocation, guest mode entry, page tables, hypercalls (complete)
+- ⏸️ Chapters 8-10: Linux boot implementation (partially complete, in progress)
+- ❌ Chapters 11-13: MMIO, interrupts (not started)
+
+**Current Focus**: Linux kernel/boot process learning and testing executable binaries
+
+**Next Steps**:
+- Week 11: Bootloader execution code
+- Week 12-13: Linux kernel execution and stabilization
+- Week 14-16: Final testing, documentation, and project completion
 
 ## References
 
@@ -138,3 +184,4 @@ Key documentation used in development:
 - KVM API Documentation: https://www.kernel.org/doc/html/latest/virt/kvm/api.html
 
 Research notes and meeting logs are in `research/` and `meetings/` directories.
+- commit & push regularly.
