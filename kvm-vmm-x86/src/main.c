@@ -39,13 +39,21 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size) {
 
     // Get file size
     fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
+    long fsize_long = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    printf("Guest binary size: %ld bytes\n", fsize);
+    if (fsize_long < 0) {
+        perror("ftell");
+        fclose(f);
+        return -1;
+    }
+
+    size_t fsize = (size_t)fsize_long;
+
+    printf("Guest binary size: %zu bytes\n", fsize);
 
     if (fsize > mem_size) {
-        fprintf(stderr, "Guest binary too large (%ld bytes > %zu bytes)\n",
+        fprintf(stderr, "Guest binary too large (%zu bytes > %zu bytes)\n",
                 fsize, mem_size);
         fclose(f);
         return -1;
@@ -65,7 +73,8 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size) {
 
     // Show first few bytes
     printf("First bytes: ");
-    for (int i = 0; i < (fsize < 16 ? fsize : 16); i++) {
+    size_t bytes_to_show = (fsize < 16 ? fsize : 16);
+    for (size_t i = 0; i < bytes_to_show; i++) {
         printf("%02x ", ((unsigned char*)(mem + GUEST_LOAD_ADDR))[i]);
     }
     printf("\n");
@@ -77,7 +86,6 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size) {
  * Initialize KVM and create VM
  */
 static int init_kvm(void) {
-    int ret;
     int api_version;
 
     // 1. Open /dev/kvm
@@ -169,11 +177,12 @@ static int setup_vcpu(void) {
     printf("Created vCPU (fd=%d)\n", vcpu_fd);
 
     // 2. Get kvm_run structure size and mmap it
-    mmap_size = ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
-    if (mmap_size < 0) {
+    int mmap_size_ret = ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
+    if (mmap_size_ret < 0) {
         perror("KVM_GET_VCPU_MMAP_SIZE");
         return -1;
     }
+    mmap_size = (size_t)mmap_size_ret;
 
     kvm_run = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE,
                    MAP_SHARED, vcpu_fd, 0);
@@ -271,15 +280,30 @@ static int run_vm(void) {
                 printf("Guest halted successfully!\n");
                 return 0;  // Normal exit
 
-            case KVM_EXIT_IO:
-                printf("VM Exit #%d: I/O operation\n", exit_count);
-                printf("  Direction: %s\n",
-                       kvm_run->io.direction == KVM_EXIT_IO_OUT ? "OUT" : "IN");
-                printf("  Port: 0x%x\n", kvm_run->io.port);
-                printf("  Size: %d bytes\n", kvm_run->io.size);
+            case KVM_EXIT_IO: {
+                // Handle port I/O
+                char *data = (char *)kvm_run + kvm_run->io.data_offset;
 
-                // TODO: Handle I/O (will implement later for UART)
+                if (kvm_run->io.direction == KVM_EXIT_IO_OUT) {
+                    // OUT instruction: guest writing to port
+                    if (kvm_run->io.port == 0x3f8) {
+                        // UART COM1 port - output character
+                        for (int i = 0; i < kvm_run->io.size; i++) {
+                            putchar(data[i]);
+                        }
+                        fflush(stdout);
+                    } else {
+                        // Unknown port
+                        printf("VM Exit #%d: OUT to unknown port 0x%x\n",
+                               exit_count, kvm_run->io.port);
+                    }
+                } else {
+                    // IN instruction: guest reading from port
+                    printf("VM Exit #%d: IN from port 0x%x (not implemented)\n",
+                           exit_count, kvm_run->io.port);
+                }
                 break;
+            }
 
             case KVM_EXIT_MMIO:
                 printf("VM Exit #%d: MMIO access\n", exit_count);

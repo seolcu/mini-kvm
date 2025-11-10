@@ -6,8 +6,9 @@ LDFLAGS =
 
 TARGET = kvm-vmm
 GUEST_BIN = guest/minimal.bin
+GUEST_HELLO = guest/hello.bin
 
-.PHONY: all clean guest vmm test
+.PHONY: all clean guest vmm test test-hello
 
 all: guest vmm
 
@@ -17,6 +18,15 @@ guest:
 	cd guest && ./build.sh
 	@echo
 
+# Build hello guest
+hello:
+	@echo "=== Building hello guest ==="
+	cd guest && as -32 -o hello.o hello.S && \
+	ld -m elf_i386 -T guest.ld -o hello.elf hello.o && \
+	objcopy -O binary -j .text -j .rodata hello.elf hello.bin
+	@ls -lh guest/hello.bin
+	@echo
+
 # Build VMM
 vmm: src/main.c
 	@echo "=== Building VMM ==="
@@ -24,10 +34,15 @@ vmm: src/main.c
 	@echo "Built: $(TARGET)"
 	@echo
 
-# Run the VMM with guest
+# Run the VMM with minimal guest
 test: all
-	@echo "=== Running VMM ==="
+	@echo "=== Running VMM (minimal guest) ==="
 	./$(TARGET) $(GUEST_BIN)
+
+# Run the VMM with hello guest
+test-hello: vmm hello
+	@echo "=== Running VMM (hello guest) ==="
+	./$(TARGET) $(GUEST_HELLO)
 
 # Clean build artifacts
 clean:

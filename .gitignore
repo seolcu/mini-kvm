@@ -15,6 +15,10 @@ busybox-*/
 *.so
 build/
 
+# VMM executables
+kvm-vmm-x86/kvm-vmm
+kvm-vmm/kvm-vmm
+
 # IDE/Editor
 .vscode/
 .idea/
