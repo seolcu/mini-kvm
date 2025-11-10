@@ -18,6 +18,15 @@
 #define GUEST_MEM_SIZE (1 << 20)  // 1MB (Real mode maximum)
 #define GUEST_LOAD_ADDR 0x0       // Load guest at address 0
 
+// Hypercall interface
+#define HYPERCALL_PORT 0x500      // Port for hypercalls
+
+// Hypercall numbers
+#define HC_EXIT       0x00        // Exit guest
+#define HC_PUTCHAR    0x01        // Output character (BL = char)
+#define HC_PUTNUM     0x02        // Output number (BX = number, decimal)
+#define HC_NEWLINE    0x03        // Output newline
+
 // File descriptors
 static int kvm_fd = -1;
 static int vm_fd = -1;
@@ -255,6 +264,49 @@ static int setup_vcpu(void) {
 }
 
 /*
+ * Handle hypercall from guest
+ * Returns: 0 = continue, 1 = exit guest
+ */
+static int handle_hypercall(struct kvm_regs *regs) {
+    unsigned char hc_num = regs->rax & 0xFF;  // AL = hypercall number
+
+    switch (hc_num) {
+        case HC_EXIT:
+            // Guest requested exit
+            printf("[Hypercall] Guest exit request\n");
+            return 1;  // Signal to exit
+
+        case HC_PUTCHAR: {
+            // Output single character
+            char ch = regs->rbx & 0xFF;  // BL = character
+            putchar(ch);
+            fflush(stdout);
+            break;
+        }
+
+        case HC_PUTNUM: {
+            // Output number in decimal
+            unsigned short num = regs->rbx & 0xFFFF;  // BX = number
+            printf("%u", num);
+            fflush(stdout);
+            break;
+        }
+
+        case HC_NEWLINE:
+            // Output newline
+            putchar('\n');
+            fflush(stdout);
+            break;
+
+        default:
+            fprintf(stderr, "[Hypercall] Unknown hypercall: 0x%02x\n", hc_num);
+            return -1;
+    }
+
+    return 0;  // Continue execution
+}
+
+/*
  * Run vCPU and handle VM exits
  */
 static int run_vm(void) {
@@ -286,7 +338,23 @@ static int run_vm(void) {
 
                 if (kvm_run->io.direction == KVM_EXIT_IO_OUT) {
                     // OUT instruction: guest writing to port
-                    if (kvm_run->io.port == 0x3f8) {
+                    if (kvm_run->io.port == HYPERCALL_PORT) {
+                        // Hypercall port - get registers and handle
+                        struct kvm_regs regs;
+                        if (ioctl(vcpu_fd, KVM_GET_REGS, &regs) < 0) {
+                            perror("KVM_GET_REGS");
+                            return -1;
+                        }
+
+                        int hc_result = handle_hypercall(&regs);
+                        if (hc_result == 1) {
+                            // Guest requested exit
+                            return 0;
+                        } else if (hc_result < 0) {
+                            // Hypercall error
+                            return -1;
+                        }
+                    } else if (kvm_run->io.port == 0x3f8) {
                         // UART COM1 port - output character
                         for (int i = 0; i < kvm_run->io.size; i++) {
                             putchar(data[i]);
