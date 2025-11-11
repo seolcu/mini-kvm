@@ -1,7 +1,7 @@
 /*
  * Minimal KVM-based Virtual Machine Monitor (x86)
  *
- * This VMM creates a VM using Linux KVM API and runs a simple guest in Real Mode.
+ * This VMM creates a VM using Linux KVM API and runs a simple guest in Real Mode or Protected Mode.
  */
 
 #include <stdio.h>
@@ -13,10 +13,19 @@
 #include <sys/mman.h>
 #include <linux/kvm.h>
 #include <errno.h>
+#include "protected_mode.h"
 
 // Guest memory configuration
-#define GUEST_MEM_SIZE (1 << 20)  // 1MB (Real mode maximum)
+#define GUEST_MEM_SIZE (4 << 20)  // 4MB (expandable for Protected Mode)
 #define GUEST_LOAD_ADDR 0x0       // Load guest at address 0
+
+// Mode selection
+typedef enum {
+    MODE_REAL,                    // 16-bit Real Mode
+    MODE_PROTECTED                // 32-bit Protected Mode
+} cpu_mode_t;
+
+static cpu_mode_t cpu_mode = MODE_REAL;  // Default: Real Mode
 
 // Hypercall interface
 #define HYPERCALL_PORT 0x500      // Port for hypercalls
@@ -169,7 +178,71 @@ static int setup_guest_memory(void) {
 }
 
 /*
- * Create vCPU and initialize registers for Real Mode
+ * Create a GDT entry
+ */
+static void create_gdt_entry(gdt_entry_t *entry, uint32_t base, uint32_t limit,
+                             uint8_t access, uint8_t flags) {
+    entry->base_low = base & 0xFFFF;
+    entry->base_mid = (base >> 16) & 0xFF;
+    entry->base_high = (base >> 24) & 0xFF;
+    entry->limit_low = limit & 0xFFFF;
+    entry->access = access;
+    entry->limit_granular = ((limit >> 16) & 0x0F) | (flags & 0xF0);
+}
+
+/*
+ * Setup GDT in guest memory for Protected Mode
+ */
+static int setup_gdt(void) {
+    if (cpu_mode != MODE_PROTECTED) {
+        return 0;  // Skip GDT setup for Real Mode
+    }
+
+    gdt_entry_t *gdt = (gdt_entry_t *)(guest_mem + GDT_ADDR);
+
+    // Entry 0: Null descriptor (required)
+    create_gdt_entry(&gdt[0], 0, 0, 0, 0);
+
+    // Entry 1: Kernel code segment (32-bit, base=0, limit=4GB)
+    create_gdt_entry(&gdt[1], 0, 0xFFFFF, ACCESS_CODE_R, LIMIT_GRAN);
+
+    // Entry 2: Kernel data segment (32-bit, base=0, limit=4GB)
+    create_gdt_entry(&gdt[2], 0, 0xFFFFF, ACCESS_DATA_W, LIMIT_GRAN);
+
+    // Entry 3: User code segment (32-bit, ring 3)
+    gdt_entry_t *uc = &gdt[3];
+    create_gdt_entry(uc, 0, 0xFFFFF, 0xFA, LIMIT_GRAN);  // Ring 3 code
+
+    // Entry 4: User data segment (32-bit, ring 3)
+    gdt_entry_t *ud = &gdt[4];
+    create_gdt_entry(ud, 0, 0xFFFFF, 0xF2, LIMIT_GRAN);  // Ring 3 data
+
+    printf("GDT setup: %d entries at 0x%x\n", GDT_SIZE, GDT_ADDR);
+    return 0;
+}
+
+/*
+ * Setup IDT in guest memory for Protected Mode
+ */
+static int setup_idt(void) {
+    if (cpu_mode != MODE_PROTECTED) {
+        return 0;  // Skip IDT setup for Real Mode
+    }
+
+    // Place IDT right after GDT
+    uint32_t idt_addr = GDT_ADDR + GDT_TOTAL_SIZE;
+    idt_entry_t *idt = (idt_entry_t *)(guest_mem + idt_addr);
+
+    // Create a simple IDT with 256 entries (all pointing to dummy handler)
+    // For now, just zero-initialize (invalid entries)
+    memset(idt, 0, 256 * sizeof(idt_entry_t));
+
+    printf("IDT setup at 0x%x\n", idt_addr);
+    return 0;
+}
+
+/*
+ * Create vCPU and initialize registers for Real Mode or Protected Mode
  */
 static int setup_vcpu(void) {
     size_t mmap_size;
@@ -208,43 +281,95 @@ static int setup_vcpu(void) {
         return -1;
     }
 
-    // 4. Set up Real Mode segment registers
-    // In Real Mode: physical_address = segment * 16 + offset
-    // We want CS:IP = 0x0000:0x0000
-    sregs.cs.base = 0;
-    sregs.cs.selector = 0;
-    sregs.cs.limit = 0xFFFF;      // 64KB segment limit (Real Mode)
-    sregs.cs.type = 0x9b;         // Code segment, executable, readable
-    sregs.cs.present = 1;
-    sregs.cs.dpl = 0;             // Privilege level 0
-    sregs.cs.db = 0;              // 16-bit mode
-    sregs.cs.s = 1;               // Code/data segment
-    sregs.cs.l = 0;               // Not 64-bit
-    sregs.cs.g = 0;               // Byte granularity
-    sregs.cs.avl = 0;
+    if (cpu_mode == MODE_PROTECTED) {
+        // 4a. Setup for Protected Mode
+        // GDT must be ready before setting segment registers
+        setup_gdt();
+        setup_idt();
 
-    // Set up data segments similarly
-    sregs.ds.base = 0;
-    sregs.ds.selector = 0;
-    sregs.ds.limit = 0xFFFF;
-    sregs.ds.type = 0x93;         // Data segment, writable
-    sregs.ds.present = 1;
-    sregs.ds.dpl = 0;
-    sregs.ds.db = 0;
-    sregs.ds.s = 1;
-    sregs.ds.l = 0;
-    sregs.ds.g = 0;
-    sregs.ds.avl = 0;
+        // Set GDTR (GDT register)
+        sregs.gdt.base = GDT_ADDR;
+        sregs.gdt.limit = GDT_TOTAL_SIZE - 1;
 
-    // Copy DS settings to ES, FS, GS, SS
-    sregs.es = sregs.fs = sregs.gs = sregs.ss = sregs.ds;
+        // Set IDTR (IDT register)
+        sregs.idt.base = GDT_ADDR + GDT_TOTAL_SIZE;
+        sregs.idt.limit = 255;  // 256 entries
+
+        // Set kernel code segment (index 1 = 0x8)
+        sregs.cs.selector = SEL_KCODE;
+        sregs.cs.base = 0;
+        sregs.cs.limit = 0xFFFFFFFF;  // Full 4GB limit (with granularity)
+        sregs.cs.type = 11;        // Code segment
+        sregs.cs.present = 1;
+        sregs.cs.dpl = 0;          // Ring 0
+        sregs.cs.db = 1;           // 32-bit mode
+        sregs.cs.s = 1;            // Code/Data segment (not system)
+        sregs.cs.l = 0;            // Not long mode
+        sregs.cs.g = 1;            // Granularity = 4KB
+        sregs.cs.avl = 0;
+
+        // Set kernel data segment (index 2 = 0x10)
+        sregs.ds.selector = SEL_KDATA;
+        sregs.ds.base = 0;
+        sregs.ds.limit = 0xFFFFFFFF;  // Full 4GB limit
+        sregs.ds.type = 3;         // Data segment
+        sregs.ds.present = 1;
+        sregs.ds.dpl = 0;          // Ring 0
+        sregs.ds.db = 1;           // 32-bit mode
+        sregs.ds.s = 1;            // Code/Data segment
+        sregs.ds.l = 0;            // Not long mode
+        sregs.ds.g = 1;            // Granularity = 4KB
+        sregs.ds.avl = 0;
+
+        // Copy DS settings to ES, FS, GS, SS
+        sregs.es = sregs.fs = sregs.gs = sregs.ss = sregs.ds;
+
+        // Set SS (stack segment) selector explicitly
+        sregs.ss.selector = SEL_KDATA;
+
+        // Enable Protected Mode (set PE flag in CR0)
+        sregs.cr0 |= 0x1;          // CR0.PE = 1
+
+        printf("Set Protected Mode segment registers\n");
+    } else {
+        // 4b. Setup for Real Mode
+        // In Real Mode: physical_address = segment * 16 + offset
+        // We want CS:IP = 0x0000:0x0000
+        sregs.cs.base = 0;
+        sregs.cs.selector = 0;
+        sregs.cs.limit = 0xFFFF;      // 64KB segment limit (Real Mode)
+        sregs.cs.type = 0x9b;         // Code segment, executable, readable
+        sregs.cs.present = 1;
+        sregs.cs.dpl = 0;             // Privilege level 0
+        sregs.cs.db = 0;              // 16-bit mode
+        sregs.cs.s = 1;               // Code/data segment
+        sregs.cs.l = 0;               // Not 64-bit
+        sregs.cs.g = 0;               // Byte granularity
+        sregs.cs.avl = 0;
+
+        // Set up data segments similarly
+        sregs.ds.base = 0;
+        sregs.ds.selector = 0;
+        sregs.ds.limit = 0xFFFF;
+        sregs.ds.type = 0x93;         // Data segment, writable
+        sregs.ds.present = 1;
+        sregs.ds.dpl = 0;
+        sregs.ds.db = 0;
+        sregs.ds.s = 1;
+        sregs.ds.l = 0;
+        sregs.ds.g = 0;
+        sregs.ds.avl = 0;
+
+        // Copy DS settings to ES, FS, GS, SS
+        sregs.es = sregs.fs = sregs.gs = sregs.ss = sregs.ds;
+
+        printf("Set Real Mode segment registers\n");
+    }
 
     if (ioctl(vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
         perror("KVM_SET_SREGS");
         return -1;
     }
-
-    printf("Set Real Mode segment registers\n");
 
     // 5. Set general purpose registers
     memset(&regs, 0, sizeof(regs));
@@ -428,11 +553,34 @@ static void cleanup(void) {
 int main(int argc, char **argv) {
     int ret = 0;
 
-    printf("=== Minimal KVM VMM (x86 Real Mode) ===\n\n");
-
+    // Parse command line arguments
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <guest_binary>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [-p|--protected] <guest_binary>\n", argv[0]);
+        fprintf(stderr, "  -p, --protected    Run in Protected Mode (default: Real Mode)\n");
         return 1;
+    }
+
+    // Check for mode selection flag
+    if (argc >= 3 && (strcmp(argv[1], "-p") == 0 || strcmp(argv[1], "--protected") == 0)) {
+        cpu_mode = MODE_PROTECTED;
+    } else if (argc >= 3 && (strcmp(argv[1], "-r") == 0 || strcmp(argv[1], "--real") == 0)) {
+        cpu_mode = MODE_REAL;
+    }
+
+    // Get guest binary filename (last argument)
+    const char *guest_binary = argv[argc - 1];
+
+    // Check if a flag was used
+    if (cpu_mode != MODE_REAL && argc < 3) {
+        fprintf(stderr, "Error: Invalid arguments\n");
+        return 1;
+    }
+
+    printf("=== Minimal KVM VMM (x86");
+    if (cpu_mode == MODE_PROTECTED) {
+        printf(" - Protected Mode) ===\n\n");
+    } else {
+        printf(" - Real Mode) ===\n\n");
     }
 
     // Step 1: Initialize KVM and create VM
@@ -448,7 +596,7 @@ int main(int argc, char **argv) {
     }
 
     // Step 3: Load guest binary
-    if (load_guest_binary(argv[1], guest_mem, GUEST_MEM_SIZE) < 0) {
+    if (load_guest_binary(guest_binary, guest_mem, GUEST_MEM_SIZE) < 0) {
         ret = 1;
         goto cleanup;
     }

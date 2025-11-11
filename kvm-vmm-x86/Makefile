@@ -8,7 +8,7 @@ TARGET = kvm-vmm
 GUEST_BIN = guest/minimal.bin
 GUEST_HELLO = guest/hello.bin
 
-.PHONY: all clean guest vmm test test-hello counter hello minimal hctest multiplication help
+.PHONY: all clean guest vmm test test-hello counter hello minimal hctest multiplication pmode_test help
 
 all: guest vmm
 
@@ -74,6 +74,11 @@ hctest: vmm build-hctest run-hctest
 
 multiplication: vmm build-multiplication run-multiplication
 
+# Protected Mode test guest (requires -p flag)
+pmode_test: vmm build-pmode_test
+	@echo "=== Running VMM (Protected Mode guest) ==="
+	./$(TARGET) -p guest/pmode_test.bin
+
 # Clean build artifacts
 clean:
 	rm -f $(TARGET)
@@ -87,9 +92,10 @@ help:
 	@echo "  make test           - Build and run VMM with minimal guest"
 	@echo ""
 	@echo "Quick commands (build + run):"
-	@echo "  make counter        - Build and run counter.S"
-	@echo "  make hello          - Build and run hello.S"
-	@echo "  make minimal        - Build and run minimal.S"
+	@echo "  make counter        - Build and run counter.S (Real Mode)"
+	@echo "  make hello          - Build and run hello.S (Real Mode)"
+	@echo "  make minimal        - Build and run minimal.S (Real Mode)"
+	@echo "  make pmode_test     - Build and run pmode_test.S (Protected Mode)"
 	@echo ""
 	@echo "Manual build/run:"
 	@echo "  make build-<name>   - Build guest/<name>.S → guest/<name>.bin"
