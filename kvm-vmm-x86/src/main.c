@@ -401,7 +401,7 @@ static int run_vm(void) {
         }
 
         // Safety: exit after too many iterations
-        if (exit_count > 100) {
+        if (exit_count > 1000) {
             fprintf(stderr, "Too many VM exits (%d), stopping\n", exit_count);
             return -1;
         }

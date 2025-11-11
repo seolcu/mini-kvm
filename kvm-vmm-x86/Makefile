@@ -8,7 +8,7 @@ TARGET = kvm-vmm
 GUEST_BIN = guest/minimal.bin
 GUEST_HELLO = guest/hello.bin
 
-.PHONY: all clean guest vmm test test-hello counter hello minimal hctest help
+.PHONY: all clean guest vmm test test-hello counter hello minimal hctest multiplication help
 
 all: guest vmm
 
@@ -71,6 +71,8 @@ hello: vmm build-hello run-hello
 minimal: vmm build-minimal run-minimal
 
 hctest: vmm build-hctest run-hctest
+
+multiplication: vmm build-multiplication run-multiplication
 
 # Clean build artifacts
 clean:
