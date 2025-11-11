@@ -1,71 +1,45 @@
 # 10주차 연구내용
 
-**날짜**: 2025-11-10
-**주제**: Phase 1 완료 + Phase 2 완전 구현 (RISC-V → x86 Architecture Pivot)
-**상태**: ✅ 완료
+목표: Phase 1 완료 (RISC-V Linux + KVM) 및 Phase 2 완전 구현 (x86 KVM VMM)
 
-## 개요
-
-이번 주는 2가지 중요한 작업을 진행했습니다:
-
-1. **Phase 1 완료**: RISC-V Linux + KVM 환경 구축 성공
-2. **Phase 2 전환 및 완료**: RISC-V 도구체인 한계를 직면하고 x86으로 신속하게 pivot하여 **완전한 KVM VMM 구현 및 Hypercall 시스템 완성**
-
-**핵심 성과**:
-- ✅ x86 KVM VMM (450줄 C 코드)
-- ✅ Hypercall 인터페이스 (4가지 operation)
-- ✅ 5개 게스트 프로그램 (1바이트 → 112바이트)
-- ✅ 완전한 기술 문서 및 연구 노트
-
----
-
-## 저번주 todo (Week 9):
+## 저번주 todo:
 - [x] KVM vmm과 guest를 모두 만들고 그들이 통신하는 것을 구현
 - [x] 9주차 내용을 정리
 
----
-
 ## 연구 내용
 
-### 1. Phase 1: RISC-V Linux + KVM 환경 구축
+### Phase 1: RISC-V Linux + KVM 환경 구축
 
-#### 1.1 환경 구성
+#### 환경 설정
 
-**설치한 패키지들**:
+RISC-V 크로스 컴파일 도구체인을 설치했습니다:
+
 ```bash
-# RISC-V 크로스 컴파일 도구체인
-- gcc-riscv64-linux-gnu (15.2.1)
-- gcc-c++-riscv64-linux-gnu
-- binutils-riscv64-linux-gnu
-
-# QEMU RISC-V 에뮬레이터
-- qemu-system-riscv (10.1.2)
-- qemu-system-riscv-core
-
-# 커널 빌드 도구
-- gcc, bc, flex, bison
-- elfutils-libelf-devel, openssl-devel, ncurses-devel
+gcc-riscv64-linux-gnu (15.2.1)
+gcc-c++-riscv64-linux-gnu
+binutils-riscv64-linux-gnu
+qemu-system-riscv (10.1.2)
 ```
 
-#### 1.2 RISC-V Linux 커널 빌드 (6.17.7)
+#### RISC-V Linux 커널 빌드
+
+Linux 6.17.7 커널을 다음과 같이 빌드했습니다:
 
 ```bash
-# 커널 소스 다운로드 및 구성
 wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.17.7.tar.xz
 tar -xf linux-6.17.7.tar.xz
 cd linux-6.17.7
 
-# RISC-V 크로스 컴파일 설정
 make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- defconfig
 sed -i 's/CONFIG_KVM=m/CONFIG_KVM=y/' .config
-
-# 병렬 빌드 (2-3시간)
 make ARCH=riscv CROSS_COMPILE=riscv64-linux-gnu- -j$(nproc)
 ```
 
-**결과**: `arch/riscv/boot/Image` (27MB)
+결과물은 `arch/riscv/boot/Image` (27MB) 입니다.
 
-#### 1.3 Initramfs 구성
+#### Initramfs 구성
+
+간단한 initramfs를 만들어 부팅 시 KVM 확인이 가능하도록 했습니다:
 
 ```bash
 cd initramfs
@@ -75,9 +49,11 @@ chmod +x init
 find . -print0 | cpio --null -o --format=newc | gzip > ../initramfs.cpio.gz
 ```
 
-**결과**: `initramfs.cpio.gz` (2.1KB)
+결과물은 `initramfs.cpio.gz` (2.1KB) 입니다.
 
-#### 1.4 QEMU에서 부팅 및 KVM 확인
+#### QEMU에서 부팅
+
+다음 명령으로 RISC-V Linux를 부팅했습니다:
 
 ```bash
 qemu-system-riscv64 \
@@ -90,100 +66,73 @@ qemu-system-riscv64 \
   -append "console=ttyS0"
 ```
 
-**성공 확인**:
+부팅 후 다음 메시지로 KVM이 정상 작동함을 확인했습니다:
+
 ```
 [    0.276728] kvm [1]: hypervisor extension available
 [    0.276802] kvm [1]: using Sv57x4 G-stage page table format
 ```
 
-✅ **Phase 1 완료**: Linux 부팅 성공, KVM 확인됨
+Phase 1이 완료되었습니다.
 
 ---
 
-### 2. 아키텍처 변경 의사결정: RISC-V → x86
+### Phase 2: 아키텍처 변경 및 x86 KVM VMM 구현
 
-#### 2.1 Phase 2 시작 시점의 문제
+#### 도구체인 문제
 
-Phase 2에서 KVM VMM을 개발하려 할 때 직면한 **구조적 한계**:
+Phase 2에서 RISC-V 타겟으로 KVM VMM을 개발하려 했으나, 구조적 문제에 직면했습니다.
 
-```bash
-# 시도 1: Rust 구현
-$ cargo build --target riscv64gc-unknown-linux-gnu
-error: cannot find Scrt1.o, cannot find -lgcc_s, cannot find -lc
+Fedora에서는 RISC-V 크로스 컴파일러(riscv64-linux-gnu-gcc)만 제공하고, RISC-V용 표준 라이브러리(glibc, libgcc 등)는 제공하지 않습니다.
 
-# 시도 2: C 구현
-$ riscv64-linux-gnu-gcc -o kvm-vmm src/main.c
-error: stdio.h: No such file or directory
-```
+시도한 결과:
+- Rust로 작성 시도: `cargo build --target riscv64gc-unknown-linux-gnu` 실패 (Scrt1.o, libgcc_s, libc 없음)
+- C로 작성 시도: `riscv64-linux-gnu-gcc -o kvm-vmm src/main.c` 실패 (stdio.h 없음)
+- 어셈블리 게스트: 성공 (libc 의존성 없음)
 
-**근본 원인**:
-Fedora는 RISC-V 크로스 컴파일러(`riscv64-linux-gnu-gcc`)만 제공하고, **RISC-V용 표준 라이브러리(glibc, libgcc 등)는 제공하지 않음**
+#### 대안 분석
 
-```bash
-$ dnf search glibc | grep -i riscv
-# 결과: 없음
-```
+다음 3가지 선택지를 검토했습니다:
 
-**성공/실패**:
-- ✅ 게스트 코드(어셈블리): 컴파일 성공 (libc 의존성 없음)
-- ❌ VMM 코드(C/Rust): 컴파일 실패 (stdio.h, stdlib.h 등 필요)
+1. x86 타겟 개발: 즉시 개발 가능, 2-3일 소요, KVM API는 아키텍처 독립적
+2. RISC-V 네이티브 컴파일: 수백 MB rootfs 필요, 2-3주 소요
+3. 수동 툴체인 구축: 가장 시간 소모적, 3-4주 소요
 
-#### 2.2 대안 분석
+학습 목표 달성도를 검토했습니다:
+- KVM API 사용법: 100% (아키텍처 독립적)
+- 가상화 개념: 100% (동일하게 적용)
+- 메모리 관리: 100% (KVM_SET_USER_MEMORY_REGION 동일)
+- vCPU 관리: 100% (KVM_RUN, VM exit 처리 동일)
 
-| 옵션 | 방법 | 장점 | 단점 | 예상 시간 |
-|------|------|------|------|----------|
-| **A (선택)** | **x86 타겟 개발** | ⭐ 즉시 개발 가능, KVM API는 아키텍처 독립적, 6주 내 완성 가능 | RISC-V 특화 학습 일부 제외 | **2-3일** |
-| B | RISC-V 네이티브 컴파일 | RISC-V 타겟 유지 | 수백 MB rootfs 필요, QEMU 내부 개발 저속 | 2-3주 |
-| C | 수동 툴체인 구축 (crosstool-NG) | 완전한 제어 | 가장 시간 소모적, 디버깅 복잡 | 3-4주 |
+따라서 x86 타겟으로 개발하기로 결정했습니다. 학습 목표의 95% 이상을 달성할 수 있고, 남은 6주 내에 프로젝트를 완성할 수 있습니다.
 
-#### 2.3 학습 목표 달성도 (Option A 선택 후)
+#### Phase 2 Week 1: 기본 KVM VMM 구현
 
-| 학습 목표 | 달성도 | 비고 |
-|----------|--------|------|
-| KVM API 사용법 | ✅ 100% | API는 아키텍처 독립적 |
-| 가상화 개념 | ✅ 100% | 동일한 개념 적용 |
-| 메모리 관리 | ✅ 100% | KVM_SET_USER_MEMORY_REGION 동일 |
-| vCPU 관리 | ✅ 100% | KVM_RUN, VM exit 처리 동일 |
-| 레지스터 관리 | ✅ 95% | x86은 더 제약이 커서 오히려 깊이 있음 |
-| **학습 목표 달성**: | ✅ **95%** | 프로젝트 일정 확보 |
-
-**결론**: x86 선택으로 **원래 학습 목표의 95% 이상 달성** 가능
-
----
-
-### 3. Phase 2: x86 KVM VMM 완전 구현
-
-#### 3.1 Phase 2 Week 1: 기본 KVM VMM 구현
-
-**목표**: 게스트 코드 실행 및 기본 I/O 처리
+x86 KVM VMM을 C로 구현했습니다. 주요 구조는:
 
 ```c
-// main.c 주요 구조
 int main() {
-    init_kvm();              // 1. /dev/kvm 열기, VM 생성
-    setup_guest_memory();    // 2. 1MB 메모리 할당 및 매핑
-    load_guest_binary();     // 3. 게스트 바이너리 로드
-    setup_vcpu();            // 4. vCPU 생성, Real Mode 레지스터 설정
-    run_vm();                // 5. VM 실행 및 exit 처리
+    init_kvm();              // /dev/kvm 열기, VM 생성
+    setup_guest_memory();    // 1MB 메모리 할당 및 매핑
+    load_guest_binary();     // 게스트 바이너리 로드
+    setup_vcpu();            // vCPU 생성, Real Mode 레지스터 설정
+    run_vm();                // VM 실행 및 exit 처리
 }
 ```
 
-**주요 기능**:
-- ✅ KVM API: open → CREATE_VM → SET_USER_MEMORY_REGION → CREATE_VCPU → RUN
-- ✅ Real Mode: Segment × 16 + Offset 주소 계산
-- ✅ VM Exit: HLT, I/O, MMIO 처리
-- ✅ I/O 에뮬레이션: UART 포트 0x3f8 (COM1) 문자 출력
+구현한 기능:
+- KVM API: open → CREATE_VM → SET_USER_MEMORY_REGION → CREATE_VCPU → RUN
+- Real Mode: Segment × 16 + Offset으로 주소 계산
+- VM Exit: HLT, I/O, MMIO 처리
+- I/O 에뮬레이션: UART 포트 0x3f8 (COM1) 문자 출력
 
-**결과**:
-- "Hello, KVM!" 출력 성공
-- counter.S (0-9) 출력 성공
-- 약 370줄의 완전한 VMM 구현
+결과적으로 "Hello, KVM!" 출력과 0-9 카운터가 성공적으로 작동했으며, 약 370줄의 완전한 VMM이 구현되었습니다.
 
-#### 3.2 Phase 2 Week 2: Hypercall 시스템 및 복잡한 게스트
+#### Phase 2 Week 2: Hypercall 시스템 및 복잡한 게스트
 
-**목표**: 게스트-VMM 간 효율적인 통신 프로토콜 설계
+게스트-VMM 간 효율적인 통신을 위해 Hypercall 시스템을 설계했습니다.
 
-##### Hypercall 인터페이스 설계
+Hypercall 인터페이스 정의:
 
 ```c
 #define HYPERCALL_PORT 0x500
@@ -194,7 +143,8 @@ int main() {
 #define HC_NEWLINE    0x03    // Output newline
 ```
 
-**게스트 측 사용법** (assembly):
+게스트 측 사용법 (assembly):
+
 ```asm
 mov $42, %bx            ; BX = 출력할 숫자
 mov $HC_PUTNUM, %al     ; AL = hypercall 번호
@@ -202,123 +152,84 @@ mov $HYPERCALL_PORT, %dx
 out %al, (%dx)          ; Hypercall 실행
 ```
 
-**VMM 측 처리** (C):
+VMM 측 처리 (C):
+
 ```c
 static int handle_hypercall(struct kvm_regs *regs) {
-    unsigned char hc_num = regs->rax & 0xFF;  // AL = hypercall number
+    unsigned char hc_num = regs->rax & 0xFF;
 
     switch (hc_num) {
         case HC_EXIT:
             return 1;  // Signal guest exit
-
         case HC_PUTCHAR:
             putchar(regs->rbx & 0xFF);  // BL = character
             break;
-
         case HC_PUTNUM:
             printf("%u", regs->rbx & 0xFFFF);  // BX = number
             break;
-
         case HC_NEWLINE:
             putchar('\n');
             break;
     }
-    return 0;  // Continue execution
+    return 0;
 }
 ```
 
-**Hypercall의 장점**:
-1. 게스트 코드 단순화: printf 로직을 VMM이 처리
-2. 확장성: 새로운 hypercall 추가 간단
-3. 실제 OS와 유사: syscall 메커니즘과 동일
+Hypercall 시스템의 장점은 게스트 코드 단순화, 확장성 향상, 그리고 실제 OS의 syscall 메커니즘과 동일한 패턴이라는 점입니다.
 
 ---
 
-### 4. 구현한 게스트 프로그램 (5개, 증가하는 복잡도)
+### 구현한 게스트 프로그램
 
-#### 4.1 minimal.S (1바이트)
+5개의 게스트 프로그램을 증가하는 복잡도 순서로 구현했습니다.
+
+#### minimal.S (1바이트)
 
 ```asm
 hlt
 ```
 
-- **목적**: VMM 기본 기능 테스트
-- **VM Exit**: 1회
-- **복잡도**: ⭐ 최소
+가장 단순한 게스트로, VMM 기본 기능을 테스트합니다. VM exit는 1회입니다.
 
-#### 4.2 hello.S (28바이트)
+#### hello.S (28바이트)
 
 ```asm
-mov $message, %si       ; SI = 문자열 포인터
+mov $message, %si
 print_loop:
-    lodsb               ; AL = [SI++]
-    test %al, %al       ; null 체크
+    lodsb
+    test %al, %al
     jz done
-    mov $0x3f8, %dx     ; UART 포트
-    out %al, (%dx)      ; 문자 출력
+    mov $0x3f8, %dx
+    out %al, (%dx)
     jmp print_loop
 done:
     hlt
 ```
 
-- **목적**: UART I/O 처리 및 루프
-- **출력**: "Hello, KVM!\n"
-- **VM Exit**: 13회 (12글자 + 1 HLT)
-- **복잡도**: ⭐⭐ 기초
+"Hello, KVM!\n"을 출력합니다. 문자열 루핑과 UART I/O를 테스트합니다. VM exit는 13회입니다.
 
-#### 4.3 counter.S (18바이트)
+#### counter.S (18바이트)
 
 ```asm
 mov $0, %cl
 print_loop:
-    add $0x30, %cl      ; 0-9 → '0'-'9' (ASCII)
+    add $0x30, %cl
     mov $0x3f8, %dx
-    out %cl, (%dx)      ; UART에 출력
+    out %cl, (%dx)
     inc %cl
     cmp $10, %cl
     jl print_loop
 ```
 
-- **목적**: 루프와 산술 연산
-- **출력**: "0123456789"
-- **VM Exit**: 11회
-- **복잡도**: ⭐⭐⭐ 산술
+0부터 9까지 출력합니다. 루프와 산술 연산을 테스트합니다. VM exit는 11회입니다.
 
-#### 4.4 hctest.S (79바이트)
+#### hctest.S (79바이트)
 
-```asm
-; Hypercall test: 4가지 operation 모두 사용
-mov $'H', %bl
-mov $HC_PUTCHAR, %al
-mov $HYPERCALL_PORT, %dx
-out %al, (%dx)
+모든 4가지 Hypercall 타입을 테스트합니다. "Hello!\n42\n1234\n"을 출력합니다. VM exit는 13회입니다.
 
-; ... 'e', 'l', 'l', 'o' ...
+#### multiplication.S (112바이트)
 
-mov $HC_NEWLINE, %al
-out %al, (%dx)
-
-; HC_PUTNUM: 42
-mov $42, %bx
-mov $HC_PUTNUM, %al
-out %al, (%dx)
-
-; ... HC_NEWLINE ...
-
-; HC_PUTNUM: 1234
-mov $1234, %bx
-mov $HC_PUTNUM, %al
-out %al, (%dx)
-
-; ... HC_NEWLINE, HC_EXIT ...
-```
-
-- **목적**: Hypercall 시스템 검증
-- **출력**: "Hello!\n42\n1234\n"
-- **VM Exit**: 13회
-- **복잡도**: ⭐⭐⭐⭐ Hypercall
-
-#### 4.5 multiplication.S (112바이트) ⭐ 가장 복잡
+가장 복잡한 게스트로, 2부터 9까지의 구구단을 출력합니다:
 
 ```asm
 mov $2, %cl              ; CL = dan (2-9)
@@ -335,14 +246,7 @@ outer_loop:
         mov $' ', %bl
         mov $HC_PUTCHAR, %al
         out %al, (%dx)
-
-        mov $'x', %bl
-        mov $HC_PUTCHAR, %al
-        out %al, (%dx)
-
-        mov $' ', %bl
-        mov $HC_PUTCHAR, %al
-        out %al, (%dx)
+        ; ... (space, x, space 반복)
 
         ; Print multiplier
         movzx %ch, %bx
@@ -350,23 +254,13 @@ outer_loop:
         out %al, (%dx)
 
         ; Print " = "
-        mov $' ', %bl
-        mov $HC_PUTCHAR, %al
-        out %al, (%dx)
-
-        mov $'=', %bl
-        mov $HC_PUTCHAR, %al
-        out %al, (%dx)
-
-        mov $' ', %bl
-        mov $HC_PUTCHAR, %al
-        out %al, (%dx)
+        ; ... (similar)
 
         ; Calculate & print result
-        mov %cl, %al        ; AL = dan
-        mov %ch, %bl        ; BL = multiplier
-        mul %bl             ; AX = dan × multiplier
-        movzx %al, %bx      ; BX = result
+        mov %cl, %al
+        mov %ch, %bl
+        mul %bl
+        movzx %al, %bx
         mov $HC_PUTNUM, %al
         out %al, (%dx)
 
@@ -374,107 +268,68 @@ outer_loop:
         mov $HC_NEWLINE, %al
         out %al, (%dx)
 
-        ; Inner loop: multiplier++
+        ; Continue inner loop
         inc %ch
         cmp $10, %ch
         jl inner_loop
 
-    ; Outer loop: dan++
+    ; Continue outer loop
     inc %cl
     cmp $10, %cl
     jl outer_loop
-
-; Exit
-mov $0x00, %al          ; HC_EXIT
-mov $HYPERCALL_PORT, %dx
-out %al, (%dx)
-hlt
 ```
 
-- **목적**: 중첩 루프 + 복잡한 로직 + Hypercall 조합
-- **출력**: 2×1=2 ~ 9×9=81 (구구단 18줄)
-- **VM Exit**: 181회 (180 hypercalls + 1 HLT)
-- **복잡도**: ⭐⭐⭐⭐⭐ 최고 난이도
-
-**출력 예**:
-```
-2 x 1 = 2
-2 x 2 = 4
-...
-9 x 9 = 81
-[Hypercall] Guest exit request
-=== VM execution completed successfully ===
-```
+2×1=2부터 9×9=81까지 18줄을 출력합니다. VM exit는 181회입니다 (18줄 × 10 hypercall/줄 + 1 HLT).
 
 ---
 
-### 5. 핵심 기술: 레지스터 압박 해결
+### 핵심 기술: 레지스터 압박 해결
 
-#### 5.1 문제 상황
+x86 16비트 Real Mode에서 필요한 레지스터가 범용 레지스터 4개(AX, BX, CX, DX)보다 많아서 문제가 발생했습니다.
 
-x86 16비트 Real Mode에서 필요한 레지스터:
-```
-- CL: 외부 루프 (dan, 2-9)
+필요한 것:
+- CL: 외부 루프 (dan)
 - DX: 포트 번호 (0x500)
 - AL: hypercall 번호
-- BX: hypercall 인자 (숫자 출력)
+- BX: hypercall 인자
 - AX: MUL 결과
-```
 
-범용 레지스터는 **4개(AX, BX, CX, DX)뿐**인데 5개 이상 필요!
-
-#### 5.2 해결책: 레지스터 계층 이해
-
-**핵심 통찰**: CX와 DX는 **독립적인 레지스터**!
+핵심 통찰은 CX와 DX가 독립적인 레지스터라는 것입니다. CX = CL(하위 8비트) + CH(상위 8비트)이고, DX = DL(하위 8비트) + DH(상위 8비트)이므로, CL과 CH를 각각 다른 루프 변수로 사용할 수 있습니다:
 
 ```asm
-; CX = CL (하위 8비트) + CH (상위 8비트)
-; DX = DL (하위 8비트) + DH (상위 8비트)
-
 mov $2, %cl             ; CL = dan (외부 루프)
 mov $1, %ch             ; CH = multiplier (내부 루프)
-mov $HYPERCALL_PORT, %dx ; DX = 포트 번호 (DL/DH와 무관!)
-
-; CL 값은 여전히 안전함! (DX 사용해도 영향 없음)
+mov $HYPERCALL_PORT, %dx ; DX = 포트 번호
+; CL 값은 여전히 안전함! DX를 사용해도 영향 없음
 ```
 
-#### 5.3 MUL 명령어 최적화
+MUL 명령어도 최적화했습니다. MUL 명령어는 AL × operand → AX이므로, operand로 CL을 사용하면 루프 카운터가 파괴됩니다. 대신 BL을 사용합니다:
 
 ```asm
-; MUL 명령어: AL × operand → AX
-; 문제: mul %cl 하면 CL이 파괴됨 (루프 카운터 손실!)
-
-; 해결책: BL 사용
 mov %cl, %al            ; AL = dan
 mov %ch, %bl            ; BL = multiplier (BH는 사용하지 않음)
 mul %bl                 ; AX = AL × BL
-                        ; CL은 보호됨! ✅
-
-movzx %al, %bx          ; BX = result (8비트로도 충분)
+                        ; CL은 보호됨
+movzx %al, %bx          ; BX = result
 ```
-
-**중요**: `mul %bl`은 `mul %bx` (16비트)가 아님!
 
 ---
 
-### 6. 빌드 시스템
+### 빌드 시스템
 
-#### 6.1 Makefile 패턴 룰
+Makefile에 패턴 룰을 추가하여 모든 .S 파일을 자동으로 빌드할 수 있도록 했습니다:
 
 ```makefile
-# 패턴 룰: 모든 .S 파일 자동 빌드
 build-%: guest/%.S
     @echo "=== Building guest/$*.S ==="
     as -32 -o $*.o guest/$*.S
     ld -m elf_i386 -T guest/guest.ld -o $*.elf $*.o
     objcopy -O binary -j .text -j .rodata $*.elf $*.bin
 
-# 패턴 룰: 빌드한 바이너리 실행
 run-%: vmm guest/%.bin
     @echo "=== Running VMM (guest/$*.bin) ==="
     ./$(TARGET) guest/$*.bin
 
-# 편의 단축키: 빌드 + 실행
 multiplication: vmm build-multiplication run-multiplication
 counter: vmm build-counter run-counter
 hello: vmm build-hello run-hello
@@ -482,209 +337,116 @@ hctest: vmm build-hctest run-hctest
 minimal: vmm build-minimal run-minimal
 ```
 
-#### 6.2 사용법
+사용법:
 
 ```bash
-# 빌드 + 실행 (한 번에)
-make multiplication
-
-# 빌드만
-make build-counter
-
-# 실행만 (이미 빌드된 경우)
-make run-hello
-
-# VMM 빌드만
-make vmm
-
-# 모든 아티팩트 정리
-make clean
+make multiplication      # 빌드 + 실행
+make build-counter      # 빌드만
+make run-hello          # 실행만
+make clean              # 정리
 ```
 
 ---
 
-### 7. 성능 분석 및 통계
+### 성능 분석
 
-#### 7.1 VM Exit 통계
+VM exit 통계:
 
 ```
 프로그램         크기      Exit 수    시간 (추정)
-───────────────────────────────────────
-minimal          1 byte    1          ~1ms
-hello           28 bytes   13         ~5ms
-counter         18 bytes   11         ~4ms
-hctest          79 bytes   13         ~6ms
-multiplication 112 bytes  181        ~200ms
+─────────────────────────────────
+minimal          1 byte    1         ~1ms
+hello           28 bytes   13        ~5ms
+counter         18 bytes   11        ~4ms
+hctest          79 bytes   13        ~6ms
+multiplication 112 bytes  181       ~200ms
 ```
 
-#### 7.2 구구단 상세 분석
+구구단의 경우, 18줄 × 10 hypercall/줄 = 180 exits + 1 HLT = 181 exits입니다.
 
-```
-총 18개 줄 (2×1 ~ 9×9)
-
-각 줄마다: "dan x multiplier = result\n"
-출력 형식: 3 (dan) + 3 (space+x+space) +
-           3 (multiplier) + 3 (space+=+space) +
-           1-2 (result) + 1 (newline)
-           = 약 10 hypercall/줄
-
-총 VM Exit: 18 줄 × 10 = 180 exits + 1 HLT = 181 exits
-```
-
-#### 7.3 최적화 기회 (Virtio 모델)
-
-```
-현재 구현:
-- 각 문자마다 1 VM Exit
-- 총 181 exits
-
-Virtio 버퍼링 방식:
-- 게스트가 공유 메모리 버퍼에 문자 쓰기 (exit 없음)
-- 버퍼 가득 차면 notify hypercall (1 exit)
-- VMM이 버퍼 전체 처리
-
-개선 효과:
-- 180 exits → 18 exits (1/10 감소)
-- **10배 성능 향상**
-
-교훈: VM Exit는 비싼 연산! 실무에서는 batching 필수
-```
+최적화 기회로는 Virtio 모델의 버퍼링이 있습니다. 게스트가 공유 메모리 버퍼에 직접 쓰고, 버퍼 가득 차면 한 번의 notify hypercall을 실행하면, 180 exits가 18 exits로 줄어들어 10배 성능 향상을 기대할 수 있습니다. 이것이 실무에서 Virtio 큐가 사용되는 이유입니다.
 
 ---
 
-### 8. 코드 규모 통계
+### 코드 규모
 
-```
-VMM (src/main.c):                    450줄
-  - init_kvm():                       25줄
-  - setup_guest_memory():             30줄
-  - setup_vcpu():                     70줄
-  - handle_hypercall():               35줄
-  - run_vm():                        100줄
-  - 기타 (load, cleanup):            190줄
+VMM (src/main.c): 450줄
+- init_kvm: 25줄
+- setup_guest_memory: 30줄
+- setup_vcpu: 70줄
+- handle_hypercall: 35줄
+- run_vm: 100줄
+- 기타: 190줄
 
 Guest 프로그램 (총 238바이트):
-  - minimal.S:                         1바이트
-  - hello.S:                          28바이트
-  - counter.S:                        18바이트
-  - hctest.S:                         79바이트
-  - multiplication.S:                112바이트
-
-문서:
-  - kvm-vmm-x86/README.md:          ~400줄
-  - research/week10/README.md:      ~500줄
-```
+- minimal.S: 1바이트
+- hello.S: 28바이트
+- counter.S: 18바이트
+- hctest.S: 79바이트
+- multiplication.S: 112바이트
 
 ---
 
-### 9. 주요 학습 포인트
+### 주요 학습 포인트
 
-#### 9.1 아키텍처 의사결정의 중요성
+#### 아키텍처 의사결정의 중요성
 
-**상황**: RISC-V 도구체인 막힘 vs 6주 남은 일정
-**결정**: 빠른 pivot으로 x86 선택
-**결과**:
-- 2-3시간 만에 작동하는 VMM 완성
-- 학습 목표 95% 달성
-- 프로젝트 일정 확보
-- **교훈**: 고집보다는 현실 파악 + 빠른 결정
+RISC-V 도구체인 막힘이라는 제약에 직면했을 때, 고집을 부리지 않고 현실을 파악해 빠르게 x86으로 pivot했습니다. 결과적으로 2-3시간 만에 작동하는 VMM을 완성할 수 있었고, 학습 목표의 95% 이상을 달성했으며, 프로젝트 일정을 확보했습니다.
 
-#### 9.2 하드웨어 가상화의 효율성
+#### 하드웨어 가상화의 효율성
 
-```
-소프트웨어 에뮬레이션 (QEMU TCG):
-- 모든 명령어 해석 필요
-- 성능: ~1/100 native
+소프트웨어 에뮬레이션(QEMU TCG)은 모든 명령어를 해석해야 하므로 성능이 약 1/100 네이티브입니다. 반면 하드웨어 지원(KVM VT-x)은 민감한 명령어만 trap하므로 성능이 약 1/1.5 네이티브입니다. 이번 구현을 통해 그 차이를 직접 경험했습니다.
 
-하드웨어 지원 (KVM VT-x):
-- 민감한 명령어만 trap
-- 성능: ~1/1.5 native
-- 현재 구현으로 그 차이를 직접 체험
-```
+#### 레지스터 최적화의 중요성
 
-#### 9.3 레지스터 최적화의 중요성
+x86의 극도로 제한된 레지스터(4개)는 제약이지만, CL/CH 분리와 BL 활용으로 해결할 수 있습니다. 이는 아키텍처를 깊이 있게 이해해야 함을 의미합니다.
 
-**제약**: x86은 4개 범용 레지스터만 가능
-**해결**: CL/CH 분리, BL 활용 (CX의 상부/하부 독립 사용)
-**결과**: 제약된 리소스 속에서도 복잡한 로직 구현 가능
+#### Hypercall 패턴의 우아함
 
-#### 9.4 Hypercall 패턴의 우아함
-
-```asm
-; 기존: 직접 I/O (각 문자마다 OUT)
-out %al, 0x3f8
-
-; 개선: Hypercall (복잡한 연산은 VMM에)
-mov $42, %bx
-mov $HC_PUTNUM, %al
-out %al, 0x500
-```
-
-**이점**:
-- 게스트 코드 단순화
-- 확장성 향상
-- 실제 OS syscall과 동일한 패턴
-
-#### 9.5 설계 철학
-
-이번 Phase 2 구현의 핵심은 **제약된 리소스 속에서의 우아한 설계**입니다:
-- x86의 극도로 제한된 레지스터 → 아키텍처 깊이 있는 이해
-- Hypercall의 간단한 프로토콜 → 강력한 확장성
-- VM Exit의 성능 트레이드오프 → 실무 시스템의 현실성
+직접 I/O (각 문자마다 OUT)에서 Hypercall (복잡한 연산은 VMM에)로 전환하면, 게스트 코드가 단순해지고 확장성이 향상됩니다. 이는 실제 OS의 syscall 메커니즘과 동일한 패턴입니다.
 
 ---
 
 ## 다음주 todo (Week 11-16):
 
-### Week 11 (Optional Extensions)
-- [ ] Protected Mode 지원 (32비트 모드로 더 많은 메모리)
-- [ ] IN 명령어 지원 (게스트 입력 받기)
+### Week 11 (선택사항)
+- Protected Mode 지원 (32비트 모드로 더 많은 메모리)
+- IN 명령어 지원 (게스트 입력 받기)
 
 ### Week 12-13: 최종 보고서 작성
-- [ ] Phase 1-2 기술 문서 정리
-- [ ] 학습 내용 종합 정리
-- [ ] 아키텍처 다이어그램 및 설명
+- Phase 1-2 기술 문서 정리
+- 학습 내용 종합 정리
+- 아키텍처 다이어그램 및 설명
 
 ### Week 14-15: 데모 영상 제작
-- [ ] 각 게스트 프로그램 실행 영상
-- [ ] VMM 구조 설명 영상
-- [ ] Hypercall 시스템 설명 영상
+- 각 게스트 프로그램 실행 영상
+- VMM 구조 설명 영상
+- Hypercall 시스템 설명 영상
 
 ### Week 16: 최종 제출
-- [ ] 최종 보고서 제출 (완료도 95%+ 기대)
+- 최종 보고서 제출
 
 ---
 
 ## 결론
 
-### Phase 2 완료 현황
+이번 주에 완료된 항목:
 
-**✅ 완료된 항목**:
-1. x86 KVM VMM 완전 구현 (450줄)
+1. x86 KVM VMM 완전 구현 (450줄 C 코드)
 2. Hypercall 시스템 설계 및 구현 (4가지 operation)
-3. 5개 게스트 프로그램 (1바이트 ~ 112바이트)
+3. 5개 게스트 프로그램 (1바이트부터 112바이트까지)
 4. 완전한 기술 문서 및 연구 노트
 
-**✅ 학습 목표 달성도**:
+학습 목표 달성도:
 - KVM API: 100%
 - 가상화 개념: 100%
 - 메모리 관리: 100%
 - vCPU 관리: 100%
-- **전체 달성도: 95%+**
+- 전체 달성도: 95%+
 
-**✅ 프로젝트 상태**:
+프로젝트 상태:
 - Week 10: Phase 1-2 완료
 - Week 11-16: 최종 보고서 및 데모 (충분한 여유)
-
-### 타임라인 현황
-
-```
-Week 10: ✅ Phase 1 (RISC-V Linux) + Phase 2 (x86 KVM VMM) 완료
-Week 11: 선택 확장사항 또는 최종 보고서 준비
-Week 12-13: 최종 보고서 작성
-Week 14-15: 데모 영상 제작
-Week 16: 최종 제출
-```
 
 ---
 
@@ -692,7 +454,7 @@ Week 16: 최종 제출
 
 ### 공식 문서
 - [KVM API Documentation](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
-- [Intel® 64 and IA-32 Architectures Software Developer Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+- [Intel 64 and IA-32 Architectures Software Developer Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 - [RISC-V Privileged Specification](https://github.com/riscv/riscv-isa-manual)
 
 ### 참고 프로젝트
@@ -704,10 +466,3 @@ Week 16: 최종 제출
 - KVM 소스: https://github.com/torvalds/linux/tree/master/virt/kvm
 - x86 Assembly Guide: http://www.cs.virginia.edu/~evans/cs216/guides/x86.html
 - LWN.net - Using the KVM API: https://lwn.net/Articles/658511/
-
----
-
-**작성자**: 학생
-**작성일**: 2025-11-11
-**상태**: ✅ Phase 1-2 완료
-**다음 단계**: Week 11-16 최종 보고서 및 데모
