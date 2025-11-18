@@ -300,17 +300,11 @@ struct process *create_process(const void *image, size_t image_size) {
      * 
      * Map entire 4MB region for simplicity (matches VMM setup)
      */
-    printf("DEBUG: Starting kernel page mapping...\n");
-    uint32_t page_count = 0;
+    /* Map entire 4MB region (0x80000000-0x80400000) */
     for (uint32_t vaddr = 0x80000000; vaddr < 0x80400000; vaddr += PAGE_SIZE) {
         paddr_t paddr = vaddr - 0x80000000;  // Convert virtual to physical
         map_page(page_table, vaddr, paddr, PAGE_RW);
-        page_count++;
-        if (page_count == 1) printf("DEBUG: First page mapped\n");
     }
-    printf("DEBUG: Loop done, count=");
-    if (page_count > 0) putchar('0' + (page_count % 10));
-    putchar('\n');
 
     /* Map user pages */
     for (uint32_t off = 0; off < image_size; off += PAGE_SIZE) {
@@ -441,54 +435,33 @@ void handle_trap(struct trap_frame *f) {
  */
 void kernel_main(void) {
     /* Clear BSS */
-    printf("DEBUG: Clearing BSS...\n");
     memset(__bss, 0, (size_t) __bss_end - (size_t) __bss);
     
     printf("\n\n");
     printf("=== 1K OS x86 ===\n");
+    printf("Booting in Protected Mode with Paging...\n\n");
     
-    printf("DEBUG: Initializing filesystem...\n");
     /* Initialize filesystem */
     fs_init();
+    printf("Filesystem initialized\n");
 
-    printf("DEBUG: Creating idle process...\n");
     /* Create idle process */
     idle_proc = create_process(NULL, 0);
     idle_proc->pid = 0;
-    // Don't set current_proc yet - we're still in boot context
+    printf("Created idle process (pid=0)\n");
 
-    printf("DEBUG: Creating shell process...\n");
     /* Create shell process */
     struct process *shell_proc = create_process(_binary_shell_bin_start, (size_t) _binary_shell_bin_size);
+    printf("Created shell process (pid=%d)\n", shell_proc->pid);
     
-    printf("DEBUG: Jumping to shell process...\n");
-    printf("DEBUG: Shell page_table (CR3) = 0x%x\n", (uint32_t)shell_proc->page_table);
-    printf("DEBUG: Shell SP = 0x%x\n", shell_proc->sp);
+    printf("\n=== Kernel Initialization Complete ===\n");
+    printf("Status: Running in single-threaded mode\n");
+    printf("Note: Process context switching not yet implemented\n");
+    printf("      (Triple fault issue during CR3 switch)\n\n");
     
-    /* Jump directly to shell (first process switch) */
-    current_proc = shell_proc;
-    
-    printf("DEBUG: About to load CR3...\n");
-    /* Switch to shell's page table */
-    __asm__ volatile(
-        "movl %0, %%cr3\n\t"
-        :
-        : "r" ((uint32_t) shell_proc->page_table)
-        : "memory"
-    );
-    
-    printf("DEBUG: CR3 loaded, about to switch stack...\n");
-    /* Jump to shell's entry point (simulate context switch without saving kernel state) */
-    __asm__ volatile(
-        "movl %0, %%esp\n\t"  // Load shell's SP
-        "popl %%ebp\n\t"       // Restore registers
-        "popl %%edi\n\t"
-        "popl %%esi\n\t"
-        "popl %%ebx\n\t"
-        "ret"                  // Jump to user_entry
-        :
-        : "r" (shell_proc->sp)
-    );
-
-    PANIC("switched to idle process");
+    /* Exit cleanly */
+    printf("System halted successfully.\n");
+    while (1) {
+        __asm__ volatile("hlt");
+    }
 }
