@@ -96,20 +96,40 @@ void putchar(char ch) {
  * Hypercall interface for getchar
  * Uses port 0x500 with syscall number in AL
  * Returns character in AL
+ * 
+ * WORKAROUND: IN instructions don't trap in KVM with current setup.
+ * Instead of using IN, we write result to a fixed memory location.
+ * Physical address: 0x4000 (16KB, safely after kernel which ends at ~0x3118)
+ * Virtual address: Use IDENTITY-MAPPED address 0x4000 directly
  */
+#define HYPERCALL_RESULT_ADDR ((volatile int *)0x4000)
+
 long getchar(void) {
-    long ch;
+    // Request GETCHAR via OUT
+    // VMM will write result to memory before KVM_RUN returns
     __asm__ volatile(
         "movb $2, %%al\n\t"        // HC_GETCHAR
         "movw $0x500, %%dx\n\t"    // Port 0x500
         "outb %%al, %%dx\n\t"      // Trigger GETCHAR hypercall (OUT)
-        "inb (%%dx), %%al\n\t"     // Read character from port (IN)
-        "movsbl %%al, %0"          // Sign-extend AL to long
-        : "=r"(ch)
         :
-        : "al", "dx"
+        :
+        : "al", "dx", "memory"     // memory clobber forces reload
     );
-    return ch;
+    
+    // Invalidate TLB entry for the result address to ensure we see VMM's write
+    // Use INVLPG instruction to invalidate specific page
+    __asm__ volatile(
+        "invlpg (%0)"
+        :
+        : "r" (HYPERCALL_RESULT_ADDR)
+        : "memory"
+    );
+    
+    // Result is now in memory, written by VMM during VM exit handling
+    volatile int *addr = HYPERCALL_RESULT_ADDR;
+    int result = *addr;
+    
+    return result;
 }
 
 /* Filesystem */

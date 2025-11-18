@@ -853,6 +853,14 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
 static int handle_vm_exit(vcpu_context_t *ctx) {
     ctx->exit_count++;
 
+    // DEBUG: Log all exit reasons for first 110 exits
+    static int debug_exit_count = 0;
+    if (debug_exit_count++ < 110) {
+        if (ctx->kvm_run->exit_reason != KVM_EXIT_IO || debug_exit_count > 100) {
+            vcpu_printf(ctx, "EXIT[%d]: reason=%d\n", debug_exit_count, ctx->kvm_run->exit_reason);
+        }
+    }
+
     switch (ctx->kvm_run->exit_reason) {
         case KVM_EXIT_HLT:
             vcpu_printf(ctx, "Guest halted after %d exits\n", ctx->exit_count);
@@ -861,6 +869,16 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
 
         case KVM_EXIT_IO: {
             char *data = (char *)ctx->kvm_run + ctx->kvm_run->io.data_offset;
+
+            // DEBUG: Log ALL I/O operations
+            static int io_count = 0;
+            if (io_count++ < 100) {
+                vcpu_printf(ctx, "IO[%d]: dir=%s port=0x%x size=%d\n",
+                           io_count,
+                           (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) ? "OUT" : "IN",
+                           ctx->kvm_run->io.port,
+                           ctx->kvm_run->io.size);
+            }
 
             if (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) {
                 if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
@@ -873,10 +891,11 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
 
                     unsigned char hc_num = regs.rax & 0xFF;
                     
-                    // Debug: log hypercalls (only first 20)
-                    if (ctx->exit_count < 20) {
-                        vcpu_printf(ctx, "Hypercall 0x%02x (RAX=0x%llx, RBX=0x%llx)\n", 
-                                   hc_num, regs.rax, regs.rbx);
+                    // Debug: log all hypercalls (increase limit)
+                    static int hc_count = 0;
+                    if (hc_count++ < 100) {  // Log first 100 hypercalls
+                        vcpu_printf(ctx, "HC[%d] type=0x%02x RAX=0x%llx RBX=0x%llx\n", 
+                                   hc_count, hc_num, regs.rax, regs.rbx);
                     }
                     
                     switch (hc_num) {
@@ -894,14 +913,42 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                             break;
                         }
 
-                        case HC_GETCHAR:
-                            // Mark that guest wants to read character
-                            // Will be handled on next IN instruction
-                            if (ctx->exit_count < 25) {
-                                vcpu_printf(ctx, "GETCHAR request, setting pending_getchar\n");
+                        case HC_GETCHAR: {
+                            // GETCHAR: Read character from stdin and write to guest memory
+                            // Result location: 0x2000 in guest physical address space
+                            static int getchar_count = 0;
+                            
+                            pthread_mutex_lock(&stdout_mutex);
+                            
+                            // Check if there's input available using select()
+                            fd_set readfds;
+                            struct timeval tv = {0, 0};  // Non-blocking
+                            FD_ZERO(&readfds);
+                            FD_SET(STDIN_FILENO, &readfds);
+                            
+                            int ch = -1;
+                            if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0) {
+                                ch = getchar();
                             }
-                            ctx->pending_getchar = 1;
+                            
+                            pthread_mutex_unlock(&stdout_mutex);
+                            
+                            // Write result to guest memory at physical address 0x4000
+                            volatile int32_t *result_ptr = (volatile int32_t *)(ctx->guest_mem + 0x4000);
+                            *result_ptr = (int32_t)ch;
+                            
+                            // DEBUG: Verify write
+                            if (getchar_count == 0) {
+                                int32_t verify = *result_ptr;
+                                vcpu_printf(ctx, "  Verification: VMM wrote %d, readback %d at phys 0x4000\n", ch, verify);
+                            }
+                            
+                            if (getchar_count++ < 5) {
+                                vcpu_printf(ctx, "GETCHAR[%d]: ch=%d, wrote to guest phys 0x4000 (virt 0x4000 identity-mapped)\n", 
+                                           getchar_count, ch);
+                            }
                             break;
+                        }
 
                         default:
                             vcpu_printf(ctx, "Unknown hypercall: 0x%02x\n", hc_num);
@@ -937,14 +984,17 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                     
                     // Return character in data buffer (KVM will put it in AL)
                     data[0] = (ch == EOF) ? -1 : (unsigned char)ch;
-                    if (ctx->exit_count < 25) {
-                        vcpu_printf(ctx, "IN from 0x500: returning %d\n", (int)(signed char)data[0]);
+                    static int in_count = 0;
+                    if (in_count++ < 50) {
+                        vcpu_printf(ctx, "IN[%d] from 0x500: ch=%d, returning data[0]=%d\n", 
+                                   in_count, ch, (int)(signed char)data[0]);
                     }
                     ctx->pending_getchar = 0;
                 } else if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
                     // IN without pending_getchar - this shouldn't happen
-                    if (ctx->exit_count < 25) {
-                        vcpu_printf(ctx, "IN from 0x500 without pending_getchar!\n");
+                    static int unexpected_in = 0;
+                    if (unexpected_in++ < 20) {
+                        vcpu_printf(ctx, "WARN[%d]: IN from 0x500 without pending_getchar!\n", unexpected_in);
                     }
                     data[0] = 0;  // Return 0 by default
                 }
