@@ -6,28 +6,64 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a self-directed university project (Ajou University) to develop a minimal Virtual Machine Monitor (VMM) using Linux KVM API.
 
-**Architecture Change (Week 9):**
-- **Previous approach (discontinued)**: Bare-metal RISC-V hypervisor following https://1000hv.seiya.me/en/
-- **Current approach**: KVM-based VMM running on RISC-V Linux
+**Development Approach (Dual-Track):**
 
-**Target Architecture:**
+The project evolved through multiple phases:
+1. **Phase 0 (Week 1-8)**: Bare-metal RISC-V hypervisor (reference implementation)
+2. **Phase 1 (Week 10)**: RISC-V Linux + KVM environment setup (complete)
+3. **Phase 2 (Week 11)**: x86 KVM VMM implementation (COMPLETE - current primary focus)
+
+**Primary Implementation - x86 KVM VMM:**
 ```
 ┌─────────────────────────────────────┐
-│  Guest OS (simple test program)     │  ← Target for hypercalls
+│  Guest Programs (Real/Protected)    │  ← 7 assembly test programs
 ├─────────────────────────────────────┤
-│  KVM VMM (Rust, IN DEVELOPMENT)     │  ← Main development focus
+│  x86 KVM VMM (C, 621 lines)         │  ← Primary implementation
 ├─────────────────────────────────────┤
-│  RISC-V Linux + KVM (CONFIG_KVM=y)  │  ← /dev/kvm interface
+│  Linux KVM (/dev/kvm)               │  ← KVM API interface
 ├─────────────────────────────────────┤
-│  QEMU (RISC-V H-extension enabled)  │  ← Development environment
-├─────────────────────────────────────┤
-│  x86 host (Fedora 43)               │  ← Host machine
+│  x86_64 host (Fedora 43)            │  ← Native execution
 └─────────────────────────────────────┘
 ```
 
-The project builds a userspace VMM using KVM ioctls to create and manage virtual machines.
+**Reference Implementation - RISC-V:**
+```
+┌─────────────────────────────────────┐
+│  Guest code (assembly)              │
+├─────────────────────────────────────┤
+│  RISC-V KVM VMM (Rust, incomplete)  │  ← Reference only
+├─────────────────────────────────────┤
+│  RISC-V Linux + KVM                 │
+├─────────────────────────────────────┤
+│  QEMU (H-extension enabled)         │
+├─────────────────────────────────────┤
+│  x86_64 host (Fedora 43)            │
+└─────────────────────────────────────┘
+```
+
+The project builds a userspace VMM using KVM ioctls to create and manage virtual machines. The x86 implementation is complete and functional, while RISC-V work serves as reference material.
 
 ## Repository Structure
+
+### Primary Implementation (x86)
+
+- **kvm-vmm-x86/** - x86 KVM VMM (Phase 2, COMPLETE)
+  - `src/main.c` - VMM implementation (621 lines)
+  - `src/protected_mode.h` - GDT/IDT structures for Protected Mode
+  - `guest/` - 7 assembly guest programs:
+    - **Real Mode (16-bit)**:
+      - `minimal.S` - Minimal HLT test
+      - `hello.S` - "Hello, KVM!" console output via hypercall
+      - `counter.S` - Count 0-9 and display
+      - `hctest.S` - Hypercall system test (4 operations)
+      - `multiplication.S` - 2-9 multiplication table
+    - **Protected Mode (32-bit)**:
+      - `pmode_simple.S` - Basic Protected Mode with GDT
+      - `pmode_test.S` - Protected Mode console output test
+  - `Makefile` - Pattern-based build system with shortcuts
+  - `README.md` - Comprehensive documentation (428 lines)
+
+### Reference Implementations (RISC-V)
 
 - **linux-6.17.7/** - RISC-V Linux kernel (Phase 1, complete)
   - `.config` - Kernel configuration with `CONFIG_KVM=y`
@@ -38,27 +74,87 @@ The project builds a userspace VMM using KVM ioctls to create and manage virtual
 - **initramfs.cpio.gz** - Packed initramfs archive (2.1KB)
 - **hypervisor/** - Bare-metal RISC-V hypervisor (Phase 0, reference only)
   - `src/` - Rust source code (main.rs, vcpu.rs, trap.rs, etc.)
-  - `guest.S` - Guest assembly code (can be reused for KVM VMM)
-  - **Note**: This is the old bare-metal approach, kept for reference
-- **kvm-vmm/** - KVM-based VMM in Rust (Phase 2, TODO)
-  - Main development area for the new KVM approach
-- **HLeOs/** - Reference x86_64 educational OS project (separate codebase)
+  - `guest.S` - Guest assembly code
+- **kvm-vmm/** - RISC-V KVM VMM in Rust (Phase 2, deprecated/reference only)
+  - Contains incomplete Rust implementation with kvm-ioctls dependencies
+  - Abandoned in favor of x86 C implementation
+
+### Supporting Files
+
+- **busybox-1.36.1/** - BusyBox (explored for richer initramfs, not pursued)
+- **config-vm** - Minimal Linux config provided by supervisor
+- **HLeOs/** - Reference x86_64 educational OS project
 - **research/** - Weekly research notes documenting learning progress
-  - `week10/` - Phase 1 completion report (RISC-V Linux + KVM setup)
+  - `week10/` - Phase 2 completion report (x86 KVM VMM implementation)
+  - `week11/` - Multi-guest and OS porting planning
 - **meetings/** - Weekly supervisor meeting logs
-  - `week9.md` - Architecture change decision
+  - `week11.md` - Latest meeting (2024-11-11)
 - **README.md** - 16-week project timeline and references
 
 **Current Implementation Status:**
+- ✅ Phase 0: Bare-metal RISC-V hypervisor (Week 1-8)
 - ✅ Phase 1: RISC-V Linux with KVM support (Week 10)
-- 🚧 Phase 2: KVM VMM development (Week 11-12, in planning)
-- ⏳ Phase 3: Hypercall handling (Week 12-13)
-- ⏳ Phase 4: Guest code enhancement (Week 13-14)
+- ✅ Phase 2: x86 KVM VMM with hypercalls and Protected Mode (Week 11)
+- 🚧 Phase 3: Multi-guest vCPU support (Week 12, in progress)
+- ⏳ Phase 4: 1K OS porting and performance analysis (Week 12-13)
 - ⏳ Phase 5: Documentation and demo (Week 14-16)
 
 ## Build Commands
 
-### Phase 1: RISC-V Linux Kernel (Complete)
+### Phase 2: x86 KVM VMM (Primary Implementation)
+
+#### Quick Build and Run (Shortcuts)
+```bash
+cd kvm-vmm-x86
+
+# Build and run in one command (recommended)
+make multiplication    # 2-9 multiplication table
+make counter          # Count 0-9 with display
+make hello            # "Hello, KVM!" via hypercall
+make hctest           # Hypercall system test (4 operations)
+make minimal          # Minimal HLT test
+make pmode_simple     # Protected Mode with GDT
+make pmode_test       # Protected Mode console output
+```
+
+#### Manual Build and Run
+```bash
+cd kvm-vmm-x86
+
+# Build specific guest
+make build-<name>     # Compile guest/<name>.S to guest/<name>.bin
+make build-counter    # Example: build counter guest
+
+# Run specific guest (assumes already built)
+make run-<name>       # Execute guest/<name>.bin in VMM
+make run-counter      # Example: run counter guest
+
+# Build VMM only (automatic when running guests)
+make kvm-vmm         # Compile src/main.c to kvm-vmm executable
+
+# Clean build artifacts
+make clean           # Remove all .bin, .o, and executable files
+```
+
+**Output Examples:**
+```
+$ make multiplication
+2 x 1 = 2
+2 x 2 = 4
+...
+9 x 9 = 81
+
+$ make hello
+Hello, KVM!
+```
+
+**Important Notes:**
+- Guests execute in Real Mode (16-bit) or Protected Mode (32-bit)
+- VMM handles 4 hypercall operations: putchar, getchar, puts, exit
+- Protected Mode guests require GDT/IDT setup in guest code
+- VM exits captured and handled by VMM on each hypercall
+
+### Phase 1: RISC-V Linux Kernel (Reference Only)
 
 #### Build Linux kernel with KVM
 ```bash
@@ -119,7 +215,25 @@ cd hypervisor
 
 ## Development Tools
 
-### Cross-Compilation Toolchain (Fedora 43)
+### x86 Toolchain (Primary, Fedora 43)
+- **C Compiler**: `gcc` (native x86_64)
+- **Assembler**: `as` (GNU assembler for x86)
+- **Linker**: `ld` (GNU linker)
+- **KVM Interface**: `/dev/kvm` (requires Linux kernel with KVM support)
+- **Dependencies**: None (pure C with standard library and KVM API)
+
+Installation (if needed):
+```bash
+sudo dnf install -y gcc binutils make
+```
+
+**Verify KVM availability:**
+```bash
+ls -l /dev/kvm    # Should show character device (major 10, minor 232)
+lsmod | grep kvm  # Should show kvm and kvm_intel/kvm_amd modules
+```
+
+### Cross-Compilation Toolchain for RISC-V (Reference Only)
 - **RISC-V GCC**: `riscv64-linux-gnu-gcc` (15.2.1)
 - **RISC-V G++**: `riscv64-linux-gnu-g++` (15.2.1)
 - **RISC-V Binutils**: `binutils-riscv64-linux-gnu` (2.45)
@@ -132,19 +246,18 @@ sudo dnf install -y gcc-riscv64-linux-gnu gcc-c++-riscv64-linux-gnu \
   openssl-devel ncurses-devel
 ```
 
-### Rust Toolchain (Phase 0, reference)
+### Rust Toolchain (Reference Only)
+
+**Phase 0 (Bare-metal RISC-V):**
 - **Edition**: 2024
 - **Target**: riscv64gc-unknown-none-elf (bare-metal)
 - **Toolchain**: stable
-- **Dependencies**:
-  - `spin = "0.10.0"` (for spinlocks/mutexes in no_std environment)
+- **Dependencies**: `spin = "0.10.0"`
 
-### Rust Toolchain (Phase 2, planned)
+**Phase 2 RISC-V (Deprecated):**
 - **Target**: riscv64gc-unknown-linux-gnu (Linux userspace)
-- **Dependencies** (planned):
-  - `kvm-ioctls = "0.17"` - High-level KVM API wrappers
-  - `kvm-bindings = "0.8"` - Raw KVM ioctl bindings
-  - `libc` - System call interface
+- **Dependencies**: `kvm-ioctls = "0.24"`, `kvm-bindings = "0.10"`, `libc = "0.2"`
+- **Status**: Incomplete, abandoned in favor of x86 C implementation
 
 ### GitHub Actions
 This repository has two automated Claude Code workflows:
@@ -160,7 +273,45 @@ This repository has two automated Claude Code workflows:
 
 ## Architecture
 
-### Phase 1: RISC-V Linux + KVM (Current)
+### Phase 2: x86 KVM VMM (Primary Implementation)
+
+**VM Lifecycle:**
+1. Open `/dev/kvm` and check API version (KVM_GET_API_VERSION)
+2. Create VM (KVM_CREATE_VM)
+3. Allocate guest memory (2MB) and map via KVM_SET_USER_MEMORY_REGION
+4. Load guest binary into memory (Real Mode starts at 0x0, Protected Mode varies)
+5. Create vCPU (KVM_CREATE_VCPU)
+6. Initialize registers (CS:IP for Real Mode, or GDT/IDT for Protected Mode)
+7. Run VM in loop (KVM_RUN) until guest exits or halts
+8. Handle VM exits: hypercalls (IN/OUT), HLT, shutdown
+
+**Operating Modes:**
+- **Real Mode (16-bit)**: Direct execution from 0x0, simple flat memory model
+- **Protected Mode (32-bit)**: Requires GDT setup, segmentation, privilege levels
+
+**Hypercall Interface:**
+- Port 0xE9: Single character output (putchar)
+- Port 0xEA: String output (puts)
+- Port 0xEB: Character input (getchar)
+- Port 0xEC: Exit VM (with status code)
+
+**Memory Layout:**
+```
+0x00000000 - 0x001FFFFF (2MB guest memory)
+  Real Mode:
+    0x0000: Entry point (CS=0, IP=0)
+    Stack grows down from 0x7C00
+  Protected Mode:
+    Variable entry based on GDT setup
+    GDT/IDT defined by guest
+```
+
+**VM Exit Handling:**
+- KVM_EXIT_IO: Handle hypercall ports (0xE9-0xEC)
+- KVM_EXIT_HLT: Guest executed HLT instruction
+- KVM_EXIT_SHUTDOWN: Triple fault or shutdown event
+
+### Phase 1: RISC-V Linux + KVM (Reference)
 
 **Boot Flow:**
 1. QEMU starts with OpenSBI firmware
@@ -225,7 +376,7 @@ See original implementation in `hypervisor/` for:
 
 ## Current Project Status
 
-**Current Week**: Week 10 (of 16-week timeline)
+**Current Week**: Week 12 (of 16-week timeline)
 **Timeline Context**: Mid-term report submitted Week 8 (Oct 24); Final report due Week 16 (Dec 19)
 
 **Progress**:
@@ -238,55 +389,80 @@ See original implementation in `hypervisor/` for:
   - Linux kernel 6.17.7 built with `CONFIG_KVM=y`
   - Minimal initramfs with assembly init program
   - Successfully boots in QEMU with KVM enabled
-  - **KVM hypervisor extension confirmed available**
-- 🚧 **Phase 2** (Week 11-12, planned): KVM VMM implementation
-  - Open `/dev/kvm` and query KVM API version
-  - Create VM (KVM_CREATE_VM)
-  - Set up memory regions (KVM_SET_USER_MEMORY_REGION)
-  - Create vCPU (KVM_CREATE_VCPU)
-  - Initialize registers and run VM (KVM_RUN)
-- ⏳ **Phase 3** (Week 12-13): Hypercall handling
-  - Handle VM exits (KVM_EXIT_RISCV_SBI)
-  - Implement SBI console putchar
-  - Test with simple guest code
-- ⏳ **Phase 4** (Week 13-14): Guest code enhancement
-  - More interesting guest programs
-  - UART access, loops, arithmetic
+  - KVM hypervisor extension confirmed available
+- ✅ **Phase 2** (Week 11): x86 KVM VMM implementation (COMPLETE)
+  - Full VMM in C (621 lines): VM creation, memory setup, vCPU management
+  - 7 guest programs (5 Real Mode + 2 Protected Mode)
+  - Hypercall system (4 operations: putchar, getchar, puts, exit)
+  - Protected Mode support with GDT/IDT
+  - Pattern-based Makefile build system
+- 🚧 **Phase 3** (Week 12, current): Multi-guest and OS porting
+  - Multi-vCPU support (2-4 guests running simultaneously)
+  - 1K OS porting to x86 VMM
+  - Concurrent guest execution and scheduling
+- ⏳ **Phase 4** (Week 12-13): Performance analysis
+  - Performance comparison: KVM vs QEMU emulation
+  - Matrix multiplication benchmark
+  - VM exit statistics and optimization
 - ⏳ **Phase 5** (Week 14-16): Documentation and demo
-  - Demo video
-  - Final report
-  - Code cleanup
+  - Demo video showcasing multi-guest execution
+  - Final report with performance analysis
+  - Code cleanup and documentation
 
-**Current Focus**: Phase 1 complete! Starting Phase 2 (KVM VMM) next week.
+**Current Focus**: Implementing multi-vCPU support for simultaneous guest execution and porting 1K OS.
 
-**Timeline Estimate**:
-- **Week 11**: Start KVM VMM (Rust project setup, basic VM creation)
-- **Week 11-12**: Complete minimal VMM (guest execution)
-- **Week 12**: Hypercall handling
-- **Week 13**: Guest code improvements
-- **Week 14-15**: Documentation and testing
-- **Week 16**: Final report and submission
+**Remaining Timeline**:
+- **Week 12**: Multi-guest vCPU support + 1K OS porting (8-10 hours)
+- **Week 12-13**: Performance benchmarking and comparison (6-8 hours)
+- **Week 13-14**: Interrupt handling improvements if needed (4-6 hours)
+- **Week 14-15**: Documentation, testing, refinement (8-10 hours)
+- **Week 16**: Demo video and final report (6-8 hours)
 
-**Risk Assessment**: ✅ On track (6 weeks remaining, 34-40 hours estimated work)
+**Risk Assessment**: ✅ Ahead of schedule (Phase 2 complete early; 4 weeks remaining, 32-42 hours estimated work)
 
 ## References
 
 ### Official Documentation
+
+**KVM and Virtualization:**
 - **KVM API**: https://www.kernel.org/doc/html/latest/virt/kvm/api.html
+- **KVM x86 Specifics**: https://www.kernel.org/doc/html/latest/virt/kvm/x86/index.html
+- **Linux KVM**: https://www.linux-kvm.org/
+
+**x86 Architecture:**
+- **Intel 64 and IA-32 Architectures Software Developer Manual**: https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html
+- **x86 Assembly Guide**: http://www.cs.virginia.edu/~evans/cs216/guides/x86.html
+- **OSDev Wiki - x86**: https://wiki.osdev.org/X86
+
+**RISC-V (Reference):**
 - **RISC-V Privileged Spec**: https://github.com/riscv/riscv-isa-manual
 - **RISC-V H-extension**: https://github.com/riscv/riscv-isa-manual/blob/master/src/hypervisor.tex
 
 ### Tutorials & Examples
-- **RISC-V Bare-metal Hypervisor** (Phase 0 reference): https://1000hv.seiya.me/en/
-- **KVM Sample Rust** (Phase 2 reference): https://github.com/keiichiw/kvm-sample-rust
+
+**x86 KVM VMM:**
+- **KVM Sample Rust**: https://github.com/keiichiw/kvm-sample-rust
 - **rust-vmm**: https://github.com/rust-vmm (kvm-ioctls, kvm-bindings)
+- **Firecracker**: https://github.com/firecracker-microvm/firecracker (microVM runtime)
+- **Cloud Hypervisor**: https://github.com/cloud-hypervisor/cloud-hypervisor (Rust-based VMM)
+
+**RISC-V (Reference):**
+- **RISC-V Bare-metal Hypervisor** (Phase 0): https://1000hv.seiya.me/en/
 
 ### Project Documentation
-- **Research notes**: `research/week10/README.md` - Phase 1 completion report
-- **Meeting logs**: `meetings/week9.md` - Architecture change decision
+
+**Internal Documentation:**
+- **x86 VMM README**: `kvm-vmm-x86/README.md` - Comprehensive 428-line documentation
+- **Research notes**:
+  - `research/week10/README.md` - Phase 2 completion report (x86 VMM)
+  - `research/week11/` - Multi-guest planning
+- **Meeting logs**:
+  - `meetings/week11.md` - Latest meeting (2024-11-11)
+  - `meetings/week9.md` - Architecture change decision
 - **Weekly progress**: All documented in `research/` and `meetings/` directories
 
 ### Development Notes
-- Commit and push regularly to maintain backup
+- Commit regularly (see global CLAUDE.md instructions)
 - Document key decisions in weekly research notes
 - Update CLAUDE.md when making significant changes
+- Use concise commit messages without credits or emojis
