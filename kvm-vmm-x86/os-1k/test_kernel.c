@@ -15,12 +15,15 @@ extern char __free_ram[];
 extern char __free_ram_end[];
 
 /*
- * Hypercall interface (port 0x500)
+ * Hypercall/Syscall interface (port 0x500)
  */
 #define HYPERCALL_PORT 0x500
 
-#define HC_PUTCHAR    0x01
-#define HC_EXIT       0x00
+#define SYS_EXIT       0x00
+#define SYS_PUTCHAR    0x01
+#define SYS_GETCHAR    0x02
+#define SYS_READFILE   0x03
+#define SYS_WRITEFILE  0x04
 
 static inline void hypercall_putchar(char c) {
     __asm__ volatile(
@@ -29,9 +32,24 @@ static inline void hypercall_putchar(char c) {
         "mov %2, %%dx\n\t"
         "outb %%al, %%dx"
         :
-        : "q"((uint8_t)c), "i"(HC_PUTCHAR), "i"(HYPERCALL_PORT)
+        : "q"((uint8_t)c), "i"(SYS_PUTCHAR), "i"(HYPERCALL_PORT)
         : "al", "bl", "dx"
     );
+}
+
+static inline char hypercall_getchar(void) {
+    char c;
+    __asm__ volatile(
+        "mov %1, %%al\n\t"
+        "mov %2, %%dx\n\t"
+        "outb %%al, %%dx\n\t"
+        "inb %%dx, %%al\n\t"
+        "mov %%al, %0"
+        : "=r"(c)
+        : "i"(SYS_GETCHAR), "i"(HYPERCALL_PORT)
+        : "al", "dx"
+    );
+    return c;
 }
 
 static inline void hypercall_exit(void) {
@@ -40,9 +58,51 @@ static inline void hypercall_exit(void) {
         "mov %1, %%dx\n\t"
         "outb %%al, %%dx"
         :
-        : "i"(HC_EXIT), "i"(HYPERCALL_PORT)
+        : "i"(SYS_EXIT), "i"(HYPERCALL_PORT)
         : "al", "dx"
     );
+}
+
+/*
+ * Memory Allocator
+ *
+ * Simple bump allocator for page allocation.
+ * Allocates 4KB pages from free RAM region.
+ */
+#define PAGE_SIZE 4096
+
+typedef struct {
+    void *free_ram_start;     // Start of free RAM
+    void *free_ram_end;       // End of free RAM
+    void *next_page;          // Next available page
+    uint32_t pages_allocated; // Number of pages allocated
+} page_allocator_t;
+
+static page_allocator_t allocator;
+
+/*
+ * Initialize page allocator
+ */
+static void init_page_allocator(void) {
+    allocator.free_ram_start = __free_ram;
+    allocator.free_ram_end = __free_ram_end;
+
+    // Align next_page to PAGE_SIZE boundary
+    uintptr_t start = (uintptr_t)__free_ram;
+    allocator.next_page = (void *)((start + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
+    allocator.pages_allocated = 0;
+}
+
+/*
+ * Allocate a 4KB page
+ * Returns: Physical address of allocated page, or NULL if out of memory
+ */
+static void *alloc_page(void) {
+    // TODO(human): Implement page allocation logic here
+    // Check if there's enough space for one more page
+    // If yes, allocate and return the page address
+    // If no, return NULL
+    return NULL;
 }
 
 /*
