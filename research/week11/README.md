@@ -8,6 +8,179 @@
 
 ## 연구 내용
 
+### Multi-vCPU 지원 구현
+
+Week 11의 첫 번째 목표는 여러 게스트 프로그램을 동시에 실행할 수 있도록 멀티 vCPU 지원을 추가하는 것이었습니다.
+
+#### 아키텍처 설계
+
+기존 단일 vCPU 구조를 확장하여 최대 4개의 vCPU를 동시에 실행할 수 있도록 설계했습니다:
+
+```
+┌─────────────────────────────────────┐
+│  Host (Linux x86_64)                │
+│  ┌───────────────────────────────┐  │
+│  │ VMM Process (kvm-vmm)         │  │
+│  │  ┌─────────┬─────────┬─────┐ │  │
+│  │  │Thread 0 │Thread 1 │ ... │ │  │
+│  │  │vCPU 0   │vCPU 1   │     │ │  │
+│  │  └─────────┴─────────┴─────┘ │  │
+│  └───────────────────────────────┘  │
+│  ┌───────────────────────────────┐  │
+│  │ KVM (/dev/kvm)                │  │
+│  │  VM (single VM, multiple vCPUs)│ │
+│  └───────────────────────────────┘  │
+└─────────────────────────────────────┘
+
+Memory Layout:
+  vCPU 0: GPA 0x00000 - 0x3FFFF (256KB)
+  vCPU 1: GPA 0x40000 - 0x7FFFF (256KB)
+  vCPU 2: GPA 0x80000 - 0xBFFFF (256KB)
+  vCPU 3: GPA 0xC0000 - 0xFFFFF (256KB)
+```
+
+각 vCPU는 독립적인 메모리 영역과 레지스터 상태를 가지며, pthread를 통해 병렬 실행됩니다.
+
+#### 구현 상세
+
+**1. Per-vCPU Context 구조체**
+
+```c
+typedef struct {
+    int vcpu_id;                  // vCPU index (0-3)
+    int vcpu_fd;                  // KVM vCPU file descriptor
+    struct kvm_run *kvm_run;      // Per-vCPU run structure
+    void *guest_mem;              // Per-guest memory region
+    size_t mem_size;              // Memory size (256KB)
+    const char *guest_binary;     // Binary filename
+    char name[256];               // Display name
+    int exit_count;               // VM exit counter
+    bool running;                 // Execution state
+} vcpu_context_t;
+```
+
+각 vCPU가 독립적인 상태를 유지하도록 모든 정보를 context 구조체에 캡슐화했습니다.
+
+**2. 메모리 할당 및 매핑**
+
+```c
+static int setup_vcpu_memory(vcpu_context_t *ctx) {
+    ctx->mem_size = 256 * 1024;  // 256KB per vCPU
+    ctx->guest_mem = mmap(NULL, ctx->mem_size, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+    struct kvm_userspace_memory_region mem_region = {
+        .slot = ctx->vcpu_id,
+        .flags = 0,
+        .guest_phys_addr = ctx->vcpu_id * ctx->mem_size,  // Offset GPA
+        .memory_size = ctx->mem_size,
+        .userspace_addr = (uint64_t)ctx->guest_mem,
+    };
+
+    ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION, &mem_region);
+}
+```
+
+각 vCPU의 메모리를 서로 다른 GPA에 매핑하여 격리를 보장합니다.
+
+**3. Thread-safe 출력**
+
+여러 vCPU가 동시에 출력할 때 섞이지 않도록 mutex와 ANSI 색상 코드를 사용했습니다:
+
+```c
+static pthread_mutex_t stdout_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
+    pthread_mutex_lock(&stdout_mutex);
+
+    // vCPU별 색상: red, green, yellow, blue
+    const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
+
+    printf("%s[vCPU %d:%s]%s ", colors[ctx->vcpu_id],
+           ctx->vcpu_id, ctx->name, "\033[0m");
+
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+
+    pthread_mutex_unlock(&stdout_mutex);
+}
+```
+
+**4. Pthread 기반 실행**
+
+```c
+static void *vcpu_thread(void *arg) {
+    vcpu_context_t *ctx = (vcpu_context_t *)arg;
+
+    while (ctx->running) {
+        ioctl(ctx->vcpu_fd, KVM_RUN, 0);
+        handle_vm_exit(ctx);
+    }
+
+    return NULL;
+}
+
+int main(int argc, char **argv) {
+    pthread_t threads[MAX_VCPUS];
+
+    // Spawn vCPU threads
+    for (int i = 0; i < num_vcpus; i++) {
+        pthread_create(&threads[i], NULL, vcpu_thread, &vcpus[i]);
+    }
+
+    // Wait for all vCPUs
+    for (int i = 0; i < num_vcpus; i++) {
+        pthread_join(threads[i], NULL);
+    }
+}
+```
+
+#### 테스트 결과
+
+**2-vCPU 테스트:**
+```bash
+./kvm-vmm guest/multiplication.bin guest/counter.bin
+```
+
+출력:
+```
+[vCPU 0:multiplication] 2 x 1 = 2
+[vCPU 1:counter] 0
+[vCPU 0:multiplication] 2 x 2 = 4
+[vCPU 1:counter] 1
+...
+```
+
+두 게스트가 병렬로 실행되면서 출력이 인터리빙되는 것을 확인했습니다.
+
+**4-vCPU 테스트:**
+```bash
+./kvm-vmm guest/multiplication.bin guest/counter.bin \
+          guest/hello.bin guest/hctest.bin
+```
+
+4개의 게스트가 동시에 실행되며, 각각 색상으로 구분된 출력을 생성했습니다.
+
+#### 주요 도전과제
+
+**1. Static Buffer 버그**
+
+초기 구현에서 `extract_guest_name()` 함수가 static buffer를 사용하여 여러 스레드에서 동시에 호출될 때 race condition이 발생했습니다. 이를 per-context buffer로 변경하여 해결했습니다.
+
+**2. Real Mode CS:IP 설정**
+
+각 vCPU는 서로 다른 GPA에서 시작해야 하므로, CS:IP를 적절히 설정해야 했습니다:
+- vCPU 0: CS=0x0000, IP=0x0 (물리 주소 0x00000)
+- vCPU 1: CS=0x4000, IP=0x0 (물리 주소 0x40000)
+- vCPU 2: CS=0x8000, IP=0x0 (물리 주소 0x80000)
+- vCPU 3: CS=0xC000, IP=0x0 (물리 주소 0xC0000)
+
+**3. VM Exit 동기화**
+
+각 vCPU의 VM exit을 독립적으로 처리하면서도 출력이 섞이지 않도록 mutex로 보호했습니다.
+
 ### 1K OS 프로젝트 분석
 
 Week 11에서는 [Operating System in 1000 Lines](https://operating-system-in-1000-lines.vercel.app/en/) 프로젝트를 x86 KVM VMM으로 포팅하는 작업을 시작했습니다. 이 프로젝트는 원래 RISC-V RV32 아키텍처를 대상으로 작성된 교육용 OS로, 약 1000줄의 코드로 다음 기능을 구현합니다:
