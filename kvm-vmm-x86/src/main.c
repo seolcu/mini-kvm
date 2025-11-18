@@ -7,12 +7,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+#include <stdarg.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/kvm.h>
 #include <errno.h>
+#include <pthread.h>
 #include "protected_mode.h"
 
 // Guest memory configuration
@@ -36,14 +39,77 @@ static cpu_mode_t cpu_mode = MODE_REAL;  // Default: Real Mode
 #define HC_PUTNUM     0x02        // Output number (BX = number, decimal)
 #define HC_NEWLINE    0x03        // Output newline
 
-// File descriptors
-static int kvm_fd = -1;
-static int vm_fd = -1;
-static int vcpu_fd = -1;
+// Multi-vCPU configuration
+#define MAX_VCPUS 4               // Maximum number of vCPUs
 
-// Memory pointers
-static void *guest_mem = NULL;
-static struct kvm_run *kvm_run = NULL;
+// Per-vCPU context structure
+typedef struct {
+    int vcpu_id;                  // vCPU index (0, 1, 2, 3)
+    int vcpu_fd;                  // KVM vCPU file descriptor
+    struct kvm_run *kvm_run;      // Per-vCPU run structure
+    void *guest_mem;              // Per-guest memory region
+    size_t mem_size;              // Memory size (4MB default)
+    size_t kvm_run_mmap_size;     // Size of kvm_run mmap region
+    const char *guest_binary;     // Binary filename
+    char name[256];               // Display name (e.g., "multiplication")
+    int exit_count;               // VM exit counter
+    bool running;                 // Execution state
+} vcpu_context_t;
+
+// Global KVM state (shared across vCPUs)
+static int kvm_fd = -1;           // /dev/kvm file descriptor
+static int vm_fd = -1;            // VM instance (one VM, multiple vCPUs)
+
+// vCPU array
+static vcpu_context_t vcpus[MAX_VCPUS];
+static int num_vcpus = 0;
+
+// Thread synchronization
+static pthread_mutex_t stdout_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/*
+ * Thread-safe output functions with vCPU identification
+ */
+static void vcpu_putchar(vcpu_context_t *ctx, char ch) {
+    pthread_mutex_lock(&stdout_mutex);
+
+    // Color code based on vCPU ID: red, green, blue, yellow
+    const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
+    const char *reset = "\033[0m";
+
+    printf("%s[vCPU %d:%s]%s %c",
+           colors[ctx->vcpu_id % 4],
+           ctx->vcpu_id,
+           ctx->name,
+           reset,
+           ch);
+    fflush(stdout);
+
+    pthread_mutex_unlock(&stdout_mutex);
+}
+
+static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
+    pthread_mutex_lock(&stdout_mutex);
+
+    // Color code based on vCPU ID
+    const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
+    const char *reset = "\033[0m";
+
+    printf("%s[vCPU %d:%s]%s ",
+           colors[ctx->vcpu_id % 4],
+           ctx->vcpu_id,
+           ctx->name,
+           reset);
+
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+
+    fflush(stdout);
+
+    pthread_mutex_unlock(&stdout_mutex);
+}
 
 /*
  * Load guest binary into guest memory
@@ -142,41 +208,48 @@ static int init_kvm(void) {
 }
 
 /*
- * Allocate and map guest memory
+ * Allocate and map guest memory for a specific vCPU context
+ * Real Mode limitation: Each vCPU gets 256KB at offset vcpu_id * 256KB
+ * This allows 4 vCPUs within the 1MB Real Mode address space
  */
-static int setup_guest_memory(void) {
+static int setup_vcpu_memory(vcpu_context_t *ctx) {
     struct kvm_userspace_memory_region mem_region;
 
-    // Allocate guest memory
-    guest_mem = mmap(NULL, GUEST_MEM_SIZE,
-                     PROT_READ | PROT_WRITE,
-                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (guest_mem == MAP_FAILED) {
-        perror("mmap guest_mem");
+    // Use 256KB per vCPU (sufficient for our small guests)
+    ctx->mem_size = 256 * 1024;  // 256KB
+
+    // Allocate memory for this vCPU's guest
+    ctx->guest_mem = mmap(NULL, ctx->mem_size,
+                          PROT_READ | PROT_WRITE,
+                          MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (ctx->guest_mem == MAP_FAILED) {
+        perror("mmap vcpu guest_mem");
         return -1;
     }
 
-    printf("Allocated guest memory: %d MB at %p\n",
-           GUEST_MEM_SIZE / (1024*1024), guest_mem);
+    vcpu_printf(ctx, "Allocated guest memory: %zu KB at %p\n",
+                ctx->mem_size / 1024, ctx->guest_mem);
 
     // Tell KVM about this memory region
-    mem_region.slot = 0;
+    // Each vCPU uses different GPA range: vCPU 0 at 0x0, vCPU 1 at 0x40000, etc.
+    mem_region.slot = ctx->vcpu_id;  // Use vCPU ID as slot number
     mem_region.flags = 0;
-    mem_region.guest_phys_addr = 0;  // GPA starts at 0
-    mem_region.memory_size = GUEST_MEM_SIZE;
-    mem_region.userspace_addr = (unsigned long)guest_mem;
+    mem_region.guest_phys_addr = ctx->vcpu_id * ctx->mem_size;  // Offset by 256KB
+    mem_region.memory_size = ctx->mem_size;
+    mem_region.userspace_addr = (unsigned long)ctx->guest_mem;
 
     if (ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION, &mem_region) < 0) {
         perror("KVM_SET_USER_MEMORY_REGION");
         return -1;
     }
 
-    printf("Mapped guest memory: GPA 0x0 -> HVA %p (size: %d bytes)\n",
-           guest_mem, GUEST_MEM_SIZE);
+    vcpu_printf(ctx, "Mapped to slot %d: GPA 0x%lx -> HVA %p (%zu bytes)\n",
+                ctx->vcpu_id, mem_region.guest_phys_addr, ctx->guest_mem, ctx->mem_size);
 
     return 0;
 }
 
+#if 0  // OLD SINGLE-VCPU CODE (disabled)
 /*
  * Create a GDT entry
  */
@@ -534,7 +607,250 @@ static int run_vm(void) {
 
     return 0;
 }
+#endif  // OLD SINGLE-VCPU CODE
 
+/*
+ * Setup vCPU context (multi-vCPU version)
+ * Simplified version for Real Mode only
+ */
+static int setup_vcpu_context(vcpu_context_t *ctx) {
+    struct kvm_sregs sregs;
+    struct kvm_regs regs;
+    int mmap_size_ret;
+
+    // Create vCPU
+    ctx->vcpu_fd = ioctl(vm_fd, KVM_CREATE_VCPU, ctx->vcpu_id);
+    if (ctx->vcpu_fd < 0) {
+        perror("KVM_CREATE_VCPU");
+        return -1;
+    }
+
+    vcpu_printf(ctx, "Created vCPU (fd=%d)\n", ctx->vcpu_fd);
+
+    // Get kvm_run structure size and mmap it
+    mmap_size_ret = ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
+    if (mmap_size_ret < 0) {
+        perror("KVM_GET_VCPU_MMAP_SIZE");
+        return -1;
+    }
+    ctx->kvm_run_mmap_size = (size_t)mmap_size_ret;
+
+    ctx->kvm_run = mmap(NULL, ctx->kvm_run_mmap_size, PROT_READ | PROT_WRITE,
+                        MAP_SHARED, ctx->vcpu_fd, 0);
+    if (ctx->kvm_run == MAP_FAILED) {
+        perror("mmap kvm_run");
+        return -1;
+    }
+
+    vcpu_printf(ctx, "Mapped kvm_run structure: %zu bytes\n", ctx->kvm_run_mmap_size);
+
+    // Get current segment registers
+    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
+        perror("KVM_GET_SREGS");
+        return -1;
+    }
+
+    // Setup for Real Mode
+    // CS:IP must point to the vCPU's memory region
+    // Physical address = CS * 16 + IP
+    // For vCPU 0: GPA 0x00000 (CS = 0x0000, IP = 0x0)
+    // For vCPU 1: GPA 0x40000 (CS = 0x4000, IP = 0x0)
+    // For vCPU 2: GPA 0x80000 (CS = 0x8000, IP = 0x0)
+    // For vCPU 3: GPA 0xC0000 (CS = 0xC000, IP = 0x0)
+    uint16_t cs_value = ctx->vcpu_id * (ctx->mem_size / 16);  // 256KB / 16 = 0x4000
+
+    sregs.cs.base = cs_value * 16;  // Base address
+    sregs.cs.selector = cs_value;
+    sregs.cs.limit = 0xFFFF;
+    sregs.cs.type = 0x9b;
+    sregs.cs.present = 1;
+    sregs.cs.dpl = 0;
+    sregs.cs.db = 0;
+    sregs.cs.s = 1;
+    sregs.cs.l = 0;
+    sregs.cs.g = 0;
+    sregs.cs.avl = 0;
+
+    sregs.ds.base = 0;
+    sregs.ds.selector = 0;
+    sregs.ds.limit = 0xFFFF;
+    sregs.ds.type = 0x93;
+    sregs.ds.present = 1;
+    sregs.ds.dpl = 0;
+    sregs.ds.db = 0;
+    sregs.ds.s = 1;
+    sregs.ds.l = 0;
+    sregs.ds.g = 0;
+    sregs.ds.avl = 0;
+
+    sregs.es = sregs.fs = sregs.gs = sregs.ss = sregs.ds;
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
+        perror("KVM_SET_SREGS");
+        return -1;
+    }
+
+    // Set general purpose registers
+    memset(&regs, 0, sizeof(regs));
+    regs.rip = GUEST_LOAD_ADDR;
+    regs.rflags = 0x2;
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
+        perror("KVM_SET_REGS");
+        return -1;
+    }
+
+    vcpu_printf(ctx, "Set registers: RIP=0x%llx (Real Mode)\n", regs.rip);
+
+    ctx->running = true;
+    ctx->exit_count = 0;
+
+    return 0;
+}
+
+/*
+ * Handle VM exit for a specific vCPU context
+ */
+static int handle_vm_exit(vcpu_context_t *ctx) {
+    ctx->exit_count++;
+
+    switch (ctx->kvm_run->exit_reason) {
+        case KVM_EXIT_HLT:
+            vcpu_printf(ctx, "Guest halted after %d exits\n", ctx->exit_count);
+            ctx->running = false;
+            return 0;
+
+        case KVM_EXIT_IO: {
+            char *data = (char *)ctx->kvm_run + ctx->kvm_run->io.data_offset;
+
+            if (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) {
+                if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
+                    // Handle hypercall
+                    struct kvm_regs regs;
+                    if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0) {
+                        perror("KVM_GET_REGS");
+                        return -1;
+                    }
+
+                    unsigned char hc_num = regs.rax & 0xFF;
+                    switch (hc_num) {
+                        case HC_EXIT:
+                            vcpu_printf(ctx, "Exit request\n");
+                            ctx->running = false;
+                            return 0;
+
+                        case HC_PUTCHAR: {
+                            char ch = regs.rbx & 0xFF;
+                            pthread_mutex_lock(&stdout_mutex);
+                            putchar(ch);
+                            fflush(stdout);
+                            pthread_mutex_unlock(&stdout_mutex);
+                            break;
+                        }
+
+                        case HC_PUTNUM: {
+                            unsigned short num = regs.rbx & 0xFFFF;
+                            pthread_mutex_lock(&stdout_mutex);
+                            printf("%u", num);
+                            fflush(stdout);
+                            pthread_mutex_unlock(&stdout_mutex);
+                            break;
+                        }
+
+                        case HC_NEWLINE:
+                            pthread_mutex_lock(&stdout_mutex);
+                            putchar('\n');
+                            fflush(stdout);
+                            pthread_mutex_unlock(&stdout_mutex);
+                            break;
+
+                        default:
+                            vcpu_printf(ctx, "Unknown hypercall: 0x%02x\n", hc_num);
+                            return -1;
+                    }
+                } else if (ctx->kvm_run->io.port == 0x3f8) {
+                    // UART output
+                    pthread_mutex_lock(&stdout_mutex);
+                    for (int i = 0; i < ctx->kvm_run->io.size; i++) {
+                        putchar(data[i]);
+                    }
+                    fflush(stdout);
+                    pthread_mutex_unlock(&stdout_mutex);
+                }
+            }
+            break;
+        }
+
+        case KVM_EXIT_FAIL_ENTRY:
+            vcpu_printf(ctx, "FAIL_ENTRY: reason 0x%llx\n",
+                       ctx->kvm_run->fail_entry.hardware_entry_failure_reason);
+            return -1;
+
+        case KVM_EXIT_INTERNAL_ERROR:
+            vcpu_printf(ctx, "INTERNAL_ERROR: suberror 0x%x\n",
+                       ctx->kvm_run->internal.suberror);
+            return -1;
+
+        case KVM_EXIT_SHUTDOWN:
+            vcpu_printf(ctx, "SHUTDOWN\n");
+            ctx->running = false;
+            return 0;
+
+        default:
+            vcpu_printf(ctx, "Unknown exit reason: %d\n", ctx->kvm_run->exit_reason);
+            return -1;
+    }
+
+    // Safety limit
+    if (ctx->exit_count > 10000) {
+        vcpu_printf(ctx, "Too many exits (%d), stopping\n", ctx->exit_count);
+        return -1;
+    }
+
+    return 0;
+}
+
+/*
+ * vCPU thread entry point
+ */
+static void *vcpu_thread(void *arg) {
+    vcpu_context_t *ctx = (vcpu_context_t *)arg;
+    int ret;
+
+    vcpu_printf(ctx, "Thread started\n");
+
+    while (ctx->running) {
+        ret = ioctl(ctx->vcpu_fd, KVM_RUN, 0);
+        if (ret < 0) {
+            vcpu_printf(ctx, "KVM_RUN failed: %s\n", strerror(errno));
+            break;
+        }
+
+        if (handle_vm_exit(ctx) < 0) {
+            break;
+        }
+    }
+
+    vcpu_printf(ctx, "Thread exiting (total exits: %d)\n", ctx->exit_count);
+    return NULL;
+}
+
+/*
+ * Cleanup vCPU resources
+ */
+static void cleanup_vcpu(vcpu_context_t *ctx) {
+    if (ctx->kvm_run != NULL && ctx->kvm_run != MAP_FAILED) {
+        munmap(ctx->kvm_run, ctx->kvm_run_mmap_size);
+    }
+    if (ctx->guest_mem != NULL && ctx->guest_mem != MAP_FAILED) {
+        munmap(ctx->guest_mem, ctx->mem_size);
+    }
+    if (ctx->vcpu_fd >= 0) {
+        close(ctx->vcpu_fd);
+    }
+}
+
+#if 0  // OLD SINGLE-VCPU CLEANUP (disabled)
 /*
  * Cleanup resources
  */
@@ -549,73 +865,124 @@ static void cleanup(void) {
     if (vm_fd >= 0) close(vm_fd);
     if (kvm_fd >= 0) close(kvm_fd);
 }
+#endif  // OLD SINGLE-VCPU CLEANUP
+
+/*
+ * Extract guest name from binary filename
+ */
+static const char *extract_guest_name(const char *filename) {
+    const char *name = strrchr(filename, '/');
+    if (name) {
+        name++;  // Skip '/'
+    } else {
+        name = filename;
+    }
+
+    // Remove .bin extension if present
+    static char name_buf[256];
+    strncpy(name_buf, name, sizeof(name_buf) - 1);
+    name_buf[sizeof(name_buf) - 1] = '\0';
+
+    char *dot = strrchr(name_buf, '.');
+    if (dot && strcmp(dot, ".bin") == 0) {
+        *dot = '\0';
+    }
+
+    return name_buf;
+}
 
 int main(int argc, char **argv) {
     int ret = 0;
+    pthread_t threads[MAX_VCPUS];
 
     // Parse command line arguments
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s [-p|--protected] <guest_binary>\n", argv[0]);
-        fprintf(stderr, "  -p, --protected    Run in Protected Mode (default: Real Mode)\n");
+        fprintf(stderr, "Usage: %s <guest1.bin> [guest2.bin] [guest3.bin] [guest4.bin]\n", argv[0]);
+        fprintf(stderr, "  Run 1-4 guests simultaneously in separate vCPUs\n");
+        fprintf(stderr, "\nExample:\n");
+        fprintf(stderr, "  %s guest/multiplication.bin guest/counter.bin\n", argv[0]);
         return 1;
     }
 
-    // Check for mode selection flag
-    if (argc >= 3 && (strcmp(argv[1], "-p") == 0 || strcmp(argv[1], "--protected") == 0)) {
-        cpu_mode = MODE_PROTECTED;
-    } else if (argc >= 3 && (strcmp(argv[1], "-r") == 0 || strcmp(argv[1], "--real") == 0)) {
-        cpu_mode = MODE_REAL;
-    }
-
-    // Get guest binary filename (last argument)
-    const char *guest_binary = argv[argc - 1];
-
-    // Check if a flag was used
-    if (cpu_mode != MODE_REAL && argc < 3) {
-        fprintf(stderr, "Error: Invalid arguments\n");
+    // Determine number of guests
+    num_vcpus = argc - 1;
+    if (num_vcpus > MAX_VCPUS) {
+        fprintf(stderr, "Error: Too many guests (max %d)\n", MAX_VCPUS);
         return 1;
     }
 
-    printf("=== Minimal KVM VMM (x86");
-    if (cpu_mode == MODE_PROTECTED) {
-        printf(" - Protected Mode) ===\n\n");
-    } else {
-        printf(" - Real Mode) ===\n\n");
-    }
+    printf("=== Multi-vCPU KVM VMM (x86 Real Mode) ===\n");
+    printf("Starting %d vCPU(s)\n\n", num_vcpus);
 
     // Step 1: Initialize KVM and create VM
     if (init_kvm() < 0) {
         ret = 1;
-        goto cleanup;
+        goto cleanup_early;
     }
 
-    // Step 2: Set up guest memory
-    if (setup_guest_memory() < 0) {
-        ret = 1;
-        goto cleanup;
+    // Step 2: Setup each vCPU
+    for (int i = 0; i < num_vcpus; i++) {
+        vcpu_context_t *ctx = &vcpus[i];
+
+        // Initialize context
+        memset(ctx, 0, sizeof(*ctx));
+        ctx->vcpu_id = i;
+        ctx->guest_binary = argv[i + 1];
+        strncpy(ctx->name, extract_guest_name(ctx->guest_binary), sizeof(ctx->name) - 1);
+        ctx->name[sizeof(ctx->name) - 1] = '\0';
+        ctx->vcpu_fd = -1;
+
+        printf("[Setup vCPU %d: %s]\n", i, ctx->name);
+
+        // Allocate and map memory for this vCPU
+        if (setup_vcpu_memory(ctx) < 0) {
+            ret = 1;
+            goto cleanup_vcpus;
+        }
+
+        // Load guest binary into this vCPU's memory
+        if (load_guest_binary(ctx->guest_binary, ctx->guest_mem, ctx->mem_size) < 0) {
+            ret = 1;
+            goto cleanup_vcpus;
+        }
+
+        // Create and initialize vCPU
+        if (setup_vcpu_context(ctx) < 0) {
+            ret = 1;
+            goto cleanup_vcpus;
+        }
+
+        printf("\n");
     }
 
-    // Step 3: Load guest binary
-    if (load_guest_binary(guest_binary, guest_mem, GUEST_MEM_SIZE) < 0) {
-        ret = 1;
-        goto cleanup;
+    // Step 3: Spawn vCPU threads
+    printf("=== Starting VM execution (%d vCPUs) ===\n\n", num_vcpus);
+
+    for (int i = 0; i < num_vcpus; i++) {
+        if (pthread_create(&threads[i], NULL, vcpu_thread, &vcpus[i]) != 0) {
+            fprintf(stderr, "Failed to create thread for vCPU %d\n", i);
+            ret = 1;
+            goto cleanup_vcpus;
+        }
     }
 
-    // Step 4: Create and initialize vCPU
-    if (setup_vcpu() < 0) {
-        ret = 1;
-        goto cleanup;
+    // Step 4: Wait for all vCPUs to finish
+    for (int i = 0; i < num_vcpus; i++) {
+        pthread_join(threads[i], NULL);
     }
 
-    // Step 5: Run VM
-    if (run_vm() < 0) {
-        ret = 1;
-        goto cleanup;
+    printf("\n=== All vCPUs completed ===\n");
+
+cleanup_vcpus:
+    // Cleanup all vCPUs
+    for (int i = 0; i < num_vcpus; i++) {
+        cleanup_vcpu(&vcpus[i]);
     }
 
-    printf("\n=== VM execution completed successfully ===\n");
+cleanup_early:
+    // Cleanup global resources
+    if (vm_fd >= 0) close(vm_fd);
+    if (kvm_fd >= 0) close(kvm_fd);
 
-cleanup:
-    cleanup();
     return ret;
 }

@@ -2,7 +2,7 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -std=gnu11
-LDFLAGS =
+LDFLAGS = -pthread
 
 TARGET = kvm-vmm
 GUEST_BIN = guest/minimal.bin
@@ -78,6 +78,15 @@ multiplication: vmm build-multiplication run-multiplication
 pmode_test: vmm build-pmode_test
 	@echo "=== Running VMM (Protected Mode guest) ==="
 	./$(TARGET) -p guest/pmode_test.bin
+
+# Multi-vCPU demos
+multi-2: vmm build-multiplication build-counter
+	@echo "=== Running Multi-vCPU (2 guests) ==="
+	./$(TARGET) guest/multiplication.bin guest/counter.bin
+
+multi-4: vmm build-multiplication build-counter build-hello build-hctest
+	@echo "=== Running Multi-vCPU (4 guests) ==="
+	./$(TARGET) guest/multiplication.bin guest/counter.bin guest/hello.bin guest/hctest.bin
 
 # Clean build artifacts
 clean:
