@@ -100,11 +100,11 @@ void putchar(char ch) {
 long getchar(void) {
     long ch;
     __asm__ volatile(
-        "movb $2, %%al\n\t"
-        "movw $0x500, %%dx\n\t"
-        "outb %%al, %%dx\n\t"
-        "inb %%dx, %%al\n\t"
-        "movsbl %%al, %0"
+        "movb $2, %%al\n\t"        // HC_GETCHAR
+        "movw $0x500, %%dx\n\t"    // Port 0x500
+        "outb %%al, %%dx\n\t"      // Trigger GETCHAR hypercall (OUT)
+        "inb (%%dx), %%al\n\t"     // Read character from port (IN)
+        "movsbl %%al, %0"          // Sign-extend AL to long
         : "=r"(ch)
         :
         : "al", "dx"
@@ -302,34 +302,18 @@ struct process *create_process(const void *image, size_t image_size) {
      * 
      * Map entire 4MB region for simplicity (matches VMM setup)
      */
-    int pages_mapped = 0;
-    /* Map entire 4MB region (0x80000000-0x80400000) */
+    /* Map entire 4MB kernel region (0x80000000-0x80400000) */
     for (uint32_t vaddr = 0x80000000; vaddr < 0x80400000; vaddr += PAGE_SIZE) {
         paddr_t paddr = vaddr - 0x80000000;  // Convert virtual to physical
         map_page(page_table, vaddr, paddr, PAGE_RW);
-        pages_mapped++;
     }
-    printf("Mapped %d kernel pages (0x80000000+)\n", pages_mapped);
-    
-    /* Verify a critical mapping */
-    uint32_t pd_idx_test = (0x80001000 >> 22) & 0x3FF;  // Should be 512
-    uint32_t pt_paddr_test = page_table[pd_idx_test] & 0xFFFFF000;
-    uint32_t *pt_test = (uint32_t *) (pt_paddr_test + 0x80000000);
-    uint32_t pt_idx_test = (0x80001000 >> 12) & 0x3FF;  // Should be 1
-    printf("Verify mapping for 0x80001000:\n");
-    printf("  PD[%d] = 0x%x (PT at phys 0x%x)\n", pd_idx_test, page_table[pd_idx_test], pt_paddr_test);
-    printf("  PT[%d] = 0x%x (should map to phys 0x1000)\n", pt_idx_test, pt_test[pt_idx_test]);
     
     /* Also create identity mapping for low 4MB (needed for GDT access during transitions) */
-    int identity_pages = 0;
     for (uint32_t vaddr = 0; vaddr < 0x400000; vaddr += PAGE_SIZE) {
         map_page(page_table, vaddr, vaddr, PAGE_RW);
-        identity_pages++;
     }
-    printf("Mapped %d identity pages (0x0+)\n", identity_pages);
 
     /* Map user pages for code/data */
-    int user_pages_mapped = 0;
     for (uint32_t off = 0; off < image_size; off += PAGE_SIZE) {
         paddr_t page_vaddr = alloc_pages(1);
         size_t remaining = image_size - off;
@@ -338,63 +322,25 @@ struct process *create_process(const void *image, size_t image_size) {
         /* Convert virtual to physical for mapping */
         paddr_t page_paddr = page_vaddr - 0x80000000;
         map_page(page_table, USER_BASE + off, page_paddr, PAGE_U | PAGE_RW);
-        user_pages_mapped++;
-        
-        if (off == 0) {
-            /* Verify the first user page mapping */
-            printf("First user page:\n");
-            printf("  Alloc vaddr: 0x%x, Physical: 0x%x\n", page_vaddr, page_paddr);
-            printf("  Maps to USER_BASE: 0x%x\n", USER_BASE);
-            uint32_t *words = (uint32_t *) page_vaddr;
-            printf("  First 4 words at vaddr:\n");
-            printf("    [0] = 0x%x\n", words[0]);
-            printf("    [1] = 0x%x\n", words[1]);
-            printf("    [2] = 0x%x\n", words[2]);
-            printf("    [3] = 0x%x\n", words[3]);
-        }
     }
-    printf("Mapped %d pages for user code/data\n", user_pages_mapped);
     
-    /* Also map additional pages for user stack 
+    /* Map additional pages for user stack 
      * Shell expects stack at 0x01003000, so map pages from code end to stack top
      * Allocate enough pages to cover from USER_BASE to 0x01004000 (16KB total)
      */
     uint32_t code_end = USER_BASE + ((image_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
     uint32_t stack_top = 0x01004000;  // Shell uses stack starting at 0x01003000
-    int stack_pages = 0;
     for (uint32_t vaddr = code_end; vaddr < stack_top; vaddr += PAGE_SIZE) {
         paddr_t page_vaddr = alloc_pages(1);
         paddr_t page_paddr = page_vaddr - 0x80000000;
         map_page(page_table, vaddr, page_paddr, PAGE_U | PAGE_RW);
-        stack_pages++;
     }
-    printf("Mapped %d additional pages for user stack (0x%x-0x%x)\n", 
-           stack_pages, code_end, stack_top);
-    printf("Total user memory: %d pages at USER_BASE (0x%x)\n", 
-           user_pages_mapped + stack_pages, USER_BASE);
 
     proc->pid = i + 1;
     proc->state = PROC_RUNNABLE;
     proc->sp = (uint32_t) sp;
     /* Convert page table virtual address to physical for CR3 */
     proc->page_table = (uint32_t *) ((uint32_t) page_table - 0x80000000);
-    
-    /* Debug: Check critical page directory entries */
-    printf("Page directory for PID %d:\n", proc->pid);
-    printf("  PDE[0]   = 0x%x (identity mapping)\n", page_table[0]);
-    printf("  PDE[4]   = 0x%x (USER_BASE >> 22 = 4)\n", page_table[4]);
-    printf("  PDE[512] = 0x%x (kernel 0x80000000)\n", page_table[512]);
-    
-    /* Verify USER_BASE page table entry */
-    if (page_table[4] != 0) {
-        uint32_t pt_paddr = page_table[4] & 0xFFFFF000;
-        uint32_t *pt = (uint32_t *) (pt_paddr + 0x80000000);  // Convert to virtual
-        uint32_t pt_idx = (USER_BASE >> 12) & 0x3FF;  // Should be 0
-        printf("  USER_BASE PT entry:\n");
-        printf("    PT physical address: 0x%x\n", pt_paddr);
-        printf("    PT virtual address: 0x%x\n", (uint32_t) pt);
-        printf("    PT[%d] = 0x%x (should map USER_BASE to physical)\n", pt_idx, pt[pt_idx]);
-    }
     
     return proc;
 }
@@ -528,49 +474,21 @@ void kernel_main(void) {
     printf("Created shell process (pid=%d)\n", shell_proc->pid);
     
     printf("\n=== Kernel Initialization Complete ===\n");
-    printf("shell CR3 = 0x%x\n", (uint32_t) shell_proc->page_table);
-    printf("shell SP  = 0x%x\n", shell_proc->sp);
-    printf("shell stack values:\n");
-    uint32_t *sp_ptr = (uint32_t *) shell_proc->sp;
-    for (int i = 0; i < 5; i++) {
-        printf("  [%d] = 0x%x\n", i, sp_ptr[i]);
-    }
-    printf("Starting shell...\n\n");
+    printf("Starting shell process (PID %d)...\n\n", shell_proc->pid);
     
-    /* Switch to shell process */
+    /* Bootstrap into shell process
+     * This is a special case - we're not doing a normal context switch,
+     * but rather jumping from kernel initialization into the first user process.
+     * We load the shell's page table, set ESP to shell's stack, and jump to user_entry.
+     */
     current_proc = shell_proc;
-    
-    printf("Starting shell process...\n");
-    
-    /* Switch to shell process */
-    current_proc = shell_proc;
-    
-    /* Load shell's page table before switching context */
-    printf("Loading shell CR3...\n");
     __asm__ volatile(
-        "movl %0, %%cr3\n\t"
+        "movl %0, %%cr3\n\t"        // Load shell's page table
+        "movl %1, %%esp\n\t"        // Set stack to shell's stack
+        "jmp user_entry\n\t"        // Jump to user_entry (which jumps to USER_BASE)
         :
-        : "r" ((uint32_t) shell_proc->page_table)
-        : "memory"
-    );
-    
-    /* DEBUG: Try reading from USER_BASE first */
-    printf("Testing access to USER_BASE (0x%x) after CR3 load...\n", USER_BASE);
-    uint32_t *user_mem = (uint32_t *) USER_BASE;
-    printf("First word at USER_BASE: 0x%x\n", user_mem[0]);
-    printf("Second word at USER_BASE: 0x%x\n", user_mem[1]);
-    
-    /* Now try jumping to user_entry */
-    printf("About to jump to user_entry at 0x%x\n", (uint32_t) user_entry);
-    printf("user_entry will jump to 0x%x\n", USER_BASE);
-    
-    /* Set ESP to shell's stack and jump to user_entry */
-    printf("Setting ESP to 0x%x and jumping...\n\n", shell_proc->sp);
-    __asm__ volatile(
-        "movl %0, %%esp\n\t"
-        "jmp user_entry\n\t"
-        :
-        : "r" (shell_proc->sp)
+        : "r" ((uint32_t) shell_proc->page_table),
+          "r" (shell_proc->sp)
         : "memory"
     );
     

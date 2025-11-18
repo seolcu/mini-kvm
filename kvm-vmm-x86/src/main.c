@@ -872,6 +872,13 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                     }
 
                     unsigned char hc_num = regs.rax & 0xFF;
+                    
+                    // Debug: log hypercalls (only first 20)
+                    if (ctx->exit_count < 20) {
+                        vcpu_printf(ctx, "Hypercall 0x%02x (RAX=0x%llx, RBX=0x%llx)\n", 
+                                   hc_num, regs.rax, regs.rbx);
+                    }
+                    
                     switch (hc_num) {
                         case HC_EXIT:
                             vcpu_printf(ctx, "Exit request\n");
@@ -890,6 +897,9 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                         case HC_GETCHAR:
                             // Mark that guest wants to read character
                             // Will be handled on next IN instruction
+                            if (ctx->exit_count < 25) {
+                                vcpu_printf(ctx, "GETCHAR request, setting pending_getchar\n");
+                            }
                             ctx->pending_getchar = 1;
                             break;
 
@@ -909,14 +919,34 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
             } else {
                 // IN instruction
                 if (ctx->kvm_run->io.port == HYPERCALL_PORT && ctx->pending_getchar) {
-                    // GETCHAR: Read character from stdin
+                    // GETCHAR: Read character from stdin (non-blocking)
                     pthread_mutex_lock(&stdout_mutex);
-                    int ch = getchar();
+                    
+                    // Check if there's input available using select()
+                    fd_set readfds;
+                    struct timeval tv = {0, 0};  // Non-blocking
+                    FD_ZERO(&readfds);
+                    FD_SET(STDIN_FILENO, &readfds);
+                    
+                    int ch = -1;
+                    if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0) {
+                        ch = getchar();
+                    }
+                    
                     pthread_mutex_unlock(&stdout_mutex);
                     
                     // Return character in data buffer (KVM will put it in AL)
                     data[0] = (ch == EOF) ? -1 : (unsigned char)ch;
+                    if (ctx->exit_count < 25) {
+                        vcpu_printf(ctx, "IN from 0x500: returning %d\n", (int)(signed char)data[0]);
+                    }
                     ctx->pending_getchar = 0;
+                } else if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
+                    // IN without pending_getchar - this shouldn't happen
+                    if (ctx->exit_count < 25) {
+                        vcpu_printf(ctx, "IN from 0x500 without pending_getchar!\n");
+                    }
+                    data[0] = 0;  // Return 0 by default
                 }
             }
             break;

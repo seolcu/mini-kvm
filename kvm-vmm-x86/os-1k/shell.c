@@ -13,9 +13,13 @@ prompt:
         char cmdline[128];
         for (int i = 0;; i++) {
             char ch = getchar();
+            // Debug: print character code for first few characters
+            if (i < 5) {
+                printf("[ch=%d]", (int)ch);
+            }
             putchar(ch);
             if (i == sizeof(cmdline) - 1) {
-                printf("command line too long\n");
+                printf("\ncommand line too long\n");
                 goto prompt;
             } else if (ch == '\r') {
                 printf("\n");

@@ -21,9 +21,10 @@ int syscall(int sysno, int arg0, int arg1, int arg2) {
         "movl %1, %%eax\n\t"      // Syscall number
         "movl %2, %%ebx\n\t"      // Arg 0
         "movl %3, %%ecx\n\t"      // Arg 1
-        "movl %4, %%edx\n\t"      // Arg 2
+        "pushl %4\n\t"            // Save arg2 temporarily
         "movw $0x500, %%dx\n\t"   // Port 0x500
         "outb %%al, %%dx\n\t"     // Trigger hypercall
+        "popl %%edx\n\t"          // Now restore arg2 to EDX (for kernel to use)
         "movl %%eax, %0\n\t"      // Return value
         "popl %%ebx"              // Restore EBX
         : "=r"(ret)
