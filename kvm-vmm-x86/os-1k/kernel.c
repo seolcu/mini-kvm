@@ -214,16 +214,19 @@ struct file *fs_lookup(const char *filename) {
 }
 
 /*
- * User entry point - jump to user space
- * TEMPORARY: Skip ring transition for debugging
+ * User entry point
+ * This transfers control from kernel mode to user mode
+ * by jumping to the user's code at USER_BASE
  */
 __attribute__((naked)) void user_entry(void) {
     __asm__ volatile(
-        // Set up stack and jump directly to user code (ring 0 for now)
-        "movl $0x01000000, %esp\n\t"  // USER_BASE as stack
-        "xorl %ebp, %ebp\n\t"          // Clear frame pointer
-        "movl $0x01000000, %eax\n\t"  // USER_BASE as entry
-        "jmp *%eax\n\t"                // Jump to user code
+        // Jump to user code at USER_BASE (0x01000000)
+        // The shell binary's entry point is at this address
+        "movl $0x01000000, %%eax\n\t"
+        "jmp *%%eax\n\t"
+        :
+        :
+        : "eax"
     );
 }
 
@@ -325,7 +328,8 @@ struct process *create_process(const void *image, size_t image_size) {
     }
     printf("Mapped %d identity pages (0x0+)\n", identity_pages);
 
-    /* Map user pages */
+    /* Map user pages for code/data */
+    int user_pages_mapped = 0;
     for (uint32_t off = 0; off < image_size; off += PAGE_SIZE) {
         paddr_t page_vaddr = alloc_pages(1);
         size_t remaining = image_size - off;
@@ -334,7 +338,40 @@ struct process *create_process(const void *image, size_t image_size) {
         /* Convert virtual to physical for mapping */
         paddr_t page_paddr = page_vaddr - 0x80000000;
         map_page(page_table, USER_BASE + off, page_paddr, PAGE_U | PAGE_RW);
+        user_pages_mapped++;
+        
+        if (off == 0) {
+            /* Verify the first user page mapping */
+            printf("First user page:\n");
+            printf("  Alloc vaddr: 0x%x, Physical: 0x%x\n", page_vaddr, page_paddr);
+            printf("  Maps to USER_BASE: 0x%x\n", USER_BASE);
+            uint32_t *words = (uint32_t *) page_vaddr;
+            printf("  First 4 words at vaddr:\n");
+            printf("    [0] = 0x%x\n", words[0]);
+            printf("    [1] = 0x%x\n", words[1]);
+            printf("    [2] = 0x%x\n", words[2]);
+            printf("    [3] = 0x%x\n", words[3]);
+        }
     }
+    printf("Mapped %d pages for user code/data\n", user_pages_mapped);
+    
+    /* Also map additional pages for user stack 
+     * Shell expects stack at 0x01003000, so map pages from code end to stack top
+     * Allocate enough pages to cover from USER_BASE to 0x01004000 (16KB total)
+     */
+    uint32_t code_end = USER_BASE + ((image_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
+    uint32_t stack_top = 0x01004000;  // Shell uses stack starting at 0x01003000
+    int stack_pages = 0;
+    for (uint32_t vaddr = code_end; vaddr < stack_top; vaddr += PAGE_SIZE) {
+        paddr_t page_vaddr = alloc_pages(1);
+        paddr_t page_paddr = page_vaddr - 0x80000000;
+        map_page(page_table, vaddr, page_paddr, PAGE_U | PAGE_RW);
+        stack_pages++;
+    }
+    printf("Mapped %d additional pages for user stack (0x%x-0x%x)\n", 
+           stack_pages, code_end, stack_top);
+    printf("Total user memory: %d pages at USER_BASE (0x%x)\n", 
+           user_pages_mapped + stack_pages, USER_BASE);
 
     proc->pid = i + 1;
     proc->state = PROC_RUNNABLE;
@@ -347,6 +384,17 @@ struct process *create_process(const void *image, size_t image_size) {
     printf("  PDE[0]   = 0x%x (identity mapping)\n", page_table[0]);
     printf("  PDE[4]   = 0x%x (USER_BASE >> 22 = 4)\n", page_table[4]);
     printf("  PDE[512] = 0x%x (kernel 0x80000000)\n", page_table[512]);
+    
+    /* Verify USER_BASE page table entry */
+    if (page_table[4] != 0) {
+        uint32_t pt_paddr = page_table[4] & 0xFFFFF000;
+        uint32_t *pt = (uint32_t *) (pt_paddr + 0x80000000);  // Convert to virtual
+        uint32_t pt_idx = (USER_BASE >> 12) & 0x3FF;  // Should be 0
+        printf("  USER_BASE PT entry:\n");
+        printf("    PT physical address: 0x%x\n", pt_paddr);
+        printf("    PT virtual address: 0x%x\n", (uint32_t) pt);
+        printf("    PT[%d] = 0x%x (should map USER_BASE to physical)\n", pt_idx, pt[pt_idx]);
+    }
     
     return proc;
 }
@@ -492,9 +540,13 @@ void kernel_main(void) {
     /* Switch to shell process */
     current_proc = shell_proc;
     
-    printf("Test: Load CR3, change ESP, then jump to user_entry\n");
+    printf("Starting shell process...\n");
     
-    /* Load shell's CR3 */
+    /* Switch to shell process */
+    current_proc = shell_proc;
+    
+    /* Load shell's page table before switching context */
+    printf("Loading shell CR3...\n");
     __asm__ volatile(
         "movl %0, %%cr3\n\t"
         :
@@ -502,32 +554,26 @@ void kernel_main(void) {
         : "memory"
     );
     
-    printf("1. CR3 loaded\n");
+    /* DEBUG: Try reading from USER_BASE first */
+    printf("Testing access to USER_BASE (0x%x) after CR3 load...\n", USER_BASE);
+    uint32_t *user_mem = (uint32_t *) USER_BASE;
+    printf("First word at USER_BASE: 0x%x\n", user_mem[0]);
+    printf("Second word at USER_BASE: 0x%x\n", user_mem[1]);
     
-    /* Change ESP to shell's stack */
+    /* Now try jumping to user_entry */
+    printf("About to jump to user_entry at 0x%x\n", (uint32_t) user_entry);
+    printf("user_entry will jump to 0x%x\n", USER_BASE);
+    
+    /* Set ESP to shell's stack and jump to user_entry */
+    printf("Setting ESP to 0x%x and jumping...\n\n", shell_proc->sp);
     __asm__ volatile(
         "movl %0, %%esp\n\t"
+        "jmp user_entry\n\t"
         :
         : "r" (shell_proc->sp)
-        : "esp"
+        : "memory"
     );
     
-    printf("2. ESP changed\n");
-    
-    /* Now try to jump to user_entry */
-    printf("3. About to jump to 0x80001040...\n");
-    __asm__ volatile(
-        "movl $0x80001040, %%eax\n\t"
-        "call *%%eax\n\t"          // Use CALL instead of JMP so we can see if it returns
-        :
-        :
-        : "eax"
-    );
-    
-    printf("4. Returned from user_entry (unexpected!)\n");
-    
-    /* Halt */
-    while (1) {
-        __asm__ volatile("hlt");
-    }
+    /* Should never reach here */
+    PANIC("Returned from shell process");
 }
