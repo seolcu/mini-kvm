@@ -444,6 +444,357 @@ Guest halted after 306 exits
 - 메모리: 4MB 할당
 - 실행 모드: Protected Mode with Paging
 
+### 1K OS 포팅 시작 및 Hypercall 이슈
+
+Week 11에서 1K OS를 x86 KVM VMM으로 포팅하는 작업을 시작했습니다. RISC-V 버전의 1K OS를 분석하고 x86 32-bit Protected Mode로 변환하는 과정에서 몇 가지 중요한 문제를 발견하고 해결했습니다.
+
+#### 1K OS 아키텍처 분석
+
+1K OS는 다음과 같은 구조로 구성됩니다:
+
+```
+Kernel (kernel.c):
+- Process management (create_process, yield, switch_context)
+- Memory allocator (alloc_pages, map_page)
+- Syscall handling
+- Tar filesystem (fs_init, fs_lookup)
+
+User Space (user.c, shell.c):
+- Shell process with command line parsing
+- Basic commands: hello, echo, readfile, exit
+- Syscall wrappers (getchar, putchar, etc.)
+```
+
+#### GDT/IDT 설정
+
+x86 Protected Mode에서는 GDT(Global Descriptor Table)와 IDT(Interrupt Descriptor Table)가 필수입니다. 게스트 메모리 내부에 이들을 직접 구성했습니다:
+
+**GDT 설정 (물리 주소 0x500):**
+```c
+static void setup_gdt(void) {
+    struct gdt_entry *gdt = (struct gdt_entry *)(guest_mem + GDT_ADDR);
+    
+    // Null descriptor
+    gdt[0] = (struct gdt_entry){0};
+    
+    // Kernel code segment (selector 0x08)
+    gdt[1] = (struct gdt_entry){
+        .limit_low = 0xFFFF,
+        .base_low = 0,
+        .base_mid = 0,
+        .access = 0x9A,  // Present, Ring 0, Code, Readable
+        .granularity = 0xCF,  // 4KB pages, 32-bit
+        .base_high = 0
+    };
+    
+    // Kernel data segment (selector 0x10)
+    gdt[2] = (struct gdt_entry){
+        .limit_low = 0xFFFF,
+        .base_low = 0,
+        .base_mid = 0,
+        .access = 0x92,  // Present, Ring 0, Data, Writable
+        .granularity = 0xCF,
+        .base_high = 0
+    };
+    
+    // User code/data segments 추가...
+}
+```
+
+**IDT 설정 (물리 주소 0x528):**
+```c
+static void setup_idt(void) {
+    struct idt_entry *idt = (struct idt_entry *)(guest_mem + IDT_ADDR);
+    
+    // 256 entries 모두 null로 초기화
+    memset(idt, 0, 256 * sizeof(struct idt_entry));
+}
+```
+
+KVM의 unrestricted guest 모드와 달리, 게스트 메모리에 실제 GDT/IDT를 구성하여 일반적인 Protected Mode 환경을 제공했습니다.
+
+#### User Space 프로세스 생성
+
+1K OS의 핵심 기능 중 하나는 user space 프로세스를 생성하고 관리하는 것입니다. Shell을 별도의 user process로 실행하기 위한 구현:
+
+**1. 프로세스 페이지 테이블 설정**
+
+User process는 다음과 같은 가상 메모리 레이아웃을 가집니다:
+```
+0x00000000 - 0x003FFFFF: Identity mapping (커널 공유)
+0x01000000 - 0x01003FFF: User space (16KB)
+0x80000000 - 0x803FFFFF: Kernel space (커널만 접근)
+```
+
+**2. Shell 바이너리 임베딩**
+
+Shell 프로그램을 컴파일한 후 objcopy로 커널에 임베드:
+```makefile
+objcopy -I binary -O elf32-i386 -B i386 shell.bin shell.bin.o
+ld -m elf_i386 -T kernel.ld -o kernel.elf \
+    boot.o kernel.o shell.bin.o
+```
+
+링커가 제공하는 심볼을 통해 접근:
+```c
+extern char _binary_shell_bin_start[];
+extern char _binary_shell_bin_size[];
+
+struct process *shell_proc = create_process(
+    _binary_shell_bin_start, 
+    (size_t)_binary_shell_bin_size
+);
+```
+
+**3. Context Switch 구현**
+
+User space로 전환하기 위한 어셈블리 코드:
+```c
+__attribute__((naked)) void user_entry(void) {
+    __asm__ volatile(
+        "movl $0x01000000, %%eax\n\t"  // USER_BASE
+        "jmp *%%eax\n\t"
+        ::: "eax"
+    );
+}
+
+// Bootstrap into shell
+current_proc = shell_proc;
+__asm__ volatile(
+    "movl %0, %%cr3\n\t"      // Load shell's page table
+    "movl %1, %%esp\n\t"      // Set stack pointer
+    "jmp user_entry\n\t"
+    :
+    : "r" ((uint32_t)shell_proc->page_table),
+      "r" (shell_proc->sp)
+    : "memory"
+);
+```
+
+#### 트러블슈팅: 스택 페이지 누락
+
+Shell 프로세스가 시작 직후 Page Fault로 종료되는 문제가 발생했습니다.
+
+**증상:**
+```
+Created shell process (pid=2)
+Starting shell process...
+Page Fault! addr=0x01003ffc
+```
+
+**원인 분석:**
+
+Shell의 스택은 0x01003FFC에서 시작하는데 (아래로 성장), 처음에는 user code page (0x01000000-0x01000FFF)만 매핑하고 스택 페이지를 매핑하지 않았습니다.
+
+**해결:**
+
+User space에 총 4개 페이지를 매핑하도록 수정:
+```c
+void map_user_pages(struct process *proc) {
+    // Page 0: Code/Data (0x01000000-0x01000FFF)
+    map_page(proc, 0x01000000, phys_base, PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
+    
+    // Page 1-3: Stack (0x01001000-0x01003FFF)
+    for (int i = 1; i < 4; i++) {
+        uint32_t vaddr = USER_BASE + i * 0x1000;
+        uint32_t paddr = phys_base + i * 0x1000;
+        map_page(proc, vaddr, paddr, PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
+    }
+}
+```
+
+이 수정 후 Shell이 정상적으로 부팅되었습니다:
+```
+=== Kernel Initialization Complete ===
+Starting shell process (PID 2)...
+
+> 
+```
+
+#### Hypercall 문제: IN 명령어가 Trap되지 않음
+
+Shell이 정상적으로 부팅된 후, getchar() syscall을 통해 사용자 입력을 받으려 할 때 심각한 문제가 발견되었습니다.
+
+**증상:**
+
+```
+> [ch=0] [ch=0] [ch=0] [ch=0] [ch=0]
+command line too long
+```
+
+Shell이 입력을 기다리지 않고 ch=0을 계속 읽어들여 즉시 "command line too long" 에러를 발생시켰습니다.
+
+**원인 조사 1: VM Exit 로깅**
+
+모든 VM exit의 종류를 로깅하는 코드를 추가했습니다:
+
+```c
+static int handle_vm_exit(vcpu_context_t *ctx) {
+    static int io_count = 0;
+    if (io_count++ < 100) {
+        vcpu_printf(ctx, "IO[%d]: dir=%s port=0x%x size=%d\n",
+                   io_count,
+                   (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) ? "OUT" : "IN",
+                   ctx->kvm_run->io.port,
+                   ctx->kvm_run->io.size);
+    }
+    // ...
+}
+```
+
+**결과:**
+```
+IO[1]: dir=OUT port=0x500 size=1
+IO[2]: dir=OUT port=0x500 size=1
+...
+IO[100]: dir=OUT port=0x500 size=1
+GETCHAR[1] request, setting pending_getchar
+GETCHAR[2] request, setting pending_getchar
+...
+```
+
+**중요한 발견:** 10,001개의 VM exit가 모두 `KVM_EXIT_IO`였고, 그 중 **단 하나의 IN 명령어도 trap되지 않았습니다**. 모든 I/O exit이 `dir=OUT`이었습니다.
+
+**원인 분석:**
+
+원래 getchar() 구현은 다음과 같았습니다:
+
+```c
+long getchar(void) {
+    long ch;
+    __asm__ volatile(
+        "movb $2, %%al\n\t"        // HC_GETCHAR
+        "movw $0x500, %%dx\n\t"    // Port 0x500
+        "outb %%al, %%dx\n\t"      // Trigger GETCHAR hypercall (OUT)
+        "inb (%%dx), %%al\n\t"     // Read character from port (IN)
+        "movsbl %%al, %0"          // Sign-extend AL to long
+        : "=r"(ch)
+        :
+        : "al", "dx"
+    );
+    return ch;
+}
+```
+
+OUT 명령어는 정상적으로 VM exit를 발생시키지만, **IN 명령어는 전혀 trap되지 않았습니다**. 이는 아마도 다음 이유 때문으로 추정됩니다:
+
+1. **AMD SVM의 I/O 처리 방식:** AMD-V (SVM)에서는 IN 명령어가 특정 조건에서 trap되지 않을 수 있음
+2. **CPL=0 권한:** 커널 코드가 Ring 0에서 실행되므로 IOPL 체크 없이 직접 I/O 실행 가능
+3. **KVM 구현 세부사항:** 특정 I/O port range에 대한 최적화
+
+**Workaround 시도 1: 메모리 기반 통신**
+
+IN 명령어를 사용하는 대신, VMM이 결과를 게스트 메모리에 직접 쓰는 방식을 시도했습니다:
+
+```c
+// Guest kernel
+#define HYPERCALL_RESULT_ADDR ((volatile int *)0x4000)
+
+long getchar(void) {
+    // Request via OUT
+    __asm__ volatile(
+        "movb $2, %%al\n\t"
+        "movw $0x500, %%dx\n\t"
+        "outb %%al, %%dx\n\t"
+        ::: "al", "dx", "memory"
+    );
+    
+    // Read result from memory
+    return *HYPERCALL_RESULT_ADDR;
+}
+```
+
+```c
+// VMM
+case HC_GETCHAR: {
+    // Read character from stdin
+    int ch = -1;
+    if (select(...) > 0) {
+        ch = getchar();
+    }
+    
+    // Write to guest memory at physical 0x4000
+    volatile int32_t *result_ptr = 
+        (volatile int32_t *)(ctx->guest_mem + 0x4000);
+    *result_ptr = (int32_t)ch;
+    break;
+}
+```
+
+**결과:**
+
+VMM은 성공적으로 값을 쓰고 읽을 수 있었습니다:
+```
+Verification: VMM wrote -1, readback -1 at phys 0x4000
+```
+
+하지만 게스트는 여전히 0을 읽었습니다:
+```
+> [ch=0] [ch=0] [ch=0] ...
+```
+
+**Workaround 시도 2: TLB Invalidation**
+
+캐시 일관성 문제를 의심하여 TLB invalidation을 추가했습니다:
+
+```c
+long getchar(void) {
+    // Request via OUT
+    __asm__ volatile(
+        "movb $2, %%al\n\t"
+        "movw $0x500, %%dx\n\t"
+        "outb %%al, %%dx\n\t"
+        ::: "al", "dx", "memory"
+    );
+    
+    // Invalidate TLB for result address
+    __asm__ volatile(
+        "invlpg (%0)"
+        :: "r" (HYPERCALL_RESULT_ADDR)
+        : "memory"
+    );
+    
+    return *HYPERCALL_RESULT_ADDR;
+}
+```
+
+**결과:** 여전히 동일한 문제 발생
+
+**근본 원인 추정:**
+
+VMM userspace와 게스트 실행 컨텍스트 간의 **메모리 일관성 문제**입니다:
+
+1. VMM이 `mmap`으로 매핑한 메모리에 값을 씀
+2. 게스트 CPU는 자체 캐시/TLB를 가지고 있음
+3. 일반적인 x86 캐시 일관성 프로토콜이 이 두 컨텍스트 사이에 적용되지 않음
+4. 게스트는 stale value를 계속 읽음
+
+#### 미해결 문제 및 향후 계획
+
+현재 getchar() hypercall은 작동하지 않으며, 다음 해결 방법을 검토 중입니다:
+
+**옵션 1: CPUID-based Hypercalls**
+- CPUID 명령어는 항상 VM exit를 발생시킴
+- 레지스터를 통한 양방향 통신 가능
+
+**옵션 2: VMCALL/VMMCALL 명령어**
+- 명시적 hypercall 명령어
+- 표준적인 가상화 인터페이스
+
+**옵션 3: kvm_run I/O data 영역 활용**
+- KVM API의 공유 메모리 영역 사용
+- 확실한 메모리 일관성 보장
+
+**옵션 4: Interrupt 기반 Syscall**
+- Port I/O 대신 INT 0x80 스타일 syscall
+- IDT를 통한 trap
+
+**옵션 5: KVM dirty page tracking**
+- KVM의 메모리 동기화 메커니즘 활용
+- 명시적 cache flush API 사용
+
+이 문제는 x86 가상화의 저수준 메커니즘과 KVM의 메모리 세맨틱스에 대한 깊은 이해가 필요합니다. Week 12에서 이 문제를 해결하여 완전히 작동하는 1K OS를 구현할 계획입니다.
+
 ### 주요 학습 포인트
 
 #### 1. KVM Unrestricted Guest Mode
