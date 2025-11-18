@@ -54,6 +54,9 @@ typedef struct {
     char name[256];               // Display name (e.g., "multiplication")
     int exit_count;               // VM exit counter
     bool running;                 // Execution state
+    bool use_paging;              // Enable Protected Mode with paging (for 1K OS)
+    uint32_t entry_point;         // Entry point address (EIP)
+    uint32_t load_offset;         // Offset to load binary in guest memory
 } vcpu_context_t;
 
 // Global KVM state (shared across vCPUs)
@@ -114,7 +117,7 @@ static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
 /*
  * Load guest binary into guest memory
  */
-static int load_guest_binary(const char *filename, void *mem, size_t mem_size) {
+static int load_guest_binary(const char *filename, void *mem, size_t mem_size, uint32_t load_offset) {
     FILE *f = fopen(filename, "rb");
     if (!f) {
         perror("fopen");
@@ -136,15 +139,15 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size) {
 
     printf("Guest binary size: %zu bytes\n", fsize);
 
-    if (fsize > mem_size) {
-        fprintf(stderr, "Guest binary too large (%zu bytes > %zu bytes)\n",
-                fsize, mem_size);
+    if (fsize + load_offset > mem_size) {
+        fprintf(stderr, "Guest binary too large (%zu bytes at offset 0x%x > %zu bytes)\n",
+                fsize, load_offset, mem_size);
         fclose(f);
         return -1;
     }
 
-    // Load binary at GUEST_LOAD_ADDR offset
-    size_t nread = fread(mem + GUEST_LOAD_ADDR, 1, fsize, f);
+    // Load binary at specified offset
+    size_t nread = fread(mem + load_offset, 1, fsize, f);
     if (nread != fsize) {
         perror("fread");
         fclose(f);
@@ -153,13 +156,13 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size) {
 
     fclose(f);
 
-    printf("Loaded guest binary: %zu bytes at offset 0x%x\n", nread, GUEST_LOAD_ADDR);
+    printf("Loaded guest binary: %zu bytes at offset 0x%x\n", nread, load_offset);
 
     // Show first few bytes
     printf("First bytes: ");
     size_t bytes_to_show = (fsize < 16 ? fsize : 16);
     for (size_t i = 0; i < bytes_to_show; i++) {
-        printf("%02x ", ((unsigned char*)(mem + GUEST_LOAD_ADDR))[i]);
+        printf("%02x ", ((unsigned char*)(mem + load_offset))[i]);
     }
     printf("\n");
 
@@ -215,8 +218,8 @@ static int init_kvm(void) {
 static int setup_vcpu_memory(vcpu_context_t *ctx) {
     struct kvm_userspace_memory_region mem_region;
 
-    // Use 256KB per vCPU (sufficient for our small guests)
-    ctx->mem_size = 256 * 1024;  // 256KB
+    // Use 4MB per vCPU (required for 1K OS with paging)
+    ctx->mem_size = 4 * 1024 * 1024;  // 4MB
 
     // Allocate memory for this vCPU's guest
     ctx->guest_mem = mmap(NULL, ctx->mem_size,
@@ -231,10 +234,10 @@ static int setup_vcpu_memory(vcpu_context_t *ctx) {
                 ctx->mem_size / 1024, ctx->guest_mem);
 
     // Tell KVM about this memory region
-    // Each vCPU uses different GPA range: vCPU 0 at 0x0, vCPU 1 at 0x40000, etc.
+    // Each vCPU uses different GPA range: vCPU 0 at 0x0, vCPU 1 at 0x400000 (4MB), etc.
     mem_region.slot = ctx->vcpu_id;  // Use vCPU ID as slot number
     mem_region.flags = 0;
-    mem_region.guest_phys_addr = ctx->vcpu_id * ctx->mem_size;  // Offset by 256KB
+    mem_region.guest_phys_addr = ctx->vcpu_id * ctx->mem_size;  // Offset by 4MB
     mem_region.memory_size = ctx->mem_size;
     mem_region.userspace_addr = (unsigned long)ctx->guest_mem;
 
@@ -247,6 +250,46 @@ static int setup_vcpu_memory(vcpu_context_t *ctx) {
                 ctx->vcpu_id, mem_region.guest_phys_addr, ctx->guest_mem, ctx->mem_size);
 
     return 0;
+}
+
+/*
+ * Setup page tables for Protected Mode with paging (for 1K OS)
+ * Uses 2-level page tables with 4MB pages (PSE enabled)
+ */
+static int setup_page_tables(vcpu_context_t *ctx) {
+    // Page directory at GPA 0x00100000 (1MB offset)
+    const uint32_t page_dir_offset = 0x00100000;
+
+    if (page_dir_offset >= ctx->mem_size) {
+        vcpu_printf(ctx, "Error: Page directory offset exceeds memory size\n");
+        return -1;
+    }
+
+    uint32_t *page_dir = (uint32_t *)(ctx->guest_mem + page_dir_offset);
+    memset(page_dir, 0, 4096);  // Clear page directory
+
+    // Identity map first 4MB using 4MB pages (PSE)
+    // This covers: 0x00000000 - 0x003FFFFF physical memory
+    page_dir[0] = 0x00000083;  // Present, R/W, 4MB page at physical 0x0
+
+    // Map kernel space: 0x80000000 - 0x803FFFFF -> 0x00000000 - 0x003FFFFF
+    // PDE index for 0x80000000 is 512 (0x80000000 >> 22 = 512)
+    page_dir[512] = 0x00000083;  // Present, R/W, 4MB page at physical 0x0
+
+    // Map additional kernel space if available
+    // For 4MB memory, we also map PDE[513] to handle addresses at the boundary (0x80400000)
+    if (ctx->mem_size >= 4 * 1024 * 1024) {
+        // Map 0x80400000-0x807FFFFF, but it aliases to 0x0-0x3FFFFF (wrap around)
+        // This is fine for boundary addresses like __free_ram_end
+        page_dir[513] = 0x00000083;  // Map to same physical memory (alias)
+    }
+
+    vcpu_printf(ctx, "Page directory at GPA 0x%x (identity + kernel mapping)\n",
+                page_dir_offset);
+    vcpu_printf(ctx, "  PDE[0]   = 0x%08x (physical 0x0 - 0x3FFFFF)\n", page_dir[0]);
+    vcpu_printf(ctx, "  PDE[512] = 0x%08x (virtual 0x80000000 -> physical 0x0)\n", page_dir[512]);
+
+    return page_dir_offset;  // Return offset for CR3
 }
 
 #if 0  // OLD SINGLE-VCPU CODE (disabled)
@@ -702,6 +745,97 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
 
     vcpu_printf(ctx, "Set registers: RIP=0x%llx (Real Mode)\n", regs.rip);
 
+    // If paging is enabled, setup page tables and switch to Protected Mode
+    if (ctx->use_paging) {
+        // Setup page tables
+        int page_dir_offset = setup_page_tables(ctx);
+        if (page_dir_offset < 0) {
+            return -1;
+        }
+
+        // Re-get segment registers to modify for Protected Mode + paging
+        if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
+            perror("KVM_GET_SREGS (paging)");
+            return -1;
+        }
+
+        // Set CR3 to page directory physical address
+        sregs.cr3 = page_dir_offset;
+
+        // Enable Protected Mode (CR0.PE) and Paging (CR0.PG)
+        sregs.cr0 |= 0x00000001;  // PE bit (Protected Mode)
+        sregs.cr0 |= 0x80000000;  // PG bit (Paging enabled)
+
+        // Enable PSE (Page Size Extension) for 4MB pages
+        sregs.cr4 |= 0x00000010;  // PSE bit
+
+        // Disable PAE (we're using 32-bit paging without PAE)
+        sregs.cr4 &= ~0x00000020;  // Clear PAE bit
+
+        // Setup flat segments for Protected Mode (base=0, limit=4GB)
+        // Code segment
+        sregs.cs.base = 0;
+        sregs.cs.limit = 0xFFFFFFFF;
+        sregs.cs.selector = 0x08;  // Kernel code segment
+        sregs.cs.type = 0x0B;      // Execute/Read, accessed
+        sregs.cs.present = 1;
+        sregs.cs.dpl = 0;          // Ring 0
+        sregs.cs.db = 1;           // 32-bit
+        sregs.cs.s = 1;            // Code/Data segment
+        sregs.cs.l = 0;            // Not 64-bit
+        sregs.cs.g = 1;            // Granularity (4KB)
+        sregs.cs.avl = 0;
+
+        // Data segment
+        sregs.ds.base = 0;
+        sregs.ds.limit = 0xFFFFFFFF;
+        sregs.ds.selector = 0x10;  // Kernel data segment
+        sregs.ds.type = 0x03;      // Read/Write, accessed
+        sregs.ds.present = 1;
+        sregs.ds.dpl = 0;
+        sregs.ds.db = 1;           // 32-bit
+        sregs.ds.s = 1;
+        sregs.ds.l = 0;
+        sregs.ds.g = 1;            // Granularity
+        sregs.ds.avl = 0;
+
+        sregs.es = sregs.fs = sregs.gs = sregs.ss = sregs.ds;
+
+        vcpu_printf(ctx, "About to set sregs: CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
+                   sregs.cr0, sregs.cr3, sregs.cr4);
+
+        if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
+            perror("KVM_SET_SREGS (paging)");
+            return -1;
+        }
+
+        vcpu_printf(ctx, "Successfully set sregs for paging\n");
+
+        // Update RIP to entry point (for Protected Mode guests)
+        memset(&regs, 0, sizeof(regs));
+        regs.rip = ctx->entry_point;  // Use configured entry point
+        regs.rflags = 0x2;
+
+        vcpu_printf(ctx, "About to set regs: RIP=0x%x\n", ctx->entry_point);
+
+        if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
+            perror("KVM_SET_REGS (paging)");
+            return -1;
+        }
+
+        vcpu_printf(ctx, "Successfully set regs, verifying...\n");
+
+        // Verify the settings
+        struct kvm_sregs verify_sregs;
+        if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &verify_sregs) == 0) {
+            vcpu_printf(ctx, "Verified: CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
+                       verify_sregs.cr0, verify_sregs.cr3, verify_sregs.cr4);
+        }
+
+        vcpu_printf(ctx, "Enabled paging: CR3=0x%llx, EIP=0x%x (Protected Mode)\n",
+                    sregs.cr3, ctx->entry_point);
+    }
+
     ctx->running = true;
     ctx->exit_count = 0;
 
@@ -791,10 +925,22 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                        ctx->kvm_run->internal.suberror);
             return -1;
 
-        case KVM_EXIT_SHUTDOWN:
-            vcpu_printf(ctx, "SHUTDOWN\n");
+        case KVM_EXIT_SHUTDOWN: {
+            struct kvm_regs regs;
+            struct kvm_sregs sregs;
+            if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) == 0) {
+                vcpu_printf(ctx, "SHUTDOWN at RIP=0x%llx, RSP=0x%llx\n", regs.rip, regs.rsp);
+                vcpu_printf(ctx, "  RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
+                           regs.rax, regs.rbx, regs.rcx, regs.rdx);
+            }
+            if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) == 0) {
+                vcpu_printf(ctx, "  CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
+                           sregs.cr0, sregs.cr3, sregs.cr4);
+                vcpu_printf(ctx, "  CS=0x%x DS=0x%x\n", sregs.cs.selector, sregs.ds.selector);
+            }
             ctx->running = false;
             return 0;
+        }
 
         default:
             vcpu_printf(ctx, "Unknown exit reason: %d\n", ctx->kvm_run->exit_reason);
@@ -894,24 +1040,71 @@ static const char *extract_guest_name(const char *filename) {
 int main(int argc, char **argv) {
     int ret = 0;
     pthread_t threads[MAX_VCPUS];
+    bool enable_paging = false;
+    uint32_t entry_point = 0x80001000;  // Default entry point for paging mode
+    uint32_t load_offset = 0x1000;      // Default load offset for paging mode
+    int guest_arg_start = 1;
 
     // Parse command line arguments
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <guest1.bin> [guest2.bin] [guest3.bin] [guest4.bin]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--paging [--entry ADDR] [--load OFFSET]] <guest1.bin> [guest2.bin] [guest3.bin] [guest4.bin]\n", argv[0]);
         fprintf(stderr, "  Run 1-4 guests simultaneously in separate vCPUs\n");
+        fprintf(stderr, "\nOptions:\n");
+        fprintf(stderr, "  --paging            Enable Protected Mode with paging\n");
+        fprintf(stderr, "  --entry ADDR        Set entry point (default: 0x80001000)\n");
+        fprintf(stderr, "  --load OFFSET       Set load offset (default: 0x1000)\n");
         fprintf(stderr, "\nExample:\n");
         fprintf(stderr, "  %s guest/multiplication.bin guest/counter.bin\n", argv[0]);
+        fprintf(stderr, "  %s --paging os-1k/test_kernel.bin\n", argv[0]);
         return 1;
     }
 
+    // Parse flags
+    for (int i = 1; i < argc && argv[i][0] == '-'; i++) {
+        if (strcmp(argv[i], "--paging") == 0) {
+            enable_paging = true;
+            guest_arg_start++;
+        } else if (strcmp(argv[i], "--entry") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --entry requires an argument\n");
+                return 1;
+            }
+            entry_point = strtoul(argv[i + 1], NULL, 0);
+            i++;
+            guest_arg_start += 2;
+        } else if (strcmp(argv[i], "--load") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --load requires an argument\n");
+                return 1;
+            }
+            load_offset = strtoul(argv[i + 1], NULL, 0);
+            i++;
+            guest_arg_start += 2;
+        } else {
+            fprintf(stderr, "Error: Unknown option %s\n", argv[i]);
+            return 1;
+        }
+    }
+
     // Determine number of guests
-    num_vcpus = argc - 1;
+    num_vcpus = argc - guest_arg_start;
+    if (num_vcpus == 0) {
+        fprintf(stderr, "Error: No guest binaries specified\n");
+        return 1;
+    }
     if (num_vcpus > MAX_VCPUS) {
         fprintf(stderr, "Error: Too many guests (max %d)\n", MAX_VCPUS);
         return 1;
     }
 
-    printf("=== Multi-vCPU KVM VMM (x86 Real Mode) ===\n");
+    printf("=== Multi-vCPU KVM VMM (x86) ===\n");
+    if (enable_paging) {
+        printf("Mode: Protected Mode with Paging\n");
+        printf("Entry point: 0x%x\n", entry_point);
+        printf("Load offset: 0x%x\n", load_offset);
+    } else {
+        printf("Mode: Real Mode\n");
+    }
     printf("Starting %d vCPU(s)\n\n", num_vcpus);
 
     // Step 1: Initialize KVM and create VM
@@ -927,10 +1120,15 @@ int main(int argc, char **argv) {
         // Initialize context
         memset(ctx, 0, sizeof(*ctx));
         ctx->vcpu_id = i;
-        ctx->guest_binary = argv[i + 1];
+        ctx->guest_binary = argv[guest_arg_start + i];
         strncpy(ctx->name, extract_guest_name(ctx->guest_binary), sizeof(ctx->name) - 1);
         ctx->name[sizeof(ctx->name) - 1] = '\0';
         ctx->vcpu_fd = -1;
+
+        // Set paging mode settings
+        ctx->use_paging = enable_paging;
+        ctx->entry_point = entry_point;
+        ctx->load_offset = enable_paging ? load_offset : 0;
 
         printf("[Setup vCPU %d: %s]\n", i, ctx->name);
 
@@ -941,7 +1139,7 @@ int main(int argc, char **argv) {
         }
 
         // Load guest binary into this vCPU's memory
-        if (load_guest_binary(ctx->guest_binary, ctx->guest_mem, ctx->mem_size) < 0) {
+        if (load_guest_binary(ctx->guest_binary, ctx->guest_mem, ctx->mem_size, ctx->load_offset) < 0) {
             ret = 1;
             goto cleanup_vcpus;
         }
