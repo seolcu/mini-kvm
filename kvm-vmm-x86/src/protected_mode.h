@@ -7,7 +7,7 @@
 #define GDT_SIZE 5              // Null, code, data, user code, user data
 #define GDT_ENTRY_SIZE 8        // 각 GDT entry는 8바이트
 #define GDT_TOTAL_SIZE (GDT_SIZE * GDT_ENTRY_SIZE)
-#define GDT_ADDR 0x1000        // GDT를 게스트 메모리 0x1000에 배치
+#define GDT_ADDR 0x500         // GDT at 0x500 (before kernel load at 0x1000)
 
 // Segment selectors (index * 8)
 #define SEL_NULL   0x00        // Null descriptor

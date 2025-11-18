@@ -292,7 +292,6 @@ static int setup_page_tables(vcpu_context_t *ctx) {
     return page_dir_offset;  // Return offset for CR3
 }
 
-#if 0  // OLD SINGLE-VCPU CODE (disabled)
 /*
  * Create a GDT entry
  */
@@ -308,13 +307,10 @@ static void create_gdt_entry(gdt_entry_t *entry, uint32_t base, uint32_t limit,
 
 /*
  * Setup GDT in guest memory for Protected Mode
+ * Called when paging is enabled
  */
-static int setup_gdt(void) {
-    if (cpu_mode != MODE_PROTECTED) {
-        return 0;  // Skip GDT setup for Real Mode
-    }
-
-    gdt_entry_t *gdt = (gdt_entry_t *)(guest_mem + GDT_ADDR);
+static int setup_gdt(void *guest_mem_ptr) {
+    gdt_entry_t *gdt = (gdt_entry_t *)(guest_mem_ptr + GDT_ADDR);
 
     // Entry 0: Null descriptor (required)
     create_gdt_entry(&gdt[0], 0, 0, 0, 0);
@@ -326,12 +322,10 @@ static int setup_gdt(void) {
     create_gdt_entry(&gdt[2], 0, 0xFFFFF, ACCESS_DATA_W, LIMIT_GRAN);
 
     // Entry 3: User code segment (32-bit, ring 3)
-    gdt_entry_t *uc = &gdt[3];
-    create_gdt_entry(uc, 0, 0xFFFFF, 0xFA, LIMIT_GRAN);  // Ring 3 code
+    create_gdt_entry(&gdt[3], 0, 0xFFFFF, 0xFA, LIMIT_GRAN);  // Ring 3 code
 
     // Entry 4: User data segment (32-bit, ring 3)
-    gdt_entry_t *ud = &gdt[4];
-    create_gdt_entry(ud, 0, 0xFFFFF, 0xF2, LIMIT_GRAN);  // Ring 3 data
+    create_gdt_entry(&gdt[4], 0, 0xFFFFF, 0xF2, LIMIT_GRAN);  // Ring 3 data
 
     printf("GDT setup: %d entries at 0x%x\n", GDT_SIZE, GDT_ADDR);
     return 0;
@@ -339,15 +333,12 @@ static int setup_gdt(void) {
 
 /*
  * Setup IDT in guest memory for Protected Mode
+ * Called when paging is enabled
  */
-static int setup_idt(void) {
-    if (cpu_mode != MODE_PROTECTED) {
-        return 0;  // Skip IDT setup for Real Mode
-    }
-
+static int setup_idt(void *guest_mem_ptr) {
     // Place IDT right after GDT
     uint32_t idt_addr = GDT_ADDR + GDT_TOTAL_SIZE;
-    idt_entry_t *idt = (idt_entry_t *)(guest_mem + idt_addr);
+    idt_entry_t *idt = (idt_entry_t *)(guest_mem_ptr + idt_addr);
 
     // Create a simple IDT with 256 entries (all pointing to dummy handler)
     // For now, just zero-initialize (invalid entries)
@@ -356,6 +347,8 @@ static int setup_idt(void) {
     printf("IDT setup at 0x%x\n", idt_addr);
     return 0;
 }
+
+#if 0  // OLD SINGLE-VCPU CODE (disabled)
 
 /*
  * Create vCPU and initialize registers for Real Mode or Protected Mode
@@ -747,6 +740,10 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
 
     // If paging is enabled, setup page tables and switch to Protected Mode
     if (ctx->use_paging) {
+        // Setup GDT and IDT in guest memory
+        setup_gdt(ctx->guest_mem);
+        setup_idt(ctx->guest_mem);
+
         // Setup page tables
         int page_dir_offset = setup_page_tables(ctx);
         if (page_dir_offset < 0) {
@@ -758,6 +755,14 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
             perror("KVM_GET_SREGS (paging)");
             return -1;
         }
+
+        // Set GDTR to point to GDT in guest memory
+        sregs.gdt.base = GDT_ADDR;
+        sregs.gdt.limit = GDT_TOTAL_SIZE - 1;
+
+        // Set IDTR to point to IDT in guest memory
+        sregs.idt.base = GDT_ADDR + GDT_TOTAL_SIZE;
+        sregs.idt.limit = (256 * sizeof(idt_entry_t)) - 1;
 
         // Set CR3 to page directory physical address
         sregs.cr3 = page_dir_offset;
