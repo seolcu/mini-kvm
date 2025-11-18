@@ -25,17 +25,18 @@ struct process *idle_proc;
 /*
  * Page allocator: simple bump allocator
  * Allocates pages from free RAM region
+ * Returns VIRTUAL address (can be converted to physical by subtracting 0x80000000)
  */
 paddr_t alloc_pages(uint32_t n) {
     static paddr_t next_paddr = (paddr_t) __free_ram;
-    paddr_t paddr = next_paddr;
+    paddr_t vaddr = next_paddr;
     next_paddr += n * PAGE_SIZE;
 
     if (next_paddr > (paddr_t) __free_ram_end)
         PANIC("out of memory");
 
-    memset((void *) paddr, 0, n * PAGE_SIZE);
-    return paddr;
+    memset((void *) vaddr, 0, n * PAGE_SIZE);
+    return vaddr;  // Returns VIRTUAL address
 }
 
 /*
@@ -59,15 +60,17 @@ void map_page(uint32_t *page_table, uint32_t vaddr, paddr_t paddr, uint32_t flag
     
     /* Check if page table exists, create if not */
     if ((page_table[pd_index] & PAGE_P) == 0) {
-        uint32_t pt_paddr = alloc_pages(1);
+        uint32_t pt_vaddr = alloc_pages(1);
+        uint32_t pt_paddr = pt_vaddr - 0x80000000;  // Convert virtual to physical
         page_table[pd_index] = (pt_paddr & 0xFFFFF000) | PAGE_P | PAGE_RW | PAGE_U;
     }
 
     /* Extract page table index (bits 21:12) */
     uint32_t pt_index = (vaddr >> 12) & 0x3FF;
     
-    /* Get page table address */
-    uint32_t *pt = (uint32_t *) (page_table[pd_index] & 0xFFFFF000);
+    /* Get page table address - convert physical to virtual (high-half mapping) */
+    uint32_t pt_paddr = page_table[pd_index] & 0xFFFFF000;
+    uint32_t *pt = (uint32_t *) (pt_paddr + 0x80000000);
     
     /* Map the page */
     pt[pt_index] = (paddr & 0xFFFFF000) | flags | PAGE_P;
@@ -299,27 +302,35 @@ struct process *create_process(const void *image, size_t image_size) {
     *--sp = 0;                      // EBX
     *--sp = (uint32_t) user_entry;  // Return address (will jump to user_entry)
 
-    /* Allocate page directory */
+    /* Allocate page directory - alloc_pages returns VIRTUAL address */
     uint32_t *page_table = (uint32_t *) alloc_pages(1);
 
-    /* Map kernel pages (identity mapping) */
-    for (paddr_t paddr = (paddr_t) __kernel_base;
-         paddr < (paddr_t) __free_ram_end; paddr += PAGE_SIZE)
-        map_page(page_table, paddr, paddr, PAGE_RW);
+    /* Map kernel pages (high half mapping)
+     * Virtual 0x80000000+ maps to physical 0x0+
+     * Kernel is loaded at physical 0x1000 = virtual 0x80001000
+     */
+    for (paddr_t vaddr = (paddr_t) __kernel_base;
+         vaddr < (paddr_t) __free_ram_end; vaddr += PAGE_SIZE) {
+        paddr_t paddr = vaddr - 0x80000000;  // Convert virtual to physical
+        map_page(page_table, vaddr, paddr, PAGE_RW);
+    }
 
     /* Map user pages */
     for (uint32_t off = 0; off < image_size; off += PAGE_SIZE) {
-        paddr_t page = alloc_pages(1);
+        paddr_t page_vaddr = alloc_pages(1);
         size_t remaining = image_size - off;
         size_t copy_size = PAGE_SIZE <= remaining ? PAGE_SIZE : remaining;
-        memcpy((void *) page, image + off, copy_size);
-        map_page(page_table, USER_BASE + off, page, PAGE_U | PAGE_RW);
+        memcpy((void *) page_vaddr, image + off, copy_size);
+        /* Convert virtual to physical for mapping */
+        paddr_t page_paddr = page_vaddr - 0x80000000;
+        map_page(page_table, USER_BASE + off, page_paddr, PAGE_U | PAGE_RW);
     }
 
     proc->pid = i + 1;
     proc->state = PROC_RUNNABLE;
     proc->sp = (uint32_t) sp;
-    proc->page_table = page_table;
+    /* Convert page table virtual address to physical for CR3 */
+    proc->page_table = (uint32_t *) ((uint32_t) page_table - 0x80000000);
     
     return proc;
 }
@@ -433,24 +444,49 @@ void handle_trap(struct trap_frame *f) {
  */
 void kernel_main(void) {
     /* Clear BSS */
+    printf("DEBUG: Clearing BSS...\n");
     memset(__bss, 0, (size_t) __bss_end - (size_t) __bss);
     
     printf("\n\n");
     printf("=== 1K OS x86 ===\n");
     
+    printf("DEBUG: Initializing filesystem...\n");
     /* Initialize filesystem */
     fs_init();
 
+    printf("DEBUG: Creating idle process...\n");
     /* Create idle process */
     idle_proc = create_process(NULL, 0);
     idle_proc->pid = 0;
-    current_proc = idle_proc;
+    // Don't set current_proc yet - we're still in boot context
 
+    printf("DEBUG: Creating shell process...\n");
     /* Create shell process */
-    create_process(_binary_shell_bin_start, (size_t) _binary_shell_bin_size);
+    struct process *shell_proc = create_process(_binary_shell_bin_start, (size_t) _binary_shell_bin_size);
     
-    /* Start multitasking */
-    yield();
+    printf("DEBUG: Jumping to shell process...\n");
+    /* Jump directly to shell (first process switch) */
+    current_proc = shell_proc;
+    
+    /* Switch to shell's page table */
+    __asm__ volatile(
+        "movl %0, %%cr3\n\t"
+        :
+        : "r" ((uint32_t) shell_proc->page_table)
+        : "memory"
+    );
+    
+    /* Jump to shell's entry point (simulate context switch without saving kernel state) */
+    __asm__ volatile(
+        "movl %0, %%esp\n\t"  // Load shell's SP
+        "popl %%ebp\n\t"       // Restore registers
+        "popl %%edi\n\t"
+        "popl %%esi\n\t"
+        "popl %%ebx\n\t"
+        "ret"                  // Jump to user_entry
+        :
+        : "r" (shell_proc->sp)
+    );
 
     PANIC("switched to idle process");
 }

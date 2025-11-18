@@ -38,5 +38,5 @@ SECTIONS
 
     . = ALIGN(4096);
     __free_ram = .;
-    __free_ram_end = 0x80400000;
+    __free_ram_end = 0x803FF000;  /* Leave 4KB margin below 4MB boundary */
 }

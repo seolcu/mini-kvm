@@ -33,11 +33,10 @@ static cpu_mode_t cpu_mode = MODE_REAL;  // Default: Real Mode
 // Hypercall interface
 #define HYPERCALL_PORT 0x500      // Port for hypercalls
 
-// Hypercall numbers
+// Hypercall numbers (must match 1K OS syscall numbers)
 #define HC_EXIT       0x00        // Exit guest
 #define HC_PUTCHAR    0x01        // Output character (BL = char)
-#define HC_PUTNUM     0x02        // Output number (BX = number, decimal)
-#define HC_NEWLINE    0x03        // Output newline
+#define HC_GETCHAR    0x02        // Input character (returns in AL)
 
 // Multi-vCPU configuration
 #define MAX_VCPUS 4               // Maximum number of vCPUs
@@ -57,6 +56,7 @@ typedef struct {
     bool use_paging;              // Enable Protected Mode with paging (for 1K OS)
     uint32_t entry_point;         // Entry point address (EIP)
     uint32_t load_offset;         // Offset to load binary in guest memory
+    int pending_getchar;          // GETCHAR request pending (0=no, 1=yes)
 } vcpu_context_t;
 
 // Global KVM state (shared across vCPUs)
@@ -882,20 +882,10 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                             break;
                         }
 
-                        case HC_PUTNUM: {
-                            unsigned short num = regs.rbx & 0xFFFF;
-                            pthread_mutex_lock(&stdout_mutex);
-                            printf("%u", num);
-                            fflush(stdout);
-                            pthread_mutex_unlock(&stdout_mutex);
-                            break;
-                        }
-
-                        case HC_NEWLINE:
-                            pthread_mutex_lock(&stdout_mutex);
-                            putchar('\n');
-                            fflush(stdout);
-                            pthread_mutex_unlock(&stdout_mutex);
+                        case HC_GETCHAR:
+                            // Mark that guest wants to read character
+                            // Will be handled on next IN instruction
+                            ctx->pending_getchar = 1;
                             break;
 
                         default:
@@ -910,6 +900,18 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                     }
                     fflush(stdout);
                     pthread_mutex_unlock(&stdout_mutex);
+                }
+            } else {
+                // IN instruction
+                if (ctx->kvm_run->io.port == HYPERCALL_PORT && ctx->pending_getchar) {
+                    // GETCHAR: Read character from stdin
+                    pthread_mutex_lock(&stdout_mutex);
+                    int ch = getchar();
+                    pthread_mutex_unlock(&stdout_mutex);
+                    
+                    // Return character in data buffer (KVM will put it in AL)
+                    data[0] = (ch == EOF) ? -1 : (unsigned char)ch;
+                    ctx->pending_getchar = 0;
                 }
             }
             break;
