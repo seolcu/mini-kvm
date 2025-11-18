@@ -215,27 +215,16 @@ struct file *fs_lookup(const char *filename) {
 
 /*
  * User entry point - jump to user space
- * Sets up user mode registers and executes sysret/iret
+ * SIMPLIFIED: Execute in kernel mode (no ring transition)
+ * TODO: Set up proper GDT for user mode
  */
 __attribute__((naked)) void user_entry(void) {
     __asm__ volatile(
-        "movl $0x23, %%eax\n\t"      // User data segment (GDT index 4, RPL=3)
-        "movw %%ax, %%ds\n\t"
-        "movw %%ax, %%es\n\t"
-        "movw %%ax, %%fs\n\t"
-        "movw %%ax, %%gs\n\t"
-        
-        "movl $0x01000000, %%eax\n\t"  // USER_BASE
-        "pushl $0x23\n\t"              // SS
-        "pushl %%eax\n\t"              // ESP (USER_BASE as stack)
-        "pushfl\n\t"                   // EFLAGS
-        "orl $0x200, (%%esp)\n\t"      // Set IF (interrupts enabled)
-        "pushl $0x1B\n\t"              // CS (user code segment, RPL=3)
-        "pushl %%eax\n\t"              // EIP (USER_BASE as entry)
-        "iretl\n\t"
-        :
-        :
-        : "memory"
+        // Set up stack and jump to USER_BASE
+        "movl $0x01000000, %esp\n\t"  // USER_BASE as stack
+        "xorl %ebp, %ebp\n\t"          // Clear frame pointer
+        "movl $0x01000000, %eax\n\t"  // USER_BASE as entry
+        "jmp *%eax\n\t"                // Jump to user code
     );
 }
 
@@ -308,12 +297,20 @@ struct process *create_process(const void *image, size_t image_size) {
     /* Map kernel pages (high half mapping)
      * Virtual 0x80000000+ maps to physical 0x0+
      * Kernel is loaded at physical 0x1000 = virtual 0x80001000
+     * 
+     * Map entire 4MB region for simplicity (matches VMM setup)
      */
-    for (paddr_t vaddr = (paddr_t) __kernel_base;
-         vaddr < (paddr_t) __free_ram_end; vaddr += PAGE_SIZE) {
+    printf("DEBUG: Starting kernel page mapping...\n");
+    uint32_t page_count = 0;
+    for (uint32_t vaddr = 0x80000000; vaddr < 0x80400000; vaddr += PAGE_SIZE) {
         paddr_t paddr = vaddr - 0x80000000;  // Convert virtual to physical
         map_page(page_table, vaddr, paddr, PAGE_RW);
+        page_count++;
+        if (page_count == 1) printf("DEBUG: First page mapped\n");
     }
+    printf("DEBUG: Loop done, count=");
+    if (page_count > 0) putchar('0' + (page_count % 10));
+    putchar('\n');
 
     /* Map user pages */
     for (uint32_t off = 0; off < image_size; off += PAGE_SIZE) {
@@ -465,9 +462,13 @@ void kernel_main(void) {
     struct process *shell_proc = create_process(_binary_shell_bin_start, (size_t) _binary_shell_bin_size);
     
     printf("DEBUG: Jumping to shell process...\n");
+    printf("DEBUG: Shell page_table (CR3) = 0x%x\n", (uint32_t)shell_proc->page_table);
+    printf("DEBUG: Shell SP = 0x%x\n", shell_proc->sp);
+    
     /* Jump directly to shell (first process switch) */
     current_proc = shell_proc;
     
+    printf("DEBUG: About to load CR3...\n");
     /* Switch to shell's page table */
     __asm__ volatile(
         "movl %0, %%cr3\n\t"
@@ -476,6 +477,7 @@ void kernel_main(void) {
         : "memory"
     );
     
+    printf("DEBUG: CR3 loaded, about to switch stack...\n");
     /* Jump to shell's entry point (simulate context switch without saving kernel state) */
     __asm__ volatile(
         "movl %0, %%esp\n\t"  // Load shell's SP
