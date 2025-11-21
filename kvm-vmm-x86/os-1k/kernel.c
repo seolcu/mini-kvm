@@ -92,101 +92,6 @@ void putchar(char ch) {
     );
 }
 
-/* Keyboard buffer for interrupt-driven input */
-#define KEYBOARD_BUFFER_SIZE 256
-static struct {
-    char buffer[KEYBOARD_BUFFER_SIZE];
-    int head;   // Write position (updated by interrupt handler)
-    int tail;   // Read position (updated by getchar)
-} keyboard_buffer = {.head = 0, .tail = 0};
-
-/*
- * Keyboard interrupt handler (IRQ 1 / Vector 0x21)
- * Called when a key is pressed (keyboard interrupt injected by VMM)
- * Reads character from keyboard port and stores in buffer
- *
- * Naked function to avoid 80387 instructions
- */
-__attribute__((naked))
-void keyboard_interrupt_handler(void) {
-    __asm__ volatile(
-        // Read scancode from keyboard port 0x60
-        "movw $0x60, %%dx\n\t"         // port = 0x60
-        "xorl %%eax, %%eax\n\t"        // result = 0
-        "inb %%dx, %%al\n\t"           // Read port 0x60 → AL (scancode)
-
-        // Simple scancode to ASCII conversion
-        // Number keys 1-9, 0: 0x02-0x0D → '1'-'9','0'
-        "movl %%eax, %%ecx\n\t"        // ECX = scancode
-        "xorl %%ebx, %%ebx\n\t"        // EBX = 0 (default char = 0)
-
-        // Check for number keys (0x02-0x0D)
-        "cmpl $0x02, %%ecx\n\t"
-        "jl 1f\n\t"
-        "cmpl $0x0D, %%ecx\n\t"
-        "jg 1f\n\t"
-        // It's a number key: map 0x02-0x0D to '1'-'9','0'
-        "subl $0x02, %%ecx\n\t"        // ECX now 0-11
-        "movl $0x31, %%ebx\n\t"        // '1' = 0x31
-        "addl %%ecx, %%ebx\n\t"        // Add offset
-        "jmp 5f\n"
-        "1:\n\t"
-
-        // Check for Enter (0x1C → newline)
-        "cmpl $0x1C, %%eax\n\t"
-        "jne 2f\n\t"
-        "movl $0x0A, %%ebx\n\t"         // Enter → '\n' = 0x0A
-        "jmp 5f\n"
-        "2:\n\t"
-
-        // Check for Space (0x39)
-        "cmpl $0x39, %%eax\n\t"
-        "jne 3f\n\t"
-        "movl $0x20, %%ebx\n\t"         // Space
-        "jmp 5f\n"
-        "3:\n\t"
-
-        // No valid key, skip buffering
-        "xorl %%ebx, %%ebx\n\t"
-        "jmp 4f\n"
-        "5:\n\t"
-
-        // Store in keyboard buffer if not zero
-        "test %%ebx, %%ebx\n\t"
-        "jz 4f\n\t"
-
-        // Store character in buffer
-        // keyboard_buffer is static global, use direct address
-        "leal keyboard_buffer, %%eax\n\t"
-        "movl 4(%%eax), %%edx\n\t"     // EDX = head
-        "addl $1, %%edx\n\t"
-        "cmpl $256, %%edx\n\t"
-        "jl 6f\n\t"
-        "xorl %%edx, %%edx\n\t"         // Wrap around
-        "6:\n\t"
-        "cmpl 8(%%eax), %%edx\n\t"      // Compare with tail
-        "je 4f\n\t"                      // Buffer full, skip
-        "movb %%bl, (%%eax,%%edx)\n\t"
-        "movl %%edx, 4(%%eax)\n\t"      // Update head
-        "4:\n\t"
-
-        // Send EOI to PIC
-        "movb $0x20, %%al\n\t"
-        "movw $0x20, %%dx\n\t"
-        "outb %%al, %%dx\n\t"
-
-        // IRET
-        "iret\n\t"
-
-        : : : "eax", "ebx", "ecx", "edx", "memory"
-    );
-}
-
-/*
- * Hypercall interface for getchar
- * Returns character from keyboard buffer (filled by keyboard interrupt handler)
- * Blocking: waits for interrupt (uses HLT)
- */
 /* Timer counter (incremented by timer interrupt handler) */
 static volatile int timer_ticks = 0;
 
@@ -215,29 +120,30 @@ void timer_interrupt_handler(void) {
 }
 
 long getchar(void) {
-    // Wait for character in buffer
-    while (keyboard_buffer.head == keyboard_buffer.tail) {
-        // Request character via hypercall (VMM checks keyboard buffer)
+    // Blocking getchar using HC_GETCHAR hypercall
+    // VMM will return character from keyboard buffer in RAX
+    // If no input available, returns -1 and we retry
+
+    long ch;
+    while (1) {
         __asm__ volatile(
-            "movb $2, %%al\n\t"        // HC_GETCHAR
-            "movw $0x500, %%dx\n\t"    // Port 0x500
-            "outb %%al, %%dx\n\t"      // Request character
+            "movb $2, %%al\n\t"         // HC_GETCHAR
+            "movw $0x500, %%dx\n\t"     // Port 0x500
+            "outb %%al, %%dx\n\t"       // Hypercall
+            "movl %%eax, %0"            // Read result from EAX
+            : "=r"(ch)
             :
-            :
-            : "al", "dx"
+            : "eax", "edx"
         );
 
-        // If still no input, halt and wait for interrupt
-        if (keyboard_buffer.head == keyboard_buffer.tail) {
-            __asm__ volatile("hlt");   // Wait for keyboard interrupt
+        // If got valid character (not -1), return it
+        if (ch != -1 && ch != 0xFFFFFFFF) {
+            return ch & 0xFF;  // Return lower byte only
         }
+
+        // No input yet, brief pause and retry
+        for (volatile int i = 0; i < 10000; i++);  // Small delay
     }
-
-    // Read character from buffer
-    char ch = keyboard_buffer.buffer[keyboard_buffer.tail];
-    keyboard_buffer.tail = (keyboard_buffer.tail + 1) % KEYBOARD_BUFFER_SIZE;
-
-    return (long)ch;
 }
 
 /* Filesystem */
@@ -608,10 +514,9 @@ void kernel_main(void) {
 
     /* Setup interrupt handlers */
     setup_idt_entry(0x20, timer_interrupt_handler);     // IRQ 0 / Vector 0x20
-    setup_idt_entry(0x21, keyboard_interrupt_handler);  // IRQ 1 / Vector 0x21
     printf("Interrupt handlers registered\n");
     printf("  Timer (IRQ 0, vector 0x20)\n");
-    printf("  Keyboard (IRQ 1, vector 0x21)\n");
+    printf("  Keyboard input via HC_GETCHAR hypercall\n");
 
     /* Initialize filesystem */
     fs_init();
