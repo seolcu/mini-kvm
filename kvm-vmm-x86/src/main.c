@@ -371,8 +371,12 @@ static int init_kvm(void) {
 static int setup_vcpu_memory(vcpu_context_t *ctx) {
     struct kvm_userspace_memory_region mem_region;
 
-    // Use 4MB per vCPU (required for 1K OS with paging)
-    ctx->mem_size = 4 * 1024 * 1024;  // 4MB
+    // Use 4MB per vCPU for 1K OS (with paging), 256KB for Real Mode guests
+    if (ctx->use_paging) {
+        ctx->mem_size = 4 * 1024 * 1024;  // 4MB for Protected Mode
+    } else {
+        ctx->mem_size = 256 * 1024;       // 256KB for Real Mode (fits in 64K segment)
+    }
 
     // Allocate memory for this vCPU's guest
     ctx->guest_mem = mmap(NULL, ctx->mem_size,
@@ -843,10 +847,11 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
     // CS:IP must point to the vCPU's memory region
     // Physical address = CS * 16 + IP
     // For vCPU 0: GPA 0x00000 (CS = 0x0000, IP = 0x0)
-    // For vCPU 1: GPA 0x40000 (CS = 0x4000, IP = 0x0)
+    // For vCPU 1: GPA 0x40000 (CS = 0x4000, IP = 0x0)  (256KB spacing)
     // For vCPU 2: GPA 0x80000 (CS = 0x8000, IP = 0x0)
     // For vCPU 3: GPA 0xC0000 (CS = 0xC000, IP = 0x0)
-    uint16_t cs_value = ctx->vcpu_id * (ctx->mem_size / 16);  // 256KB / 16 = 0x4000
+    // Real Mode: 256KB/16 = 0x4000, Protected Mode: not used (paging handles addressing)
+    uint16_t cs_value = ctx->vcpu_id * (ctx->mem_size / 16);
 
     sregs.cs.base = cs_value * 16;  // Base address
     sregs.cs.selector = cs_value;
@@ -891,6 +896,13 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
 
     vcpu_printf(ctx, "Set registers: RIP=0x%llx (Real Mode)\n", regs.rip);
 
+    // Set MP state to runnable (required for multi-vCPU)
+    struct kvm_mp_state mp_state;
+    mp_state.mp_state = KVM_MP_STATE_RUNNABLE;
+    if (ioctl(ctx->vcpu_fd, KVM_SET_MP_STATE, &mp_state) < 0) {
+        perror("KVM_SET_MP_STATE");
+        return -1;
+    }
     // If paging is enabled, setup page tables and switch to Protected Mode
     if (ctx->use_paging) {
         // Setup GDT and IDT in guest memory
@@ -1163,6 +1175,7 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
 static void *vcpu_thread(void *arg) {
     vcpu_context_t *ctx = (vcpu_context_t *)arg;
     int ret;
+    int run_count = 0;
 
     vcpu_printf(ctx, "Thread started\n");
 
