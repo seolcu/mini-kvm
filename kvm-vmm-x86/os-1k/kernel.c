@@ -137,7 +137,7 @@ long getchar(void) {
         );
 
         // If got valid character (not -1), return it
-        if (ch != -1 && ch != 0xFFFFFFFF) {
+        if (ch != -1) {
             return ch & 0xFF;  // Return lower byte only
         }
 
@@ -271,7 +271,7 @@ __attribute__((naked)) void user_entry(void) {
  * prev_sp: Pointer to save current ESP
  * next_sp: Pointer to load new ESP from
  */
-__attribute__((naked)) void switch_context(uint32_t *prev_sp, uint32_t *next_sp) {
+__attribute__((naked)) void switch_context(uint32_t *prev_sp __attribute__((unused)), uint32_t *next_sp __attribute__((unused))) {
     __asm__ volatile(
         // Save callee-saved registers
         "pushl %%ebx\n\t"
@@ -487,13 +487,15 @@ void handle_trap(struct trap_frame *f) {
  * Called from boot.S after basic setup
  */
 /*
- * Setup IDT entry for interrupt handler
+ * Setup IDT entry
  * IDT is already created by VMM in guest memory
  */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
 static void setup_idt_entry(int vector, void *handler, int dpl) {
     // IDT is at physical 0x528 = virtual 0x528 (identity-mapped)
     // Each entry is 8 bytes (gate descriptor)
-    uint32_t *idt = (uint32_t *)0x528;
+    volatile uint32_t *idt = (volatile uint32_t *)0x528;
     uint32_t handler_addr = (uint32_t)handler;
 
     // IDT gate descriptor format (32-bit):
@@ -504,6 +506,7 @@ static void setup_idt_entry(int vector, void *handler, int dpl) {
     idt[vector * 2 + 0] = ((handler_addr & 0xFFFF) << 16) | 0x0008;  // Selector = 0x08 (kernel code)
     idt[vector * 2 + 1] = (handler_addr & 0xFFFF0000) | flags;
 }
+#pragma GCC diagnostic pop
 
 void kernel_main(void) {
     /* Clear BSS */
