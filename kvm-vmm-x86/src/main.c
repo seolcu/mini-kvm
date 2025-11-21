@@ -23,13 +23,6 @@
 #define GUEST_LOAD_ADDR 0x0       // Load guest at address 0
 
 // Mode selection
-typedef enum {
-    MODE_REAL,                    // 16-bit Real Mode
-    MODE_PROTECTED                // 32-bit Protected Mode
-} cpu_mode_t;
-
-static cpu_mode_t cpu_mode = MODE_REAL;  // Default: Real Mode
-
 // Hypercall interface
 #define HYPERCALL_PORT 0x500      // Port for hypercalls
 
@@ -98,24 +91,6 @@ static pthread_mutex_t stdout_mutex = PTHREAD_MUTEX_INITIALIZER;
 /*
  * Thread-safe output functions with vCPU identification
  */
-static void vcpu_putchar(vcpu_context_t *ctx, char ch) {
-    pthread_mutex_lock(&stdout_mutex);
-
-    // Color code based on vCPU ID: red, green, blue, yellow
-    const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
-    const char *reset = "\033[0m";
-
-    printf("%s[vCPU %d:%s]%s %c",
-           colors[ctx->vcpu_id % 4],
-           ctx->vcpu_id,
-           ctx->name,
-           reset,
-           ch);
-    fflush(stdout);
-
-    pthread_mutex_unlock(&stdout_mutex);
-}
-
 static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
     pthread_mutex_lock(&stdout_mutex);
 
@@ -197,13 +172,6 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size, u
 /*
  * Keyboard buffer helper functions
  */
-static bool keyboard_buffer_empty(void) {
-    pthread_mutex_lock(&keyboard_buffer.lock);
-    bool empty = (keyboard_buffer.head == keyboard_buffer.tail);
-    pthread_mutex_unlock(&keyboard_buffer.lock);
-    return empty;
-}
-
 static void keyboard_buffer_push(char ch) {
     pthread_mutex_lock(&keyboard_buffer.lock);
     int next_head = (keyboard_buffer.head + 1) % KEYBOARD_BUFFER_SIZE;
@@ -1175,7 +1143,6 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
 static void *vcpu_thread(void *arg) {
     vcpu_context_t *ctx = (vcpu_context_t *)arg;
     int ret;
-    int run_count = 0;
 
     vcpu_printf(ctx, "Thread started\n");
 
@@ -1240,8 +1207,7 @@ static const char *extract_guest_name(const char *filename) {
 
     // Remove .bin extension if present
     static char name_buf[256];
-    strncpy(name_buf, name, sizeof(name_buf) - 1);
-    name_buf[sizeof(name_buf) - 1] = '\0';
+    snprintf(name_buf, sizeof(name_buf), "%s", name);
 
     char *dot = strrchr(name_buf, '.');
     if (dot && strcmp(dot, ".bin") == 0) {
@@ -1335,8 +1301,7 @@ int main(int argc, char **argv) {
         memset(ctx, 0, sizeof(*ctx));
         ctx->vcpu_id = i;
         ctx->guest_binary = argv[guest_arg_start + i];
-        strncpy(ctx->name, extract_guest_name(ctx->guest_binary), sizeof(ctx->name) - 1);
-        ctx->name[sizeof(ctx->name) - 1] = '\0';
+        snprintf(ctx->name, sizeof(ctx->name), "%s", extract_guest_name(ctx->guest_binary));
         ctx->vcpu_fd = -1;
 
         // Set paging mode settings
