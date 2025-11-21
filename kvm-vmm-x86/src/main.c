@@ -41,6 +41,30 @@ static cpu_mode_t cpu_mode = MODE_REAL;  // Default: Real Mode
 // Multi-vCPU configuration
 #define MAX_VCPUS 4               // Maximum number of vCPUs
 
+// Keyboard buffer for interrupt-based input
+#define KEYBOARD_BUFFER_SIZE 256
+typedef struct {
+    char buffer[KEYBOARD_BUFFER_SIZE];
+    int head;  // Write position
+    int tail;  // Read position
+    pthread_mutex_t lock;
+} keyboard_buffer_t;
+
+static keyboard_buffer_t keyboard_buffer = {
+    .head = 0,
+    .tail = 0,
+    .lock = PTHREAD_MUTEX_INITIALIZER
+};
+
+// Stdin monitoring thread
+static pthread_t stdin_thread;
+static bool stdin_thread_running = false;
+
+// Timer thread
+static pthread_t timer_thread;
+static bool timer_thread_running = false;
+static volatile int timer_ticks = 0;
+
 // Per-vCPU context structure
 typedef struct {
     int vcpu_id;                  // vCPU index (0, 1, 2, 3)
@@ -170,6 +194,124 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size, u
 }
 
 /*
+ * Keyboard buffer helper functions
+ */
+static bool keyboard_buffer_empty(void) {
+    pthread_mutex_lock(&keyboard_buffer.lock);
+    bool empty = (keyboard_buffer.head == keyboard_buffer.tail);
+    pthread_mutex_unlock(&keyboard_buffer.lock);
+    return empty;
+}
+
+static void keyboard_buffer_push(char ch) {
+    pthread_mutex_lock(&keyboard_buffer.lock);
+    int next_head = (keyboard_buffer.head + 1) % KEYBOARD_BUFFER_SIZE;
+    if (next_head != keyboard_buffer.tail) {
+        keyboard_buffer.buffer[keyboard_buffer.head] = ch;
+        keyboard_buffer.head = next_head;
+    }
+    pthread_mutex_unlock(&keyboard_buffer.lock);
+}
+
+static int keyboard_buffer_pop(void) {
+    pthread_mutex_lock(&keyboard_buffer.lock);
+    if (keyboard_buffer.head == keyboard_buffer.tail) {
+        pthread_mutex_unlock(&keyboard_buffer.lock);
+        return -1;  // Empty
+    }
+    char ch = keyboard_buffer.buffer[keyboard_buffer.tail];
+    keyboard_buffer.tail = (keyboard_buffer.tail + 1) % KEYBOARD_BUFFER_SIZE;
+    pthread_mutex_unlock(&keyboard_buffer.lock);
+    return (unsigned char)ch;
+}
+
+/*
+ * Timer thread - generates periodic timer interrupts
+ * Injects IRQ0 every 10ms to all vCPUs
+ */
+static void *timer_thread_func(void *arg) {
+    (void)arg;
+
+    printf("[Timer] Timer thread started (10ms period)\n");
+
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+
+    while (timer_thread_running) {
+        // Sleep for 10ms
+        usleep(10000);
+
+        timer_ticks++;
+
+        // Inject timer interrupt (IRQ0) to all vCPUs
+        for (int i = 0; i < num_vcpus; i++) {
+            if (vcpus[i].running) {
+                struct kvm_interrupt irq;
+                irq.irq = 0x20;  // Vector 0x20 = timer interrupt (IRQ0)
+
+                if (ioctl(vcpus[i].vcpu_fd, KVM_INTERRUPT, &irq) < 0) {
+                    // Interrupt might fail - just continue
+                }
+            }
+        }
+    }
+
+    printf("[Timer] Timer thread stopped\n");
+    return NULL;
+}
+
+/*
+ * Stdin monitoring thread - reads from stdin and injects keyboard interrupts
+ * This thread runs continuously and injects IRQ1 when a key is pressed
+ */
+static void *stdin_monitor_thread_func(void *arg) {
+    (void)arg;
+
+    printf("[Keyboard] Stdin monitoring thread started\n");
+
+    // Set stdin to non-blocking mode
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+    while (stdin_thread_running) {
+        fd_set readfds;
+        struct timeval tv;
+
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;  // 100ms timeout
+
+        int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
+        if (ret > 0 && FD_ISSET(STDIN_FILENO, &readfds)) {
+            int ch = getchar();
+            if (ch != EOF) {
+                // Store character in buffer
+                keyboard_buffer_push((char)ch);
+
+                // Inject keyboard interrupt (IRQ1) to vCPU 0
+                // Only vCPU 0 receives keyboard input (as per meeting notes)
+                if (num_vcpus > 0 && vcpus[0].running) {
+                    struct kvm_interrupt irq;
+                    irq.irq = 0x21;  // Vector 0x21 = keyboard interrupt
+
+                    if (ioctl(vcpus[0].vcpu_fd, KVM_INTERRUPT, &irq) < 0) {
+                        // Interrupt might fail if guest is in incompatible state
+                        // Just continue - guest will eventually receive it
+                    }
+                }
+            }
+        }
+    }
+
+    // Restore stdin blocking mode
+    fcntl(STDIN_FILENO, F_SETFL, flags);
+
+    printf("[Keyboard] Stdin monitoring thread stopped\n");
+    return NULL;
+}
+
+/*
  * Initialize KVM and create VM
  */
 static int init_kvm(void) {
@@ -206,6 +348,16 @@ static int init_kvm(void) {
     }
 
     printf("Created VM (fd=%d)\n", vm_fd);
+
+    // 4. Create interrupt controller (IRQCHIP)
+    // This enables interrupt injection via KVM_IRQ_LINE
+    if (ioctl(vm_fd, KVM_CREATE_IRQCHIP) < 0) {
+        perror("KVM_CREATE_IRQCHIP");
+        fprintf(stderr, "Warning: Interrupt controller creation failed. Interrupts disabled.\n");
+        // Continue anyway - hypercall-based I/O will still work
+    } else {
+        printf("Created interrupt controller (IRQCHIP)\n");
+    }
 
     return 0;
 }
@@ -914,38 +1066,16 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                         }
 
                         case HC_GETCHAR: {
-                            // GETCHAR: Read character from stdin and write to guest memory
-                            // Result location: 0x2000 in guest physical address space
-                            static int getchar_count = 0;
-                            
-                            pthread_mutex_lock(&stdout_mutex);
-                            
-                            // Check if there's input available using select()
-                            fd_set readfds;
-                            struct timeval tv = {0, 0};  // Non-blocking
-                            FD_ZERO(&readfds);
-                            FD_SET(STDIN_FILENO, &readfds);
-                            
-                            int ch = -1;
-                            if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0) {
-                                ch = getchar();
-                            }
-                            
-                            pthread_mutex_unlock(&stdout_mutex);
-                            
-                            // Write result to guest memory at physical address 0x4000
-                            volatile int32_t *result_ptr = (volatile int32_t *)(ctx->guest_mem + 0x4000);
-                            *result_ptr = (int32_t)ch;
-                            
-                            // DEBUG: Verify write
-                            if (getchar_count == 0) {
-                                int32_t verify = *result_ptr;
-                                vcpu_printf(ctx, "  Verification: VMM wrote %d, readback %d at phys 0x4000\n", ch, verify);
-                            }
-                            
-                            if (getchar_count++ < 5) {
-                                vcpu_printf(ctx, "GETCHAR[%d]: ch=%d, wrote to guest phys 0x4000 (virt 0x4000 identity-mapped)\n", 
-                                           getchar_count, ch);
+                            // GETCHAR: Read character from interrupt-driven keyboard buffer
+                            // The stdin monitoring thread fills this buffer and injects keyboard interrupts
+                            int ch = keyboard_buffer_pop();
+
+                            // Set return value in RAX (guest will see this in AL for getchar syscall)
+                            regs.rax = (ch == -1) ? 0xFFFFFFFF : (unsigned char)ch;  // -1 if no input
+
+                            if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
+                                perror("KVM_SET_REGS");
+                                return -1;
                             }
                             break;
                         }
@@ -1240,23 +1370,49 @@ int main(int argc, char **argv) {
         printf("\n");
     }
 
-    // Step 3: Spawn vCPU threads
+    // Step 3: Start timer thread for periodic interrupts
+    timer_thread_running = true;
+    if (pthread_create(&timer_thread, NULL, timer_thread_func, NULL) != 0) {
+        fprintf(stderr, "Warning: Failed to create timer thread. Timer interrupts disabled.\n");
+        timer_thread_running = false;
+    }
+
+    // Step 3b: Start stdin monitoring thread for keyboard interrupts
+    stdin_thread_running = true;
+    if (pthread_create(&stdin_thread, NULL, stdin_monitor_thread_func, NULL) != 0) {
+        fprintf(stderr, "Warning: Failed to create stdin monitoring thread. Keyboard input disabled.\n");
+        stdin_thread_running = false;
+    }
+
+    // Step 4: Spawn vCPU threads
     printf("=== Starting VM execution (%d vCPUs) ===\n\n", num_vcpus);
 
     for (int i = 0; i < num_vcpus; i++) {
         if (pthread_create(&threads[i], NULL, vcpu_thread, &vcpus[i]) != 0) {
             fprintf(stderr, "Failed to create thread for vCPU %d\n", i);
             ret = 1;
-            goto cleanup_vcpus;
+            goto cleanup_stdin;
         }
     }
 
-    // Step 4: Wait for all vCPUs to finish
+    // Step 5: Wait for all vCPUs to finish
     for (int i = 0; i < num_vcpus; i++) {
         pthread_join(threads[i], NULL);
     }
 
     printf("\n=== All vCPUs completed ===\n");
+
+cleanup_stdin:
+    // Stop monitoring threads
+    if (timer_thread_running) {
+        timer_thread_running = false;
+        pthread_join(timer_thread, NULL);
+    }
+
+    if (stdin_thread_running) {
+        stdin_thread_running = false;
+        pthread_join(stdin_thread, NULL);
+    }
 
 cleanup_vcpus:
     // Cleanup all vCPUs

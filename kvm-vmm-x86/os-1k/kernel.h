@@ -74,6 +74,32 @@ struct trap_frame {
     uint32_t ss;
 } __attribute__((packed));
 
+/* Interrupt frame (passed by CPU to interrupt handlers) */
+struct interrupt_frame {
+    uint32_t eip;
+    uint32_t cs;
+    uint32_t eflags;
+} __attribute__((packed));
+
+/* I/O port functions for keyboard and PIC */
+static inline uint8_t inb(uint16_t port) {
+    uint8_t result;
+    __asm__ volatile(
+        "inb %1, %0"
+        : "=a"(result)
+        : "Nd"(port)
+    );
+    return result;
+}
+
+static inline void outb(uint16_t port, uint8_t value) {
+    __asm__ volatile(
+        "outb %0, %1"
+        :
+        : "a"(value), "Nd"(port)
+    );
+}
+
 #define PANIC(fmt, ...)                                                        \
     do {                                                                       \
         printf("PANIC: %s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__);  \
