@@ -5,7 +5,7 @@
 ### System Information
 - Host: Linux x86_64
 - CPU: Intel/AMD with VT-x/AMD-V support
-- Test Date: 2024-11-22
+- Test Date: 2025-11-22
 
 ### Configuration
 - KVM-VMM: Direct KVM API (no QEMU)
@@ -142,11 +142,11 @@ qemu-system-i386 -hda disk.img
 **Trade-offs vs QEMU:**
 | Feature | mini-kvm | QEMU |
 |---------|----------|------|
-| Performance | ⭐⭐⭐⭐⭐ Near-native | ⭐⭐⭐ Good (with KVM) |
-| Device support | ⭐⭐ Minimal | ⭐⭐⭐⭐⭐ Complete |
-| Code complexity | ⭐⭐⭐⭐⭐ Simple | ⭐⭐ Complex |
-| Setup time | ⭐⭐⭐⭐⭐ < 10ms | ⭐⭐⭐ ~100ms |
-| Educational value | ⭐⭐⭐⭐⭐ Excellent | ⭐⭐⭐ Good |
+| Performance |  Near-native |  Good (with KVM) |
+| Device support |  Minimal |  Complete |
+| Code complexity |  Simple |  Complex |
+| Setup time |  < 10ms |  ~100ms |
+| Educational value |  Excellent |  Good |
 
 **Best use cases for mini-kvm:**
 - OS development and education

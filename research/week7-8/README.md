@@ -158,18 +158,18 @@ SSE를 비활성화했는데 (`"-mmx,-sse"`), SSE 레지스터를 사용하는 �
 
 #### 과거 Rust nightly 버전 설치
 
-HLeOs의 마지막 커밋 날짜를 확인해봤더니 2024년 2월 22일이었습니다. 따라서 이 시점에서 한 달 전 정도인 2024-01-15 버전의 Rust nightly를 설치했습니다.
+HLeOs의 마지막 커밋 날짜를 확인해봤더니 2025년 2월 22일이었습니다. 따라서 이 시점에서 한 달 전 정도인 2025-01-15 버전의 Rust nightly를 설치했습니다.
 
 ```bash
-rustup install nightly-2024-01-15
-rustup override set nightly-2024-01-15
-rustup component add rust-src --toolchain nightly-2024-01-15-x86_64-unknown-linux-gnu
-rustup component add llvm-tools-preview --toolchain nightly-2024-01-15-x86_64-unknown-linux-gnu
+rustup install nightly-2025-01-15
+rustup override set nightly-2025-01-15
+rustup component add rust-src --toolchain nightly-2025-01-15-x86_64-unknown-linux-gnu
+rustup component add llvm-tools-preview --toolchain nightly-2025-01-15-x86_64-unknown-linux-gnu
 ```
 
 ### 다섯 번째 빌드 시도
 
-2024-01-15 nightly로 빌드를 시도했습니다:
+2025-01-15 nightly로 빌드를 시도했습니다:
 
 ```bash
 cargo clean

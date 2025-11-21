@@ -2,15 +2,15 @@
 
 아주대학교 자기주도프로젝트: 리눅스 KVM API를 이용한 초소형 가상 머신 모니터 (VMM) 개발
 
-## Project Status: ✅ Feature Complete (2024-11-22)
+## Project Status:  Feature Complete (2025-11-22)
 
 **주요 구현 완료**:
-- ✅ Multi-vCPU 지원 (최대 4개 동시 실행)
-- ✅ Real Mode / Protected Mode with Paging
-- ✅ Interrupt injection (Keyboard + Timer)
-- ✅ 1K OS 포팅 완료 (Protected Mode kernel + Shell)
-- ✅ Hypercall interface (EXIT, PUTCHAR, GETCHAR)
-- ✅ 성능 테스트 완료 (~24ms for simple programs)
+-  Multi-vCPU 지원 (최대 4개 동시 실행)
+-  Real Mode / Protected Mode with Paging
+-  Interrupt injection (Keyboard + Timer)
+-  1K OS 포팅 완료 (Protected Mode kernel + Shell)
+-  Hypercall interface (EXIT, PUTCHAR, GETCHAR)
+-  성능 테스트 완료 (~24ms for simple programs)
 
 ## Quick Start
 
@@ -35,9 +35,9 @@ cd ..
 
 ### Documentation
 - **[FINAL_REPORT.md](FINAL_REPORT.md)**: 프로젝트 최종 보고서
-- **[POSTER.md](POSTER.md)**: 포스터 발표 자료
 - **[performance_test.md](performance_test.md)**: 성능 측정 결과
 - **[AGENTS.md](AGENTS.md)**: 빌드 명령어 및 코드 스타일 가이드
+- **[CLAUDE.md](CLAUDE.md)**: Claude Code용 프로젝트 가이드
 
 ## Current Research Plan
 

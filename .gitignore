@@ -41,3 +41,7 @@ __pycache__/
 # Rust (for future VMM)
 target/
 Cargo.lock
+
+# Editor/IDE metadata
+.obsidian/
+.claude/
