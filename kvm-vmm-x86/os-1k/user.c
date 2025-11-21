@@ -9,10 +9,10 @@
 extern char __stack_top[];
 
 /*
- * Syscall interface via hypercall
- * Uses port 0x500 with syscall number in EAX
- * Arguments in EBX, ECX, EDX
- * Return value in EAX
+ * Syscall interface via hypercall (port 0x500)
+ * Direct hypercall to VMM - IOPL=3 allows user space to use OUT instruction
+ * Arguments: EAX=syscall number, EBX=arg0, ECX=arg1, EDX=arg2
+ * Return value in EAX (set by VMM via KVM_SET_REGS after hypercall)
  */
 int syscall(int sysno, int arg0, int arg1, int arg2) {
     int ret;
@@ -21,11 +21,10 @@ int syscall(int sysno, int arg0, int arg1, int arg2) {
         "movl %1, %%eax\n\t"      // Syscall number
         "movl %2, %%ebx\n\t"      // Arg 0
         "movl %3, %%ecx\n\t"      // Arg 1
-        "pushl %4\n\t"            // Save arg2 temporarily
+        "movl %4, %%edx\n\t"      // Arg 2
         "movw $0x500, %%dx\n\t"   // Port 0x500
-        "outb %%al, %%dx\n\t"     // Trigger hypercall
-        "popl %%edx\n\t"          // Now restore arg2 to EDX (for kernel to use)
-        "movl %%eax, %0\n\t"      // Return value
+        "outb %%al, %%dx\n\t"     // Trigger hypercall (VMM handles & sets RAX)
+        "movl %%eax, %0\n\t"      // Return value (RAX modified by VMM)
         "popl %%ebx"              // Restore EBX
         : "=r"(ret)
         : "r"(sysno), "r"(arg0), "r"(arg1), "r"(arg2)
@@ -40,7 +39,27 @@ void putchar(char ch) {
 }
 
 int getchar(void) {
-    return syscall(SYS_GETCHAR, 0, 0, 0);
+    int ch;
+    // Blocking getchar: retry until we get a valid character
+    while (1) {
+        __asm__ volatile(
+            "movb $2, %%al\n\t"         // SYS_GETCHAR
+            "movw $0x500, %%dx\n\t"     // Port 0x500
+            "outb %%al, %%dx\n\t"       // Signal GETCHAR request to VMM
+            "inb %%dx, %%al\n\t"        // Read character from VMM
+            "movsbl %%al, %0"           // Sign-extend AL to int
+            : "=r"(ch)
+            :
+            : "eax", "edx"
+        );
+        
+        if (ch != -1) {
+            return ch;
+        }
+        
+        // No input yet, brief delay and retry
+        for (volatile int i = 0; i < 1000; i++);
+    }
 }
 
 int readfile(const char *filename, char *buf, int len) {

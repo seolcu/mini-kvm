@@ -490,7 +490,7 @@ void handle_trap(struct trap_frame *f) {
  * Setup IDT entry for interrupt handler
  * IDT is already created by VMM in guest memory
  */
-static void setup_idt_entry(int vector, void *handler) {
+static void setup_idt_entry(int vector, void *handler, int dpl) {
     // IDT is at physical 0x528 = virtual 0x528 (identity-mapped)
     // Each entry is 8 bytes (gate descriptor)
     uint32_t *idt = (uint32_t *)0x528;
@@ -499,9 +499,10 @@ static void setup_idt_entry(int vector, void *handler) {
     // IDT gate descriptor format (32-bit):
     // Dword 0: [offset 15:0] [selector 15:0]
     // Dword 1: [offset 31:16] [flags 15:0]
-    // Flags: P=1, DPL=0 (Ring 0), S=0 (system), Type=0xE (32-bit interrupt gate)
+    // Flags: P=1, DPL=dpl, S=0 (system), Type=0xE (32-bit interrupt gate)
+    uint32_t flags = 0x8E00 | ((dpl & 0x3) << 13);  // P=1, DPL=dpl, Type=0xE
     idt[vector * 2 + 0] = ((handler_addr & 0xFFFF) << 16) | 0x0008;  // Selector = 0x08 (kernel code)
-    idt[vector * 2 + 1] = (handler_addr & 0xFFFF0000) | 0x8E00;  // P=1, DPL=0, Type=0xE
+    idt[vector * 2 + 1] = (handler_addr & 0xFFFF0000) | flags;
 }
 
 void kernel_main(void) {
@@ -513,10 +514,10 @@ void kernel_main(void) {
     printf("Booting in Protected Mode with Paging...\n\n");
 
     /* Setup interrupt handlers */
-    setup_idt_entry(0x20, timer_interrupt_handler);     // IRQ 0 / Vector 0x20
+    setup_idt_entry(0x20, timer_interrupt_handler, 0);  // IRQ 0 / Vector 0x20, DPL=0 (kernel only)
     printf("Interrupt handlers registered\n");
     printf("  Timer (IRQ 0, vector 0x20)\n");
-    printf("  Keyboard input via HC_GETCHAR hypercall\n");
+    printf("  Syscalls via hypercall (port 0x500, IOPL=3 allows user I/O)\n");
 
     /* Initialize filesystem */
     fs_init();
@@ -540,6 +541,18 @@ void kernel_main(void) {
      * We load the shell's page table, set ESP to shell's stack, and jump to user_entry.
      */
     current_proc = shell_proc;
+    
+    /* Set IOPL=3 in EFLAGS to allow user space to use OUT instruction for hypercalls
+     * IOPL (I/O Privilege Level) is bits 12-13 of EFLAGS
+     * Setting IOPL=3 allows all code to execute I/O instructions
+     */
+    __asm__ volatile(
+        "pushfl\n\t"                // Push EFLAGS
+        "orl $0x3000, (%%esp)\n\t"  // Set IOPL=3 (bits 12-13)
+        "popfl\n\t"                 // Pop EFLAGS
+        ::: "memory"
+    );
+    
     __asm__ volatile(
         "movl %0, %%cr3\n\t"        // Load shell's page table
         "movl %1, %%esp\n\t"        // Set stack to shell's stack

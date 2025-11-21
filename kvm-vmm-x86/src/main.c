@@ -81,6 +81,7 @@ typedef struct {
     uint32_t entry_point;         // Entry point address (EIP)
     uint32_t load_offset;         // Offset to load binary in guest memory
     int pending_getchar;          // GETCHAR request pending (0=no, 1=yes)
+    int getchar_result;           // Cached GETCHAR result for IN instruction
 } vcpu_context_t;
 
 // Global KVM state (shared across vCPUs)
@@ -1068,15 +1069,13 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                         case HC_GETCHAR: {
                             // GETCHAR: Read character from interrupt-driven keyboard buffer
                             // The stdin monitoring thread fills this buffer and injects keyboard interrupts
+                            // OUT sets pending_getchar flag, subsequent IN will read the result
                             int ch = keyboard_buffer_pop();
-
-                            // Set return value in RAX (guest will see this in AL for getchar syscall)
-                            regs.rax = (ch == -1) ? 0xFFFFFFFF : (unsigned char)ch;  // -1 if no input
-
-                            if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
-                                perror("KVM_SET_REGS");
-                                return -1;
-                            }
+                            
+                            // Store character for subsequent IN instruction
+                            ctx->getchar_result = ch;
+                            ctx->pending_getchar = 1;
+                            
                             break;
                         }
 
@@ -1096,28 +1095,13 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
             } else {
                 // IN instruction
                 if (ctx->kvm_run->io.port == HYPERCALL_PORT && ctx->pending_getchar) {
-                    // GETCHAR: Read character from stdin (non-blocking)
-                    pthread_mutex_lock(&stdout_mutex);
+                    // GETCHAR: Return cached result from previous OUT
+                    data[0] = (ctx->getchar_result == -1) ? 0xFF : (unsigned char)ctx->getchar_result;
                     
-                    // Check if there's input available using select()
-                    fd_set readfds;
-                    struct timeval tv = {0, 0};  // Non-blocking
-                    FD_ZERO(&readfds);
-                    FD_SET(STDIN_FILENO, &readfds);
-                    
-                    int ch = -1;
-                    if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0) {
-                        ch = getchar();
-                    }
-                    
-                    pthread_mutex_unlock(&stdout_mutex);
-                    
-                    // Return character in data buffer (KVM will put it in AL)
-                    data[0] = (ch == EOF) ? -1 : (unsigned char)ch;
                     static int in_count = 0;
                     if (in_count++ < 50) {
-                        vcpu_printf(ctx, "IN[%d] from 0x500: ch=%d, returning data[0]=%d\n", 
-                                   in_count, ch, (int)(signed char)data[0]);
+                        vcpu_printf(ctx, "IN[%d] from 0x500: returning ch=%d (0x%02x)\n", 
+                                   in_count, ctx->getchar_result, data[0]);
                     }
                     ctx->pending_getchar = 0;
                 } else if (ctx->kvm_run->io.port == HYPERCALL_PORT) {

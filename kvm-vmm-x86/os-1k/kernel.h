@@ -57,21 +57,12 @@ struct file {
     size_t size;
 };
 
-/* Trap frame for syscalls (pushed by trap entry) */
+/* Trap frame for syscalls (pushed by INT 0x80 handler) */
 struct trap_frame {
-    uint32_t edi;
-    uint32_t esi;
-    uint32_t ebp;
-    uint32_t esp_dummy;  // Ignored
-    uint32_t ebx;
-    uint32_t edx;
-    uint32_t ecx;
-    uint32_t eax;
-    uint32_t eip;
-    uint32_t cs;
-    uint32_t eflags;
-    uint32_t esp;
-    uint32_t ss;
+    uint32_t eax;   // Syscall number / return value
+    uint32_t ebx;   // Arg 0
+    uint32_t ecx;   // Arg 1
+    uint32_t edx;   // Arg 2
 } __attribute__((packed));
 
 /* Interrupt frame (passed by CPU to interrupt handlers) */
