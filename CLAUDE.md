@@ -242,7 +242,7 @@ Weekly research notes in `research/week*/README.md` document:
 - Debugging insights
 - Performance analysis
 
-Current status: Week 13 (Feature complete, documentation finalized)
+Current status: Week 12 (Feature complete, documentation finalized)
 
 ## Common Tasks
 

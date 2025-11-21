@@ -1,4 +1,4 @@
-# Week 12-13 연구 노트 (11/17 - 11/24)
+# Week 12 연구 노트 (11/17 - 11/24)
 
 ## 이번 주 목표
 
@@ -253,7 +253,7 @@ c0d721f Phase 1-3: Implement keyboard/timer interrupts and 1K OS menu system
 
 ## 결론
 
-**Week 12-13 성과**:
+**Week 12 성과**:
 -  1K OS 입력 시스템 단순화 완료
 -  전체 빌드 시스템 안정화
 -  성능 테스트 및 문서화 완료
