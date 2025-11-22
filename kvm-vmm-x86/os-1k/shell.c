@@ -15,7 +15,9 @@ static void show_menu(void) {
     printf("  4. Fibonacci Sequence\n");
     printf("  5. Prime Numbers (up to 100)\n");
     printf("  6. Calculator\n");
-    printf("  7. About 1K OS\n");
+    printf("  7. Factorial (0! ~ 12!)\n");
+    printf("  8. GCD (Greatest Common Divisor)\n");
+    printf("  9. About 1K OS\n");
     printf("  0. Exit\n");
     printf("\nSelect: ");
 }
@@ -198,6 +200,48 @@ static void calculator_demo(void) {
     }
 }
 
+static void factorial_demo(void) {
+    printf("\n=== Factorial Calculator ===\n");
+    printf("Calculating factorials for n = 0 to 12\n\n");
+    
+    int result = 1;
+    printf("0! = %d\n", result);
+    
+    for (int n = 1; n <= 12; n++) {
+        result *= n;
+        printf("%d! = %d\n", n, result);
+    }
+    printf("\nNote: 13! = 6227020800 (overflow on 32-bit)\n");
+}
+
+static void gcd_demo(void) {
+    printf("\n=== GCD (Greatest Common Divisor) ===\n");
+    printf("Examples of Euclidean algorithm:\n\n");
+    
+    int pairs[][2] = {
+        {48, 18},
+        {100, 75},
+        {123, 456},
+        {17, 19},
+        {1071, 462}
+    };
+    
+    for (int i = 0; i < 5; i++) {
+        int a = pairs[i][0];
+        int b = pairs[i][1];
+        int orig_a = a, orig_b = b;
+        
+        // Euclidean algorithm
+        while (b != 0) {
+            int temp = b;
+            b = a % b;
+            a = temp;
+        }
+        
+        printf("GCD(%d, %d) = %d\n", orig_a, orig_b, a);
+    }
+}
+
 static void about_demo(void) {
     printf("\n=== About 1K OS ===\n");
     printf("1K OS: Operating System in 1000 Lines\n");
@@ -206,7 +250,7 @@ static void about_demo(void) {
     printf("  - Protected Mode with Paging\n");
     printf("  - Keyboard and Timer Interrupts\n");
     printf("  - Simple Shell\n");
-    printf("  - User Programs: 7 demos\n");
+    printf("  - User Programs: 9 demos\n");
     printf("\nMini-KVM VMM Project\n");
     printf("Educational hypervisor using KVM API\n");
 }
@@ -216,7 +260,7 @@ void main(void) {
     printf("   Welcome to 1K OS Shell!\n");
     printf("   Mini-KVM Educational Hypervisor\n");
     printf("======================================\n");
-    printf("\nType '1-7' to run demos, '0' to exit\n");
+    printf("\nType '1-9' to run demos, '0' to exit\n");
 
     while (1) {
         show_menu();
@@ -241,10 +285,14 @@ void main(void) {
         } else if (choice == '6') {
             calculator_demo();
         } else if (choice == '7') {
+            factorial_demo();
+        } else if (choice == '8') {
+            gcd_demo();
+        } else if (choice == '9') {
             about_demo();
         } else {
             printf("Unknown option: %c\n", choice);
-            printf("Please select 0-7\n");
+            printf("Please select 0-9\n");
         }
     }
 }
