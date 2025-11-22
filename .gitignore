@@ -1,5 +1,6 @@
 # Linux kernel source (too large)
 linux-*/
+kvm-vmm-x86/linux/
 *.tar.xz
 *.tar.gz
 *.tar.bz2
