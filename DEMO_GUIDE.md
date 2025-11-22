@@ -104,7 +104,7 @@ Hello, KVM!
 
 ---
 
-### Demo 3: 1K OS (Protected Mode with Paging) - ★ 7가지 프로그램!
+### Demo 3: 1K OS (Protected Mode with Paging) - ★ 9가지 프로그램!
 
 #### 3-1. 구구단 출력
 ```bash
@@ -115,7 +115,7 @@ printf "1\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 - Protected Mode + 페이징 활성화
 - 4MB 메모리, GDT/IDT 설정
 - 타이머 & 키보드 인터럽트 처리
-- User space 프로그램 실행 (7개 프로그램!)
+- User space 프로그램 실행 (9개 프로그램!)
 
 **예상 결과**:
 ```
@@ -123,10 +123,12 @@ printf "1\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
   1. Multiplication Table (2x1 ~ 9x9)
   2. Counter (0-9)
   3. Echo (interactive)
-  4. Fibonacci Sequence
-  5. Prime Numbers (up to 100)
-  6. Calculator
-  7. About 1K OS
+  4. About 1K OS
+  5. Fibonacci Sequence
+  6. Prime Numbers (up to 100)
+  7. ASCII Art
+  8. Factorial (0! ~ 12!)
+  9. GCD (Euclidean Algorithm)
   0. Exit
 
 Select: 1
@@ -146,60 +148,6 @@ printf "2\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 ```
 === Counter 0-9 ===
 0 1 2 3 4 5 6 7 8 9
-```
-
----
-
-#### 3-4. Fibonacci 수열 (★ 신규!)
-```bash
-printf "4\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
-```
-
-**예상 결과**:
-```
-=== Fibonacci Sequence (first 15 numbers) ===
-F(0) = 0
-F(1) = 1
-F(2) = 1
-F(3) = 2
-...
-F(14) = 377
-```
-
----
-
-#### 3-5. 소수 찾기 (★ 신규!)
-```bash
-printf "5\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
-```
-
-**예상 결과**:
-```
-=== Prime Numbers up to 100 ===
-2 3 5 7 11 13 17 19 23 29 
-31 37 41 43 47 53 59 61 67 71 
-73 79 83 89 97 
-Total: 25 primes
-```
-
----
-
-#### 3-6. 계산기 (★ 신규!)
-```bash
-printf "6\n12 + 5\n100 - 37\n8 * 9\nq\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
-```
-
-**예상 결과**:
-```
-=== Simple Calculator ===
-Calculate: 12 + 5
-Result: 17
-Calculate: 100 - 37
-Result: 63
-Calculate: 8 * 9
-Result: 72
-Calculate: q
-Exiting calculator
 ```
 
 ---
@@ -226,9 +174,9 @@ Exiting echo program
 
 ---
 
-#### 3-7. About 1K OS
+#### 3-4. About 1K OS
 ```bash
-printf "7\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+printf "4\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 ```
 
 **예상 결과**:
@@ -240,13 +188,113 @@ Features:
   - Protected Mode with Paging
   - Keyboard and Timer Interrupts
   - Simple Shell
-  - User Programs: 7 demos
+  - User Programs: 9 demos
 
 Mini-KVM VMM Project
 Educational hypervisor using KVM API
 
 Exiting shell...
 Thank you for using 1K OS!
+```
+
+---
+
+#### 3-5. Fibonacci 수열
+```bash
+printf "5\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+```
+
+**예상 결과**:
+```
+=== Fibonacci Sequence ===
+Calculating Fibonacci numbers up to 89:
+0 1 1 2 3 5 8 13 21 34 55 89
+```
+
+---
+
+#### 3-6. 소수 찾기
+```bash
+printf "6\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+```
+
+**예상 결과**:
+```
+=== Prime Numbers up to 100 ===
+2 3 5 7 11 13 17 19 23 29 
+31 37 41 43 47 53 59 61 67 71 
+73 79 83 89 97 
+Total: 25 primes
+```
+
+---
+
+#### 3-7. ASCII Art
+```bash
+printf "7\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+```
+
+**예상 결과**:
+```
+=== 1K OS ASCII Art ===
+  ___  _  __   ___  ____  
+ / _ \/ |/ /  / _ \/ __/  
+/ // /   /  / // /\ \    
+\___/_/|_/   \___/___/    
+                          
+Mini-KVM Educational VMM Project
+```
+
+---
+
+#### 3-8. Factorial (0! ~ 12!) - ★ 신규!
+```bash
+printf "8\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+```
+
+**설명**: 
+- 팩토리얼 계산 (0! 부터 12!)
+- 13! 이상은 32비트 오버플로 경고
+
+**예상 결과**:
+```
+=== Factorial Calculator ===
+0! = 1
+1! = 1
+2! = 2
+3! = 6
+4! = 24
+5! = 120
+6! = 720
+7! = 5040
+8! = 40320
+9! = 362880
+10! = 3628800
+11! = 39916800
+12! = 479001600
+
+Note: 13! and above overflow 32-bit integers
+```
+
+---
+
+#### 3-9. GCD (최대공약수) - ★ 신규!
+```bash
+printf "9\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+```
+
+**설명**: 
+- 유클리드 호제법 (Euclidean Algorithm) 시연
+- 5가지 예제 쌍 계산
+
+**예상 결과**:
+```
+=== GCD Calculator (Euclidean Algorithm) ===
+GCD(48, 18) = 6
+GCD(100, 35) = 5
+GCD(81, 27) = 27
+GCD(123, 456) = 3
+GCD(17, 19) = 1 (coprime)
 ```
 
 ---
@@ -338,11 +386,12 @@ make
 ## 📊 핵심 수치
 
 발표 시 언급할 수 있는 통계:
-- **코드 크기**: minimal 1바이트 ~ 1K OS 9,552바이트
+- **코드 크기**: minimal 1바이트 ~ 1K OS 12KB
 - **메모리**: Real Mode 256KB, Protected Mode 4MB
 - **최대 vCPU**: 4개 동시 실행
 - **하이퍼콜 종류**: 3가지 (PUTCHAR, GETCHAR, EXIT)
-- **VM exits**: 간단한 게스트 ~10회, 1K OS ~1000회
+- **VM exits**: 간단한 게스트 ~10회, 1K OS ~5000회
+- **1K OS 프로그램**: 9개 (구구단, 카운터, 에코, About, 피보나치, 소수, ASCII Art, 팩토리얼, GCD)
 
 ---
 
