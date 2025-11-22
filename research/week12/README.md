@@ -238,6 +238,46 @@ c0d721f Phase 1-3: Implement keyboard/timer interrupts and 1K OS menu system
    - Interrupt gate 설정
    - Naked function으로 handler 구현
 
+## 시도했다가 되돌린 기능들
+
+### Split-Screen 터미널 출력 (11/22 시도 → 11/22 되돌림)
+
+**목표**: Multi-vCPU 출력을 ANSI escape codes로 터미널 화면 분할하여 표시
+
+**구현 시도**:
+- `kvm-vmm-x86/src/main.c`에 ~200 LOC 추가
+- `--split` 플래그로 split-screen 모드 활성화
+- 각 vCPU에 독립적인 터미널 영역 할당 (ASCII 박스 테두리)
+- Per-vCPU 출력 버퍼링 및 ANSI cursor positioning
+
+**문제점**:
+1. **vCPU 0만 출력 표시**: pthread 동기화 문제로 다른 vCPU 출력 손실
+2. **디버깅 복잡도**: Terminal escape codes로 디버그 출력 추적 어려움
+3. **터미널 호환성**: 모든 터미널에서 ANSI codes 동작 보장 불가
+4. **코드 복잡도 급증**: Main function이 1,391 LOC → 1,591 LOC
+
+**결정: 되돌림 (Revert)**
+- 이유: ANSI escape codes 방식이 적합하지 않음 판단
+- Git 상태: `backup/split-screen-attempt` 브랜치로 백업 후 `main`을 f830456으로 리셋
+- 결과: 코드는 clean state로 복구, 기존 color-coded interleaved 출력 유지
+
+**대안 방안** (논의만, 미구현):
+1. **Sequential output**: vCPU별 출력 버퍼링 후 순차 표시 (간단, 15분)
+2. **External tmux**: 스크립트로 각 vCPU를 tmux pane에 표시 (VMM 수정 불필요)
+3. **Enhanced color mode**: 현재 방식 개선 (prefix 추가 등)
+4. **File-based output**: 각 vCPU를 파일로 출력, 별도 tail
+
+**교훈**:
+- Terminal UI는 VMM의 핵심 기능이 아님
+- 간결함 > 화려한 시각화 (교육용 프로젝트)
+- 기존 color-coded 출력도 충분히 multi-vCPU 병렬 실행을 보여줌
+
+**커밋 히스토리**:
+```
+f830456 - Update AGENTS.md (현재 HEAD - clean state)
+[split-screen 관련 6개 커밋 - backup/split-screen-attempt 브랜치에만 존재]
+```
+
 ## 다음 주 계획 (Week 14: 12/1)
 
 ### 최종 정리
