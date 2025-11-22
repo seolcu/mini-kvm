@@ -104,30 +104,29 @@ Hello, KVM!
 
 ---
 
-### Demo 3: 1K OS (Protected Mode with Paging)
+### Demo 3: 1K OS (Protected Mode with Paging) - ★ 7가지 프로그램!
 
 #### 3-1. 구구단 출력
 ```bash
-# 입력 파일 준비
-echo "1" > /tmp/demo_input.txt
-
-# 실행
-./kvm-vmm --paging os-1k/kernel.bin < /tmp/demo_input.txt
+printf "1\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 ```
 
 **설명**: 
 - Protected Mode + 페이징 활성화
 - 4MB 메모리, GDT/IDT 설정
 - 타이머 & 키보드 인터럽트 처리
-- User space 프로그램 실행
+- User space 프로그램 실행 (7개 프로그램!)
 
 **예상 결과**:
 ```
 === 1K OS Menu ===
-  1. Multiplication (2x1 ~ 9x9)
+  1. Multiplication Table (2x1 ~ 9x9)
   2. Counter (0-9)
-  3. Echo (echo your input)
-  4. About 1K OS
+  3. Echo (interactive)
+  4. Fibonacci Sequence
+  5. Prime Numbers (up to 100)
+  6. Calculator
+  7. About 1K OS
   0. Exit
 
 Select: 1
@@ -140,8 +139,7 @@ Select: 1
 
 #### 3-2. 카운터
 ```bash
-echo "2" > /tmp/demo_input.txt
-./kvm-vmm --paging os-1k/kernel.bin < /tmp/demo_input.txt
+printf "2\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 ```
 
 **예상 결과**:
@@ -152,34 +150,85 @@ echo "2" > /tmp/demo_input.txt
 
 ---
 
-#### 3-3. 대화형 에코 (★ 버그 수정 시연!)
+#### 3-4. Fibonacci 수열 (★ 신규!)
 ```bash
-printf "3\nHello World!\nThis is amazing!\nquit\n" > /tmp/demo_input.txt
-./kvm-vmm --paging os-1k/kernel.bin < /tmp/demo_input.txt
+printf "4\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+```
+
+**예상 결과**:
+```
+=== Fibonacci Sequence (first 15 numbers) ===
+F(0) = 0
+F(1) = 1
+F(2) = 1
+F(3) = 2
+...
+F(14) = 377
+```
+
+---
+
+#### 3-5. 소수 찾기 (★ 신규!)
+```bash
+printf "5\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+```
+
+**예상 결과**:
+```
+=== Prime Numbers up to 100 ===
+2 3 5 7 11 13 17 19 23 29 
+31 37 41 43 47 53 59 61 67 71 
+73 79 83 89 97 
+Total: 25 primes
+```
+
+---
+
+#### 3-6. 계산기 (★ 신규!)
+```bash
+printf "6\n12 + 5\n100 - 37\n8 * 9\nq\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+```
+
+**예상 결과**:
+```
+=== Simple Calculator ===
+Calculate: 12 + 5
+Result: 17
+Calculate: 100 - 37
+Result: 63
+Calculate: 8 * 9
+Result: 72
+Calculate: q
+Exiting calculator
+```
+
+---
+
+#### 3-3. 대화형 에코
+```bash
+printf "3\nHello World!\nThis is amazing!\nquit\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 ```
 
 **설명**: 
-- 오늘 수정한 버그의 결과물!
 - User space에서 OUT+IN hypercall로 키보드 입력 받기
 - IOPL=3 설정으로 user space I/O 허용
 
 **예상 결과**:
 ```
 === Echo Program (type 'quit' to exit) ===
-$ 
-Echo: 
-$ 
+$ Hello World!
 Echo: Hello World!
-$ 
+$ This is amazing!
 Echo: This is amazing!
+$ quit
+Exiting echo program
 ```
 
 ---
 
-#### 3-4. About & Exit
+#### 3-7. About 1K OS
 ```bash
-printf "4\n0\n" > /tmp/demo_input.txt
-./kvm-vmm --paging os-1k/kernel.bin < /tmp/demo_input.txt
+printf "7\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 ```
 
 **예상 결과**:
@@ -191,9 +240,13 @@ Features:
   - Protected Mode with Paging
   - Keyboard and Timer Interrupts
   - Simple Shell
-  - File System (tar format)
+  - User Programs: 7 demos
+
+Mini-KVM VMM Project
+Educational hypervisor using KVM API
 
 Exiting shell...
+Thank you for using 1K OS!
 ```
 
 ---

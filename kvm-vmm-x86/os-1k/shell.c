@@ -9,10 +9,13 @@
 /* Menu system */
 static void show_menu(void) {
     printf("\n=== 1K OS Menu ===\n\n");
-    printf("  1. Multiplication (2x1 ~ 9x9)\n");
+    printf("  1. Multiplication Table (2x1 ~ 9x9)\n");
     printf("  2. Counter (0-9)\n");
-    printf("  3. Echo (echo your input)\n");
-    printf("  4. About 1K OS\n");
+    printf("  3. Echo (interactive)\n");
+    printf("  4. Fibonacci Sequence\n");
+    printf("  5. Prime Numbers (up to 100)\n");
+    printf("  6. Calculator\n");
+    printf("  7. About 1K OS\n");
     printf("  0. Exit\n");
     printf("\nSelect: ");
 }
@@ -60,6 +63,141 @@ static void echo_demo(void) {
     }
 }
 
+static void fibonacci_demo(void) {
+    printf("\n=== Fibonacci Sequence (first 15 numbers) ===\n");
+    int a = 0, b = 1;
+    printf("F(0) = %d\n", a);
+    printf("F(1) = %d\n", b);
+    
+    for (int i = 2; i < 15; i++) {
+        int next = a + b;
+        printf("F(%d) = %d\n", i, next);
+        a = b;
+        b = next;
+    }
+}
+
+static void prime_demo(void) {
+    printf("\n=== Prime Numbers up to 100 ===\n");
+    int count = 0;
+    
+    for (int n = 2; n <= 100; n++) {
+        int is_prime = 1;
+        for (int i = 2; i * i <= n; i++) {
+            if (n % i == 0) {
+                is_prime = 0;
+                break;
+            }
+        }
+        if (is_prime) {
+            printf("%d ", n);
+            count++;
+            if (count % 10 == 0) {
+                printf("\n");
+            }
+        }
+    }
+    if (count % 10 != 0) {
+        printf("\n");
+    }
+    printf("Total: %d primes\n", count);
+}
+
+static void calculator_demo(void) {
+    printf("\n=== Simple Calculator ===\n");
+    printf("Enter two numbers and operator (+, -, *, /)\n");
+    printf("Example: 12 + 5\n");
+    printf("Type 'q' to quit\n\n");
+    
+    while (1) {
+        printf("Calculate: ");
+        
+        // Read first number
+        int num1 = 0;
+        int negative1 = 0;
+        char ch = getchar();
+        if (ch == 'q') {
+            printf("q\nExiting calculator\n");
+            break;
+        }
+        if (ch == '-') {
+            negative1 = 1;
+            putchar(ch);
+            ch = getchar();
+        }
+        while (ch >= '0' && ch <= '9') {
+            putchar(ch);
+            num1 = num1 * 10 + (ch - '0');
+            ch = getchar();
+        }
+        if (negative1) num1 = -num1;
+        
+        // Skip spaces
+        while (ch == ' ') {
+            putchar(ch);
+            ch = getchar();
+        }
+        
+        // Read operator
+        char op = ch;
+        putchar(op);
+        
+        // Skip spaces
+        ch = getchar();
+        while (ch == ' ') {
+            putchar(ch);
+            ch = getchar();
+        }
+        
+        // Read second number
+        int num2 = 0;
+        int negative2 = 0;
+        if (ch == '-') {
+            negative2 = 1;
+            putchar(ch);
+            ch = getchar();
+        }
+        while (ch >= '0' && ch <= '9') {
+            putchar(ch);
+            num2 = num2 * 10 + (ch - '0');
+            ch = getchar();
+        }
+        if (negative2) num2 = -num2;
+        
+        // Skip to newline
+        while (ch != '\n') {
+            ch = getchar();
+        }
+        printf("\n");
+        
+        // Calculate
+        int result = 0;
+        int valid = 1;
+        
+        if (op == '+') {
+            result = num1 + num2;
+        } else if (op == '-') {
+            result = num1 - num2;
+        } else if (op == '*') {
+            result = num1 * num2;
+        } else if (op == '/') {
+            if (num2 == 0) {
+                printf("Error: Division by zero\n");
+                valid = 0;
+            } else {
+                result = num1 / num2;
+            }
+        } else {
+            printf("Error: Unknown operator '%c'\n", op);
+            valid = 0;
+        }
+        
+        if (valid) {
+            printf("Result: %d\n", result);
+        }
+    }
+}
+
 static void about_demo(void) {
     printf("\n=== About 1K OS ===\n");
     printf("1K OS: Operating System in 1000 Lines\n");
@@ -68,12 +206,17 @@ static void about_demo(void) {
     printf("  - Protected Mode with Paging\n");
     printf("  - Keyboard and Timer Interrupts\n");
     printf("  - Simple Shell\n");
-    printf("  - File System (tar format)\n");
+    printf("  - User Programs: 7 demos\n");
+    printf("\nMini-KVM VMM Project\n");
+    printf("Educational hypervisor using KVM API\n");
 }
 
 void main(void) {
-    printf("\nWelcome to 1K OS Shell!\n");
-    printf("Type '1-4' to run demos, '0' to exit\n");
+    printf("\n======================================\n");
+    printf("   Welcome to 1K OS Shell!\n");
+    printf("   Mini-KVM Educational Hypervisor\n");
+    printf("======================================\n");
+    printf("\nType '1-7' to run demos, '0' to exit\n");
 
     while (1) {
         show_menu();
@@ -82,7 +225,8 @@ void main(void) {
         printf("%c\n", choice);
 
         if (choice == '0') {
-            printf("Exiting shell...\n");
+            printf("\nExiting shell...\n");
+            printf("Thank you for using 1K OS!\n");
             exit();
         } else if (choice == '1') {
             multiplication_demo();
@@ -91,9 +235,16 @@ void main(void) {
         } else if (choice == '3') {
             echo_demo();
         } else if (choice == '4') {
+            fibonacci_demo();
+        } else if (choice == '5') {
+            prime_demo();
+        } else if (choice == '6') {
+            calculator_demo();
+        } else if (choice == '7') {
             about_demo();
         } else {
             printf("Unknown option: %c\n", choice);
+            printf("Please select 0-7\n");
         }
     }
 }
