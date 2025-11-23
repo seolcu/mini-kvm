@@ -76,6 +76,16 @@ __attribute__((noreturn)) void exit(void) {
 }
 
 /*
+ * Flush output buffer to ensure prompts are displayed immediately
+ * Uses a dummy character sequence that the VMM will recognize and flush
+ */
+void flush_output(void) {
+    // Output a null character which VMM can ignore but triggers flush
+    // This ensures the preceding output (like prompts) is displayed immediately
+    putchar('\0');
+}
+
+/*
  * Read a line of input with echo and backspace support
  * Supports ASCII backspace (0x08) and DEL (0x7F)
  * Returns length of input (excluding null terminator)
