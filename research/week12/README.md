@@ -278,6 +278,245 @@ f830456 - Update AGENTS.md (현재 HEAD - clean state)
 [split-screen 관련 6개 커밋 - backup/split-screen-attempt 브랜치에만 존재]
 ```
 
+## 추가 개선 사항 (11/23)
+
+### 5. Real Mode Guest Hang 버그 수정
+
+**문제 발견**:
+- Real Mode 게스트가 HLT 명령 실행 후 종료되지 않고 무한 대기
+- Timer interrupt (IRQ0)가 100ms마다 게스트를 깨움
+- 모든 모드에서 IRQCHIP이 활성화되어 있었음
+
+**근본 원인**:
+- Real Mode는 인터럽트를 처리할 수 없는데도 IRQ0 주입됨
+- HLT 상태에서 깨어났지만 처리할 수 없어 다시 HLT 진입 반복
+- 타이머 스레드가 계속 실행되어 프로그램이 종료되지 않음
+
+**해결 방법**:
+```c
+// init_kvm()에 need_irqchip 파라미터 추가
+bool init_kvm(bool need_irqchip) {
+    // ... VM 초기화 ...
+    
+    // Protected Mode에서만 IRQCHIP 생성
+    if (need_irqchip) {
+        if (ioctl(vm_fd, KVM_CREATE_IRQCHIP) < 0) {
+            perror("KVM_CREATE_IRQCHIP");
+            return false;
+        }
+    }
+    return true;
+}
+
+// main()에서 모드에 따라 분기
+if (paging_mode) {
+    init_kvm(true);   // Protected Mode: IRQCHIP 활성화
+    start_timer_thread();
+    start_keyboard_thread();
+} else {
+    init_kvm(false);  // Real Mode: IRQCHIP 비활성화
+}
+```
+
+**효과**:
+- Real Mode 게스트 즉시 종료 (< 100ms)
+- Protected Mode는 기존처럼 인터럽트 기반 동작
+- 모드별 명확한 책임 분리
+
+관련 커밋: `13c71fe`
+
+---
+
+### 6. 출력 시스템 개선
+
+#### vCPU별 색상 구분 개선
+**변경 사항**:
+- vCPU 0 색상: 빨강(Red) → 청록(Cyan)으로 변경
+- 이유: 빨강은 오류 메시지로 오인될 수 있음
+- 최종 색상: 청록/초록/노랑/파랑 (중립적이고 구분 명확)
+
+**단일/다중 vCPU 출력 조건부 처리**:
+```c
+if (num_vcpus > 1) {
+    // 다중 vCPU: 색상으로 구분
+    const char *colors[] = {"\033[36m", "\033[32m", "\033[33m", "\033[34m"};
+    printf("%s[vCPU %d:%s]%s ", colors[id], id, name, "\033[0m");
+} else {
+    // 단일 vCPU: 깔끔한 출력 (색상 없음)
+    printf("[%s] ", name);
+}
+```
+
+**버퍼링 제거**:
+- Character-by-character 즉시 출력
+- 다중 vCPU 병렬 실행 효과가 더 명확히 보임
+
+관련 커밋: `4472af7`, `b67ed68`
+
+---
+
+### 7. Verbose 모드 추가
+
+**기능**:
+```bash
+./kvm-vmm --verbose guest/hello.bin       # Real Mode + verbose
+./kvm-vmm --paging --verbose os-1k/kernel.bin  # Protected Mode + verbose
+```
+
+**출력 내용**:
+- VM exit 원인 및 횟수
+- I/O 포트 접근 (IN/OUT)
+- 하이퍼콜 상세 정보 (번호, 인자, 반환값)
+
+**예시**:
+```
+[hello] VM exit #1: KVM_EXIT_IO (port=0x500, size=1, dir=OUT)
+[hello] Hypercall: HC_PUTCHAR (0x01), arg=0x48 ('H')
+[hello] VM exit #2: KVM_EXIT_IO (port=0x500, size=1, dir=OUT)
+[hello] Hypercall: HC_PUTCHAR (0x01), arg=0x65 ('e')
+```
+
+**특수 처리**:
+- `HC_GETCHAR` (IN) 하이퍼콜은 verbose 모드에서도 억제
+- 이유: 1K OS에서 너무 빈번하게 호출되어 출력 범람 방지
+
+관련 커밋: `befd8ac`
+
+---
+
+### 8. 1K OS 입력 시스템 대폭 개선
+
+#### readline() 함수 추가
+**기능**:
+- 즉각적인 문자 에코 (사용자 피드백)
+- Backspace/DEL 지원 (0x08, 0x7F)
+- Buffer overflow 방지
+- 자동 입력 truncation 및 경고
+
+**구현** (`user.c`):
+```c
+int readline(char *buf, int bufsz) {
+    int pos = 0;
+    while (pos < bufsz - 1) {
+        int ch = getchar();
+        if (ch == '\n' || ch == '\r') {
+            putchar('\n');
+            buf[pos] = '\0';
+            return pos;
+        } 
+        else if (ch == 0x08 || ch == 0x7F) {  // Backspace
+            if (pos > 0) {
+                pos--;
+                putchar('\b'); putchar(' '); putchar('\b');  // Erase
+            }
+        }
+        else if (ch >= 0x20 && ch < 0x7F) {  // Printable
+            putchar((char)ch);
+            buf[pos++] = (char)ch;
+        }
+    }
+    // ... buffer full handling ...
+}
+```
+
+#### Echo 프로그램 리팩터링
+**변경 전** (30+ 줄):
+- 수동 character-by-character 루프
+- 경계 검사 누락
+- Backspace 미지원
+
+**변경 후** (15 줄):
+```c
+static void echo_demo(void) {
+    printf("\n=== Echo Program (type 'quit' to exit) ===\n");
+    while (1) {
+        printf("$ ");
+        char line[64];
+        int len = readline(line, sizeof(line));
+        
+        if (strcmp(line, "quit") == 0) {
+            printf("Exiting echo program\n");
+            break;
+        } else {
+            printf("Echo: %s\n", line);
+        }
+    }
+}
+```
+
+#### Calculator 프로그램 리팩터링
+**변경 전**:
+- 복잡한 character-by-character 파싱 (80+ 줄)
+- 입력 버퍼 문제로 "10 + 5" 입력 시 "10"만 읽고 에러
+
+**변경 후**:
+- `readline()`로 전체 줄 읽기
+- 한 번에 파싱 (더 간단하고 안전)
+- 표현식 정상 처리: "10 + 5" → Result: 15
+
+#### 메뉴 입력 개선
+**문제**: 메뉴 선택 후 남은 줄바꿈이 다음 입력으로 전달됨
+
+**해결**:
+```c
+char choice = getchar();
+putchar(choice);  // 즉시 에코
+
+// 남은 문자 모두 소비
+char ch;
+while ((ch = getchar()) != '\n' && ch != -1) {
+    putchar(ch);
+}
+printf("\n");
+```
+
+**효과**:
+- 일관된 입력 동작
+- 향상된 사용자 경험
+- 안전한 버퍼 처리
+- 유지보수 용이
+
+관련 커밋: `630b688`
+
+---
+
+### 9. 문서 업데이트
+
+**업데이트된 문서**:
+1. `README.md`: 새 실행 방식 및 개선사항 반영
+2. `docs/데모가이드.md`: 색상 변경, 실행 명령어 업데이트
+3. `docs/최종보고서.md`: 최근 개선사항 섹션 추가
+4. 모든 마크다운 파일에서 이모지 제거 (전문성 향상)
+
+관련 커밋: `c5b67e6`, `b67ed68`, `b2e396b`, `bb24e1f`
+
+---
+
+### 기술적 결정: 실행 방식 개선
+
+**변경 전**:
+```bash
+make run-hello
+make run-multi-2
+make run-1k-os-multiplication
+```
+
+**변경 후**:
+```bash
+./kvm-vmm guest/hello.bin
+./kvm-vmm guest/multiplication.bin guest/counter.bin
+./kvm-vmm --paging os-1k/kernel.bin
+./kvm-vmm --verbose --paging os-1k/kernel.bin
+```
+
+**장점**:
+- 더 직관적이고 유연함
+- 플래그 조합 가능 (`--verbose`, `--paging`)
+- 임의의 게스트 조합 실행 가능
+- Makefile에 덜 의존적
+
+---
+
 ## 다음 주 계획 (Week 14: 12/1)
 
 ### 최종 정리
