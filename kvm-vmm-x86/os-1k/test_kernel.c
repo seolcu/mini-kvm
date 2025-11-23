@@ -92,19 +92,6 @@ static void init_page_allocator(void) {
     allocator.next_page = (void *)((start + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1));
     allocator.pages_allocated = 0;
 }
-
-/*
- * Allocate a 4KB page
- * Returns: Physical address of allocated page, or NULL if out of memory
- */
-static void *alloc_page(void) {
-    // TODO(human): Implement page allocation logic here
-    // Check if there's enough space for one more page
-    // If yes, allocate and return the page address
-    // If no, return NULL
-    return NULL;
-}
-
 /*
  * Simple putchar implementation
  */

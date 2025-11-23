@@ -204,10 +204,8 @@ mini-kvm/
 
 ### 주요 문서
 - **[README.md](README.md)** (현재 파일): 빠른 시작 및 프로젝트 개요
-- **[최종보고서.md](docs/FINAL_REPORT.md)**: 포괄적인 프로젝트 보고서
-- **[데모가이드.md](docs/DEMO_GUIDE.md)**: 단계별 시연 가이드
-- **[성능테스트.md](docs/performance_test.md)**: 성능 측정 결과
-
+- **[최종보고서.md](docs/최종보고서.md)**: 포괄적인 프로젝트 보고서
+- **[데모가이드.md](docs/데모가이드.md)**: 단계별 시연 가이드
 
 ### 연구 노트
 - **[research/week1-12/](research/)**: 주간 진행 상황 보고서
@@ -216,4 +214,4 @@ mini-kvm/
 
 ## 라이선스
 
-MIT 라이선스 - 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
+이 프로젝트는 MIT 라이선스 하에 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.

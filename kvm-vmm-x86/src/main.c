@@ -88,6 +88,9 @@ static int num_vcpus = 0;
 // Thread synchronization
 static pthread_mutex_t stdout_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// Verbose logging control
+static bool verbose = false;
+
 /*
  * Thread-safe output functions with vCPU identification
  */
@@ -986,11 +989,13 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
 static int handle_vm_exit(vcpu_context_t *ctx) {
     ctx->exit_count++;
 
-    // DEBUG: Log all exit reasons for first 110 exits
-    static int debug_exit_count = 0;
-    if (debug_exit_count++ < 110) {
-        if (ctx->kvm_run->exit_reason != KVM_EXIT_IO || debug_exit_count > 100) {
-            vcpu_printf(ctx, "EXIT[%d]: reason=%d\n", debug_exit_count, ctx->kvm_run->exit_reason);
+    // Log exit reasons if verbose mode is enabled
+    if (verbose) {
+        static int debug_exit_count = 0;
+        if (debug_exit_count++ < 110) {
+            if (ctx->kvm_run->exit_reason != KVM_EXIT_IO || debug_exit_count > 100) {
+                vcpu_printf(ctx, "EXIT[%d]: reason=%d\n", debug_exit_count, ctx->kvm_run->exit_reason);
+            }
         }
     }
 
@@ -1003,14 +1008,16 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
         case KVM_EXIT_IO: {
             char *data = (char *)ctx->kvm_run + ctx->kvm_run->io.data_offset;
 
-            // DEBUG: Log ALL I/O operations
-            static int io_count = 0;
-            if (io_count++ < 100) {
-                vcpu_printf(ctx, "IO[%d]: dir=%s port=0x%x size=%d\n",
-                           io_count,
-                           (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) ? "OUT" : "IN",
-                           ctx->kvm_run->io.port,
-                           ctx->kvm_run->io.size);
+            // Log I/O operations if verbose mode is enabled
+            if (verbose) {
+                static int io_count = 0;
+                if (io_count++ < 100) {
+                    vcpu_printf(ctx, "IO[%d]: dir=%s port=0x%x size=%d\n",
+                               io_count,
+                               (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) ? "OUT" : "IN",
+                               ctx->kvm_run->io.port,
+                               ctx->kvm_run->io.size);
+                }
             }
 
             if (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) {
@@ -1023,12 +1030,14 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                     }
 
                     unsigned char hc_num = regs.rax & 0xFF;
-                    
-                    // Debug: log all hypercalls (increase limit)
-                    static int hc_count = 0;
-                    if (hc_count++ < 100) {  // Log first 100 hypercalls
-                        vcpu_printf(ctx, "HC[%d] type=0x%02x RAX=0x%llx RBX=0x%llx\n", 
-                                   hc_count, hc_num, regs.rax, regs.rbx);
+
+                    // Log hypercalls if verbose mode is enabled
+                    if (verbose) {
+                        static int hc_count = 0;
+                        if (hc_count++ < 100) {
+                            vcpu_printf(ctx, "HC[%d] type=0x%02x RAX=0x%llx RBX=0x%llx\n",
+                                       hc_count, hc_num, regs.rax, regs.rbx);
+                        }
                     }
                     
                     switch (hc_num) {
@@ -1227,15 +1236,16 @@ int main(int argc, char **argv) {
 
     // Parse command line arguments
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s [--paging [--entry ADDR] [--load OFFSET]] <guest1.bin> [guest2.bin] [guest3.bin] [guest4.bin]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--paging [--entry ADDR] [--load OFFSET]] [--verbose] <guest1.bin> [guest2.bin] [guest3.bin] [guest4.bin]\n", argv[0]);
         fprintf(stderr, "  Run 1-4 guests simultaneously in separate vCPUs\n");
         fprintf(stderr, "\nOptions:\n");
         fprintf(stderr, "  --paging            Enable Protected Mode with paging\n");
         fprintf(stderr, "  --entry ADDR        Set entry point (default: 0x80001000)\n");
         fprintf(stderr, "  --load OFFSET       Set load offset (default: 0x1000)\n");
+        fprintf(stderr, "  --verbose           Enable debug logging (VM exits, I/O, hypercalls)\n");
         fprintf(stderr, "\nExample:\n");
         fprintf(stderr, "  %s guest/multiplication.bin guest/counter.bin\n", argv[0]);
-        fprintf(stderr, "  %s --paging os-1k/test_kernel.bin\n", argv[0]);
+        fprintf(stderr, "  %s --paging --verbose os-1k/test_kernel.bin\n", argv[0]);
         return 1;
     }
 
@@ -1260,6 +1270,9 @@ int main(int argc, char **argv) {
             load_offset = strtoul(argv[i + 1], NULL, 0);
             i++;
             guest_arg_start += 2;
+        } else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
+            verbose = true;
+            guest_arg_start++;
         } else {
             fprintf(stderr, "Error: Unknown option %s\n", argv[i]);
             return 1;
