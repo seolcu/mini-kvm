@@ -804,8 +804,157 @@ static int run_vm(void) {
 #endif  // OLD SINGLE-VCPU CODE
 
 /*
+ * Setup segment registers for Real Mode
+ */
+static void setup_realmode_segments(struct kvm_sregs *sregs, vcpu_context_t *ctx) {
+    // CS:IP must point to the vCPU's memory region
+    // Physical address = CS * 16 + IP
+    // For vCPU 0: GPA 0x00000 (CS = 0x0000, IP = 0x0)
+    // For vCPU 1: GPA 0x40000 (CS = 0x4000, IP = 0x0)  (256KB spacing)
+    // For vCPU 2: GPA 0x80000 (CS = 0x8000, IP = 0x0)
+    // For vCPU 3: GPA 0xC0000 (CS = 0xC000, IP = 0x0)
+    uint16_t cs_value = ctx->vcpu_id * (ctx->mem_size / 16);
+
+    sregs->cs.base = cs_value * 16;
+    sregs->cs.selector = cs_value;
+    sregs->cs.limit = 0xFFFF;
+    sregs->cs.type = 0x9b;
+    sregs->cs.present = 1;
+    sregs->cs.dpl = 0;
+    sregs->cs.db = 0;
+    sregs->cs.s = 1;
+    sregs->cs.l = 0;
+    sregs->cs.g = 0;
+    sregs->cs.avl = 0;
+
+    sregs->ds.base = 0;
+    sregs->ds.selector = 0;
+    sregs->ds.limit = 0xFFFF;
+    sregs->ds.type = 0x93;
+    sregs->ds.present = 1;
+    sregs->ds.dpl = 0;
+    sregs->ds.db = 0;
+    sregs->ds.s = 1;
+    sregs->ds.l = 0;
+    sregs->ds.g = 0;
+    sregs->ds.avl = 0;
+
+    sregs->es = sregs->fs = sregs->gs = sregs->ss = sregs->ds;
+}
+
+/*
+ * Setup segment registers for Protected Mode with paging
+ */
+static void setup_protectedmode_segments(struct kvm_sregs *sregs) {
+    // Code segment (flat, base=0, limit=4GB)
+    sregs->cs.base = 0;
+    sregs->cs.limit = 0xFFFFFFFF;
+    sregs->cs.selector = 0x08;
+    sregs->cs.type = 0x0B;
+    sregs->cs.present = 1;
+    sregs->cs.dpl = 0;
+    sregs->cs.db = 1;
+    sregs->cs.s = 1;
+    sregs->cs.l = 0;
+    sregs->cs.g = 1;
+    sregs->cs.avl = 0;
+
+    // Data segment (flat, base=0, limit=4GB)
+    sregs->ds.base = 0;
+    sregs->ds.limit = 0xFFFFFFFF;
+    sregs->ds.selector = 0x10;
+    sregs->ds.type = 0x03;
+    sregs->ds.present = 1;
+    sregs->ds.dpl = 0;
+    sregs->ds.db = 1;
+    sregs->ds.s = 1;
+    sregs->ds.l = 0;
+    sregs->ds.g = 1;
+    sregs->ds.avl = 0;
+
+    sregs->es = sregs->fs = sregs->gs = sregs->ss = sregs->ds;
+}
+
+/*
+ * Configure vCPU for Protected Mode with paging
+ */
+static int configure_protected_mode(vcpu_context_t *ctx) {
+    struct kvm_sregs sregs;
+    struct kvm_regs regs;
+
+    // Setup GDT and IDT in guest memory
+    setup_gdt(ctx->guest_mem);
+    setup_idt(ctx->guest_mem);
+
+    // Setup page tables
+    int page_dir_offset = setup_page_tables(ctx);
+    if (page_dir_offset < 0) {
+        return -1;
+    }
+
+    // Get current segment registers
+    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
+        perror("KVM_GET_SREGS (paging)");
+        return -1;
+    }
+
+    // Set GDTR and IDTR
+    sregs.gdt.base = GDT_ADDR;
+    sregs.gdt.limit = GDT_TOTAL_SIZE - 1;
+    sregs.idt.base = GDT_ADDR + GDT_TOTAL_SIZE;
+    sregs.idt.limit = (256 * sizeof(idt_entry_t)) - 1;
+
+    // Set CR3 to page directory
+    sregs.cr3 = page_dir_offset;
+
+    // Enable Protected Mode and Paging
+    sregs.cr0 |= 0x00000001;  // PE bit
+    sregs.cr0 |= 0x80000000;  // PG bit
+    sregs.cr4 |= 0x00000010;  // PSE bit
+    sregs.cr4 &= ~0x00000020; // Clear PAE bit
+
+    // Setup flat segments
+    setup_protectedmode_segments(&sregs);
+
+    vcpu_printf(ctx, "About to set sregs: CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
+               sregs.cr0, sregs.cr3, sregs.cr4);
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
+        perror("KVM_SET_SREGS (paging)");
+        return -1;
+    }
+
+    vcpu_printf(ctx, "Successfully set sregs for paging\n");
+
+    // Update RIP to entry point
+    memset(&regs, 0, sizeof(regs));
+    regs.rip = ctx->entry_point;
+    regs.rflags = 0x2;
+
+    vcpu_printf(ctx, "About to set regs: RIP=0x%x\n", ctx->entry_point);
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
+        perror("KVM_SET_REGS (paging)");
+        return -1;
+    }
+
+    vcpu_printf(ctx, "Successfully set regs, verifying...\n");
+
+    // Verify the settings
+    struct kvm_sregs verify_sregs;
+    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &verify_sregs) == 0) {
+        vcpu_printf(ctx, "Verified: CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
+                   verify_sregs.cr0, verify_sregs.cr3, verify_sregs.cr4);
+    }
+
+    vcpu_printf(ctx, "Enabled paging: CR3=0x%llx, EIP=0x%x (Protected Mode)\n",
+                sregs.cr3, ctx->entry_point);
+
+    return 0;
+}
+
+/*
  * Setup vCPU context (multi-vCPU version)
- * Simplified version for Real Mode only
  */
 static int setup_vcpu_context(vcpu_context_t *ctx) {
     struct kvm_sregs sregs;
@@ -844,41 +993,8 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
         return -1;
     }
 
-    // Setup for Real Mode
-    // CS:IP must point to the vCPU's memory region
-    // Physical address = CS * 16 + IP
-    // For vCPU 0: GPA 0x00000 (CS = 0x0000, IP = 0x0)
-    // For vCPU 1: GPA 0x40000 (CS = 0x4000, IP = 0x0)  (256KB spacing)
-    // For vCPU 2: GPA 0x80000 (CS = 0x8000, IP = 0x0)
-    // For vCPU 3: GPA 0xC0000 (CS = 0xC000, IP = 0x0)
-    // Real Mode: 256KB/16 = 0x4000, Protected Mode: not used (paging handles addressing)
-    uint16_t cs_value = ctx->vcpu_id * (ctx->mem_size / 16);
-
-    sregs.cs.base = cs_value * 16;  // Base address
-    sregs.cs.selector = cs_value;
-    sregs.cs.limit = 0xFFFF;
-    sregs.cs.type = 0x9b;
-    sregs.cs.present = 1;
-    sregs.cs.dpl = 0;
-    sregs.cs.db = 0;
-    sregs.cs.s = 1;
-    sregs.cs.l = 0;
-    sregs.cs.g = 0;
-    sregs.cs.avl = 0;
-
-    sregs.ds.base = 0;
-    sregs.ds.selector = 0;
-    sregs.ds.limit = 0xFFFF;
-    sregs.ds.type = 0x93;
-    sregs.ds.present = 1;
-    sregs.ds.dpl = 0;
-    sregs.ds.db = 0;
-    sregs.ds.s = 1;
-    sregs.ds.l = 0;
-    sregs.ds.g = 0;
-    sregs.ds.avl = 0;
-
-    sregs.es = sregs.fs = sregs.gs = sregs.ss = sregs.ds;
+    // Setup Real Mode segments
+    setup_realmode_segments(&sregs, ctx);
 
     if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
         perror("KVM_SET_SREGS");
@@ -897,119 +1013,137 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
 
     vcpu_printf(ctx, "Set registers: RIP=0x%llx (Real Mode)\n", regs.rip);
 
-    // Set MP state to runnable (required for multi-vCPU)
+    // Set MP state to runnable
     struct kvm_mp_state mp_state;
     mp_state.mp_state = KVM_MP_STATE_RUNNABLE;
     if (ioctl(ctx->vcpu_fd, KVM_SET_MP_STATE, &mp_state) < 0) {
         perror("KVM_SET_MP_STATE");
         return -1;
     }
-    // If paging is enabled, setup page tables and switch to Protected Mode
+
+    // If paging is enabled, switch to Protected Mode
     if (ctx->use_paging) {
-        // Setup GDT and IDT in guest memory
-        setup_gdt(ctx->guest_mem);
-        setup_idt(ctx->guest_mem);
-
-        // Setup page tables
-        int page_dir_offset = setup_page_tables(ctx);
-        if (page_dir_offset < 0) {
+        if (configure_protected_mode(ctx) < 0) {
             return -1;
         }
-
-        // Re-get segment registers to modify for Protected Mode + paging
-        if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
-            perror("KVM_GET_SREGS (paging)");
-            return -1;
-        }
-
-        // Set GDTR to point to GDT in guest memory
-        sregs.gdt.base = GDT_ADDR;
-        sregs.gdt.limit = GDT_TOTAL_SIZE - 1;
-
-        // Set IDTR to point to IDT in guest memory
-        sregs.idt.base = GDT_ADDR + GDT_TOTAL_SIZE;
-        sregs.idt.limit = (256 * sizeof(idt_entry_t)) - 1;
-
-        // Set CR3 to page directory physical address
-        sregs.cr3 = page_dir_offset;
-
-        // Enable Protected Mode (CR0.PE) and Paging (CR0.PG)
-        sregs.cr0 |= 0x00000001;  // PE bit (Protected Mode)
-        sregs.cr0 |= 0x80000000;  // PG bit (Paging enabled)
-
-        // Enable PSE (Page Size Extension) for 4MB pages
-        sregs.cr4 |= 0x00000010;  // PSE bit
-
-        // Disable PAE (we're using 32-bit paging without PAE)
-        sregs.cr4 &= ~0x00000020;  // Clear PAE bit
-
-        // Setup flat segments for Protected Mode (base=0, limit=4GB)
-        // Code segment
-        sregs.cs.base = 0;
-        sregs.cs.limit = 0xFFFFFFFF;
-        sregs.cs.selector = 0x08;  // Kernel code segment
-        sregs.cs.type = 0x0B;      // Execute/Read, accessed
-        sregs.cs.present = 1;
-        sregs.cs.dpl = 0;          // Ring 0
-        sregs.cs.db = 1;           // 32-bit
-        sregs.cs.s = 1;            // Code/Data segment
-        sregs.cs.l = 0;            // Not 64-bit
-        sregs.cs.g = 1;            // Granularity (4KB)
-        sregs.cs.avl = 0;
-
-        // Data segment
-        sregs.ds.base = 0;
-        sregs.ds.limit = 0xFFFFFFFF;
-        sregs.ds.selector = 0x10;  // Kernel data segment
-        sregs.ds.type = 0x03;      // Read/Write, accessed
-        sregs.ds.present = 1;
-        sregs.ds.dpl = 0;
-        sregs.ds.db = 1;           // 32-bit
-        sregs.ds.s = 1;
-        sregs.ds.l = 0;
-        sregs.ds.g = 1;            // Granularity
-        sregs.ds.avl = 0;
-
-        sregs.es = sregs.fs = sregs.gs = sregs.ss = sregs.ds;
-
-        vcpu_printf(ctx, "About to set sregs: CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
-                   sregs.cr0, sregs.cr3, sregs.cr4);
-
-        if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
-            perror("KVM_SET_SREGS (paging)");
-            return -1;
-        }
-
-        vcpu_printf(ctx, "Successfully set sregs for paging\n");
-
-        // Update RIP to entry point (for Protected Mode guests)
-        memset(&regs, 0, sizeof(regs));
-        regs.rip = ctx->entry_point;  // Use configured entry point
-        regs.rflags = 0x2;
-
-        vcpu_printf(ctx, "About to set regs: RIP=0x%x\n", ctx->entry_point);
-
-        if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
-            perror("KVM_SET_REGS (paging)");
-            return -1;
-        }
-
-        vcpu_printf(ctx, "Successfully set regs, verifying...\n");
-
-        // Verify the settings
-        struct kvm_sregs verify_sregs;
-        if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &verify_sregs) == 0) {
-            vcpu_printf(ctx, "Verified: CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
-                       verify_sregs.cr0, verify_sregs.cr3, verify_sregs.cr4);
-        }
-
-        vcpu_printf(ctx, "Enabled paging: CR3=0x%llx, EIP=0x%x (Protected Mode)\n",
-                    sregs.cr3, ctx->entry_point);
     }
 
     ctx->running = true;
     ctx->exit_count = 0;
 
+    return 0;
+}
+
+/*
+ * Handle hypercall OUT request
+ */
+static int handle_hypercall_out(vcpu_context_t *ctx, struct kvm_regs *regs) {
+    unsigned char hc_num = regs->rax & 0xFF;
+
+    // Log hypercalls if verbose mode is enabled
+    if (verbose) {
+        static int hc_count = 0;
+        if (hc_count++ < 100) {
+            vcpu_printf(ctx, "HC[%d] type=0x%02x RAX=0x%llx RBX=0x%llx\n",
+                       hc_count, hc_num, regs->rax, regs->rbx);
+        }
+    }
+    
+    switch (hc_num) {
+        case HC_EXIT:
+            vcpu_printf(ctx, "Exit request\n");
+            ctx->running = false;
+            return 0;
+
+        case HC_PUTCHAR: {
+            char ch = regs->rbx & 0xFF;
+            vcpu_putchar(ctx, ch);
+            break;
+        }
+
+        case HC_GETCHAR: {
+            int ch = keyboard_buffer_pop();
+            ctx->getchar_result = ch;
+            ctx->pending_getchar = 1;
+            break;
+        }
+
+        default:
+            vcpu_printf(ctx, "Unknown hypercall: 0x%02x\n", hc_num);
+            return -1;
+    }
+    
+    return 0;
+}
+
+/*
+ * Handle hypercall IN response
+ */
+static void handle_hypercall_in(vcpu_context_t *ctx, char *data) {
+    if (ctx->pending_getchar) {
+        data[0] = (ctx->getchar_result == -1) ? 0xFF : (unsigned char)ctx->getchar_result;
+        
+        if (verbose) {
+            static int in_count = 0;
+            if (in_count++ < 50) {
+                vcpu_printf(ctx, "IN[%d] from 0x500: returning ch=%d (0x%02x)\n", 
+                           in_count, ctx->getchar_result, data[0]);
+            }
+        }
+        ctx->pending_getchar = 0;
+    } else {
+        if (verbose) {
+            static int unexpected_in = 0;
+            if (unexpected_in++ < 20) {
+                vcpu_printf(ctx, "WARN[%d]: IN from 0x500 without pending_getchar!\n", unexpected_in);
+            }
+        }
+        data[0] = 0;
+    }
+}
+
+/*
+ * Handle I/O port operations
+ */
+static int handle_io(vcpu_context_t *ctx) {
+    char *data = (char *)ctx->kvm_run + ctx->kvm_run->io.data_offset;
+
+    // Log I/O operations if verbose mode is enabled
+    if (verbose) {
+        static int io_count = 0;
+        if (io_count++ < 100) {
+            vcpu_printf(ctx, "IO[%d]: dir=%s port=0x%x size=%d\n",
+                       io_count,
+                       (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) ? "OUT" : "IN",
+                       ctx->kvm_run->io.port,
+                       ctx->kvm_run->io.size);
+        }
+    }
+
+    if (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) {
+        if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
+            struct kvm_regs regs;
+            if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0) {
+                perror("KVM_GET_REGS");
+                return -1;
+            }
+            return handle_hypercall_out(ctx, &regs);
+        } else if (ctx->kvm_run->io.port == 0x3f8) {
+            // UART output
+            pthread_mutex_lock(&stdout_mutex);
+            for (int i = 0; i < ctx->kvm_run->io.size; i++) {
+                putchar(data[i]);
+            }
+            fflush(stdout);
+            pthread_mutex_unlock(&stdout_mutex);
+        }
+    } else {
+        // IN instruction
+        if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
+            handle_hypercall_in(ctx, data);
+        }
+    }
+    
     return 0;
 }
 
@@ -1035,108 +1169,8 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
             ctx->running = false;
             return 0;
 
-        case KVM_EXIT_IO: {
-            char *data = (char *)ctx->kvm_run + ctx->kvm_run->io.data_offset;
-
-            // Log I/O operations if verbose mode is enabled
-            if (verbose) {
-                static int io_count = 0;
-                if (io_count++ < 100) {
-                    vcpu_printf(ctx, "IO[%d]: dir=%s port=0x%x size=%d\n",
-                               io_count,
-                               (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) ? "OUT" : "IN",
-                               ctx->kvm_run->io.port,
-                               ctx->kvm_run->io.size);
-                }
-            }
-
-            if (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) {
-                if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
-                    // Handle hypercall
-                    struct kvm_regs regs;
-                    if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0) {
-                        perror("KVM_GET_REGS");
-                        return -1;
-                    }
-
-                    unsigned char hc_num = regs.rax & 0xFF;
-
-                    // Log hypercalls if verbose mode is enabled
-                    if (verbose) {
-                        static int hc_count = 0;
-                        if (hc_count++ < 100) {
-                            vcpu_printf(ctx, "HC[%d] type=0x%02x RAX=0x%llx RBX=0x%llx\n",
-                                       hc_count, hc_num, regs.rax, regs.rbx);
-                        }
-                    }
-                    
-                    switch (hc_num) {
-                        case HC_EXIT:
-                            vcpu_printf(ctx, "Exit request\n");
-                            ctx->running = false;
-                            return 0;
-
-                        case HC_PUTCHAR: {
-                            char ch = regs.rbx & 0xFF;
-
-                            // Output character immediately with color
-                            vcpu_putchar(ctx, ch);
-                            break;
-                        }
-
-                        case HC_GETCHAR: {
-                            // GETCHAR: Read character from interrupt-driven keyboard buffer
-                            // The stdin monitoring thread fills this buffer and injects keyboard interrupts
-                            // OUT sets pending_getchar flag, subsequent IN will read the result
-                            int ch = keyboard_buffer_pop();
-                            
-                            // Store character for subsequent IN instruction
-                            ctx->getchar_result = ch;
-                            ctx->pending_getchar = 1;
-                            
-                            break;
-                        }
-
-                        default:
-                            vcpu_printf(ctx, "Unknown hypercall: 0x%02x\n", hc_num);
-                            return -1;
-                    }
-                } else if (ctx->kvm_run->io.port == 0x3f8) {
-                    // UART output
-                    pthread_mutex_lock(&stdout_mutex);
-                    for (int i = 0; i < ctx->kvm_run->io.size; i++) {
-                        putchar(data[i]);
-                    }
-                    fflush(stdout);
-                    pthread_mutex_unlock(&stdout_mutex);
-                }
-            } else {
-                // IN instruction
-                if (ctx->kvm_run->io.port == HYPERCALL_PORT && ctx->pending_getchar) {
-                    // GETCHAR: Return cached result from previous OUT
-                    data[0] = (ctx->getchar_result == -1) ? 0xFF : (unsigned char)ctx->getchar_result;
-                    
-                    if (verbose) {
-                        static int in_count = 0;
-                        if (in_count++ < 50) {
-                            vcpu_printf(ctx, "IN[%d] from 0x500: returning ch=%d (0x%02x)\n", 
-                                       in_count, ctx->getchar_result, data[0]);
-                        }
-                    }
-                    ctx->pending_getchar = 0;
-                } else if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
-                    // IN without pending_getchar - this shouldn't happen
-                    if (verbose) {
-                        static int unexpected_in = 0;
-                        if (unexpected_in++ < 20) {
-                            vcpu_printf(ctx, "WARN[%d]: IN from 0x500 without pending_getchar!\n", unexpected_in);
-                        }
-                    }
-                    data[0] = 0;  // Return 0 by default
-                }
-            }
-            break;
-        }
+        case KVM_EXIT_IO:
+            return handle_io(ctx);
 
         case KVM_EXIT_FAIL_ENTRY:
             vcpu_printf(ctx, "FAIL_ENTRY: reason 0x%llx\n",
