@@ -863,11 +863,11 @@ Higher-half kernel 구조 (0x80000000 이상)의 장점:
 ## 결론
 
 **Week 11 완료 내용:**
-1. ✅ 1K OS 프로젝트 분석 및 포팅 전략 수립
-2. ✅ VMM에 Protected Mode with Paging 지원 추가
-3. ✅ 4MB PSE 페이징 구현 (Identity + Higher-half mapping)
-4. ✅ 테스트 커널 개발 및 검증 완료
-5. ✅ Triple fault 디버깅 및 해결
+1. 1K OS 프로젝트 분석 및 포팅 전략 수립
+2. VMM에 Protected Mode with Paging 지원 추가
+3. 4MB PSE 페이징 구현 (Identity + Higher-half mapping)
+4. 테스트 커널 개발 및 검증 완료
+5. Triple fault 디버깅 및 해결
 
 **프로젝트 상태:**
 - **완료**: Phase 0 (Bare-metal), Phase 1 (RISC-V KVM), Phase 2 (x86 Protected Mode + Paging)
