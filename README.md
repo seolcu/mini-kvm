@@ -179,6 +179,27 @@ printf "6\n12 + 5\n100 - 37\nq\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 
 ---
 
+## 프로젝트 구조
+
+```
+mini-kvm/
+├── kvm-vmm-x86/              # 핵심 VMM 프로젝트 (C 기반)
+│   ├── src/                  # VMM 소스코드
+│   ├── guest/                # 리얼 모드 게스트 프로그램
+│   └── os-1k/                # 1K OS (보호 모드 게스트)
+├── docs/                     # 모든 문서
+│   ├── 최종보고서.md
+│   ├── 데모가이드.md
+│   └── ...
+├── experimental/             # 실험적/부가적 프로젝트
+│   ├── hypervisor/           # [실험] Rust 기반 RISC-V 하이퍼바이저
+│   ├── HLeOs/                # [실험] Rust 기반 64비트 OS
+│   └── linux-guest/          # [실험] Linux 게스트 부팅 관련 파일
+└── research/                 # 주간 연구 노트
+```
+
+---
+
 ## 문서
 
 ### 주요 문서
