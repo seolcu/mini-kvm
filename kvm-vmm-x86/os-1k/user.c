@@ -76,6 +76,51 @@ __attribute__((noreturn)) void exit(void) {
 }
 
 /*
+ * Read a line of input with echo and backspace support
+ * Supports ASCII backspace (0x08) and DEL (0x7F)
+ * Returns length of input (excluding null terminator)
+ */
+int readline(char *buf, int bufsz) {
+    int pos = 0;
+    
+    while (pos < bufsz - 1) {  // Reserve space for null terminator
+        int ch = getchar();
+        
+        if (ch == '\n' || ch == '\r') {
+            putchar('\n');
+            buf[pos] = '\0';
+            return pos;
+        } 
+        else if (ch == 0x08 || ch == 0x7F) {  // Backspace or DEL
+            if (pos > 0) {
+                pos--;
+                // Erase character: backspace, space, backspace
+                putchar('\b');
+                putchar(' ');
+                putchar('\b');
+            }
+        }
+        else if (ch >= 0x20 && ch < 0x7F) {  // Printable ASCII
+            putchar((char)ch);  // Echo character
+            buf[pos++] = (char)ch;
+        }
+        // Ignore other control characters
+    }
+    
+    // Buffer full - force termination
+    buf[bufsz - 1] = '\0';
+    
+    // Consume remaining input until newline
+    int ch;
+    while ((ch = getchar()) != '\n' && ch != '\r' && ch != -1) {
+        // Discard
+    }
+    putchar('\n');
+    
+    return bufsz - 1;
+}
+
+/*
  * User program entry point
  * Sets up stack and calls main()
  */

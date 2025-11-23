@@ -45,15 +45,10 @@ static void echo_demo(void) {
     while (1) {
         printf("$ ");
         char line[64];
-        for (int i = 0;; i++) {
-            char ch = getchar();
-            if (ch == '\n') {
-                line[i] = '\0';
-                printf("\n");
-                break;
-            }
-            putchar(ch);
-            line[i] = ch;
+        int len = readline(line, sizeof(line));
+        
+        if (len >= 63) {
+            printf("Warning: Input truncated to 63 characters\n");
         }
 
         if (strcmp(line, "quit") == 0) {
@@ -113,64 +108,61 @@ static void calculator_demo(void) {
     
     while (1) {
         printf("Calculate: ");
+        char line[64];
+        readline(line, sizeof(line));
         
-        // Read first number
-        int num1 = 0;
-        int negative1 = 0;
-        char ch = getchar();
-        if (ch == 'q') {
-            printf("q\nExiting calculator\n");
+        // Check for quit
+        if (line[0] == 'q' && line[1] == '\0') {
+            printf("Exiting calculator\n");
             break;
         }
-        if (ch == '-') {
+        
+        // Parse input: "num1 op num2"
+        int num1 = 0, num2 = 0;
+        char op = '\0';
+        int i = 0;
+        
+        // Skip leading spaces
+        while (line[i] == ' ') i++;
+        
+        // Parse first number
+        int negative1 = 0;
+        if (line[i] == '-') {
             negative1 = 1;
-            putchar(ch);
-            ch = getchar();
+            i++;
         }
-        while (ch >= '0' && ch <= '9') {
-            putchar(ch);
-            num1 = num1 * 10 + (ch - '0');
-            ch = getchar();
+        while (line[i] >= '0' && line[i] <= '9') {
+            num1 = num1 * 10 + (line[i] - '0');
+            i++;
         }
         if (negative1) num1 = -num1;
         
         // Skip spaces
-        while (ch == ' ') {
-            putchar(ch);
-            ch = getchar();
-        }
+        while (line[i] == ' ') i++;
         
         // Read operator
-        char op = ch;
-        putchar(op);
+        if (line[i] == '+' || line[i] == '-' || line[i] == '*' || line[i] == '/') {
+            op = line[i];
+            i++;
+        } else {
+            printf("Error: Invalid operator\n");
+            continue;
+        }
         
         // Skip spaces
-        ch = getchar();
-        while (ch == ' ') {
-            putchar(ch);
-            ch = getchar();
-        }
+        while (line[i] == ' ') i++;
         
-        // Read second number
-        int num2 = 0;
+        // Parse second number
         int negative2 = 0;
-        if (ch == '-') {
+        if (line[i] == '-') {
             negative2 = 1;
-            putchar(ch);
-            ch = getchar();
+            i++;
         }
-        while (ch >= '0' && ch <= '9') {
-            putchar(ch);
-            num2 = num2 * 10 + (ch - '0');
-            ch = getchar();
+        while (line[i] >= '0' && line[i] <= '9') {
+            num2 = num2 * 10 + (line[i] - '0');
+            i++;
         }
         if (negative2) num2 = -num2;
-        
-        // Skip to newline
-        while (ch != '\n') {
-            ch = getchar();
-        }
-        printf("\n");
         
         // Calculate
         int result = 0;
@@ -189,9 +181,6 @@ static void calculator_demo(void) {
             } else {
                 result = num1 / num2;
             }
-        } else {
-            printf("Error: Unknown operator '%c'\n", op);
-            valid = 0;
         }
         
         if (valid) {
@@ -265,8 +254,16 @@ void main(void) {
     while (1) {
         show_menu();
 
+        // Read choice with immediate echo
         char choice = getchar();
-        printf("%c\n", choice);
+        putchar(choice);  // Echo immediately for user feedback
+        
+        // Consume remaining characters until newline
+        char ch;
+        while ((ch = getchar()) != '\n' && ch != -1) {
+            putchar(ch);  // Echo extra characters too
+        }
+        printf("\n");
 
         if (choice == '0') {
             printf("\nExiting shell...\n");
