@@ -208,8 +208,6 @@ mini-kvm/
 - **[데모가이드.md](docs/DEMO_GUIDE.md)**: 단계별 시연 가이드
 - **[성능테스트.md](docs/performance_test.md)**: 성능 측정 결과
 
-### 개발 가이드
-- **[CLAUDE.md](CLAUDE.md)**: AI 어시스턴트 설정
 
 ### 연구 노트
 - **[research/week1-12/](research/)**: 주간 진행 상황 보고서
