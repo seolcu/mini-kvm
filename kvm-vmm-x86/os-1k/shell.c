@@ -20,7 +20,6 @@ static void show_menu(void) {
     printf("  9. About 1K OS\n");
     printf("  0. Exit\n");
     printf("\nSelect: ");
-    flush_output();
 }
 
 static void multiplication_demo(void) {
@@ -45,7 +44,6 @@ static void echo_demo(void) {
     printf("\n=== Echo Program (type 'quit' to exit) ===\n");
     while (1) {
         printf("$ ");
-        flush_output();
         char line[64];
         int len = readline(line, sizeof(line));
         
@@ -110,7 +108,6 @@ static void calculator_demo(void) {
     
     while (1) {
         printf("Calculate: ");
-        flush_output();
         char line[64];
         readline(line, sizeof(line));
         
@@ -257,16 +254,10 @@ void main(void) {
     while (1) {
         show_menu();
 
-        // Read choice with immediate echo
-        char choice = getchar();
-        putchar(choice);  // Echo immediately for user feedback
-        
-        // Consume remaining characters until newline
-        char ch;
-        while ((ch = getchar()) != '\n' && ch != -1) {
-            putchar(ch);  // Echo extra characters too
-        }
-        printf("\n");
+        // Read choice (readline handles echo automatically)
+        char input[8];
+        readline(input, sizeof(input));
+        char choice = input[0];
 
         if (choice == '0') {
             printf("\nExiting shell...\n");
