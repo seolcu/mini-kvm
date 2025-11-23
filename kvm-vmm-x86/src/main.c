@@ -172,7 +172,9 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size, u
 
     size_t fsize = (size_t)fsize_long;
 
-    printf("Guest binary size: %zu bytes\n", fsize);
+    if (verbose) {
+        printf("Guest binary size: %zu bytes\n", fsize);
+    }
 
     if (fsize + load_offset > mem_size) {
         fprintf(stderr, "Guest binary too large (%zu bytes at offset 0x%x > %zu bytes)\n",
@@ -191,15 +193,17 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size, u
 
     fclose(f);
 
-    printf("Loaded guest binary: %zu bytes at offset 0x%x\n", nread, load_offset);
+    if (verbose) {
+        printf("Loaded guest binary: %zu bytes at offset 0x%x\n", nread, load_offset);
 
-    // Show first few bytes
-    printf("First bytes: ");
-    size_t bytes_to_show = (fsize < 16 ? fsize : 16);
-    for (size_t i = 0; i < bytes_to_show; i++) {
-        printf("%02x ", ((unsigned char*)(mem + load_offset))[i]);
+        // Show first few bytes
+        printf("First bytes: ");
+        size_t bytes_to_show = (fsize < 16 ? fsize : 16);
+        for (size_t i = 0; i < bytes_to_show; i++) {
+            printf("%02x ", ((unsigned char*)(mem + load_offset))[i]);
+        }
+        printf("\n");
     }
-    printf("\n");
 
     return 0;
 }
@@ -449,8 +453,10 @@ static int setup_vcpu_memory(vcpu_context_t *ctx) {
         return -1;
     }
 
-    vcpu_printf(ctx, "Allocated guest memory: %zu KB at %p\n",
-                ctx->mem_size / 1024, ctx->guest_mem);
+    if (verbose) {
+        vcpu_printf(ctx, "Allocated guest memory: %zu KB at %p\n",
+                    ctx->mem_size / 1024, ctx->guest_mem);
+    }
 
     // Tell KVM about this memory region
     // Each vCPU uses different GPA range: vCPU 0 at 0x0, vCPU 1 at 0x400000 (4MB), etc.
@@ -465,8 +471,10 @@ static int setup_vcpu_memory(vcpu_context_t *ctx) {
         return -1;
     }
 
-    vcpu_printf(ctx, "Mapped to slot %d: GPA 0x%lx -> HVA %p (%zu bytes)\n",
-                ctx->vcpu_id, mem_region.guest_phys_addr, ctx->guest_mem, ctx->mem_size);
+    if (verbose) {
+        vcpu_printf(ctx, "Mapped to slot %d: GPA 0x%lx -> HVA %p (%zu bytes)\n",
+                    ctx->vcpu_id, mem_region.guest_phys_addr, ctx->guest_mem, ctx->mem_size);
+    }
 
     return 0;
 }
@@ -711,7 +719,9 @@ static int setup_vcpu(void) {
         return -1;
     }
 
-    printf("Set registers: RIP=0x%llx\n", regs.rip);
+    if (verbose) {
+        printf("Set registers: RIP=0x%llx\n", regs.rip);
+    }
 
     return 0;
 }
@@ -1029,7 +1039,9 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
         return -1;
     }
 
-    vcpu_printf(ctx, "Created vCPU (fd=%d)\n", ctx->vcpu_fd);
+    if (verbose) {
+        vcpu_printf(ctx, "Created vCPU (fd=%d)\n", ctx->vcpu_fd);
+    }
 
     // Get kvm_run structure size and mmap it
     mmap_size_ret = ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
@@ -1046,7 +1058,9 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
         return -1;
     }
 
-    vcpu_printf(ctx, "Mapped kvm_run structure: %zu bytes\n", ctx->kvm_run_mmap_size);
+    if (verbose) {
+        vcpu_printf(ctx, "Mapped kvm_run structure: %zu bytes\n", ctx->kvm_run_mmap_size);
+    }
 
     // Get current segment registers
     if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
@@ -1072,7 +1086,9 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
         return -1;
     }
 
-    vcpu_printf(ctx, "Set registers: RIP=0x%llx (Real Mode)\n", regs.rip);
+    if (verbose) {
+        vcpu_printf(ctx, "Set registers: RIP=0x%llx (Real Mode)\n", regs.rip);
+    }
 
     // Set MP state to runnable
     struct kvm_mp_state mp_state;
@@ -1112,7 +1128,9 @@ static int handle_hypercall_out(vcpu_context_t *ctx, struct kvm_regs *regs) {
     
     switch (hc_num) {
         case HC_EXIT:
-            vcpu_printf(ctx, "Exit request\n");
+            if (verbose) {
+                vcpu_printf(ctx, "Exit request\n");
+            }
             ctx->running = false;
             return 0;
 
@@ -1130,7 +1148,9 @@ static int handle_hypercall_out(vcpu_context_t *ctx, struct kvm_regs *regs) {
         }
 
         default:
-            vcpu_printf(ctx, "Unknown hypercall: 0x%02x\n", hc_num);
+            if (verbose) {
+                vcpu_printf(ctx, "Unknown hypercall: 0x%02x\n", hc_num);
+            }
             return -1;
     }
     
@@ -1191,12 +1211,9 @@ static int handle_io(vcpu_context_t *ctx) {
             return handle_hypercall_out(ctx, &regs);
         } else if (ctx->kvm_run->io.port == 0x3f8) {
             // UART output
-            pthread_mutex_lock(&stdout_mutex);
             for (int i = 0; i < ctx->kvm_run->io.size; i++) {
-                putchar(data[i]);
+                vcpu_putchar(ctx, data[i]);
             }
-            fflush(stdout);
-            pthread_mutex_unlock(&stdout_mutex);
         }
     } else {
         // IN instruction
@@ -1226,7 +1243,9 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
 
     switch (ctx->kvm_run->exit_reason) {
         case KVM_EXIT_HLT:
-            vcpu_printf(ctx, "Guest halted after %d exits\n", ctx->exit_count);
+            if (verbose) {
+                vcpu_printf(ctx, "Guest halted after %d exits\n", ctx->exit_count);
+            }
             ctx->running = false;
             return 0;
 
@@ -1281,7 +1300,9 @@ static void *vcpu_thread(void *arg) {
     vcpu_context_t *ctx = (vcpu_context_t *)arg;
     int ret;
 
-    vcpu_printf(ctx, "Thread started\n");
+    if (verbose) {
+        vcpu_printf(ctx, "Thread started\n");
+    }
 
     while (ctx->running) {
         ret = ioctl(ctx->vcpu_fd, KVM_RUN, 0);
@@ -1295,7 +1316,9 @@ static void *vcpu_thread(void *arg) {
         }
     }
 
-    vcpu_printf(ctx, "Thread exiting (total exits: %d)\n", ctx->exit_count);
+    if (verbose) {
+        vcpu_printf(ctx, "Thread exiting (total exits: %d)\n", ctx->exit_count);
+    }
     return NULL;
 }
 
@@ -1456,7 +1479,9 @@ int main(int argc, char **argv) {
         ctx->entry_point = entry_point;
         ctx->load_offset = enable_paging ? load_offset : 0;
 
-        printf("[Setup vCPU %d: %s]\n", i, ctx->name);
+        if (verbose) {
+            printf("[Setup vCPU %d: %s]\n", i, ctx->name);
+        }
 
         // Allocate and map memory for this vCPU
         if (setup_vcpu_memory(ctx) < 0) {
