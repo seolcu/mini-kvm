@@ -5,7 +5,7 @@ set -e
 echo "Building x86 Real Mode guest code..."
 
 # List of guest programs to build
-GUESTS="minimal hello counter multiplication fibonacci hctest"
+GUESTS="minimal hello counter multiplication fibonacci hctest matrix"
 
 for guest in $GUESTS; do
     if [ ! -f "${guest}.S" ]; then
@@ -13,24 +13,22 @@ for guest in $GUESTS; do
         continue
     fi
     
-    echo ""
-    echo "Building ${guest}..."
+    echo "  Building ${guest}..."
     
     # Assemble
-    as -32 --defsym REAL_MODE=1 -o ${guest}.o ${guest}.S
+    as --32 ${guest}.S -o ${guest}.o
     
-    # Link with custom linker script
-    ld -m elf_i386 -T guest.ld -o ${guest}.elf ${guest}.o
+    # Link directly to binary format (no linker script needed)
+    ld -m elf_i386 -Ttext 0x0 --oformat=binary -o ${guest}.bin ${guest}.o
     
-    # Extract raw binary (.text and .rodata sections)
-    objcopy -O binary -j .text -j .rodata ${guest}.elf ${guest}.bin
-    
-    echo "  ${guest}.bin: $(stat -c%s ${guest}.bin) bytes"
+    # Show size
+    SIZE=$(stat -c%s ${guest}.bin)
+    printf "    %-20s %6d bytes\n" "${guest}.bin:" "$SIZE"
 done
 
 echo ""
 echo "=== All guest binaries ==="
-ls -lh *.bin 2>/dev/null | awk '{print $9, $5}'
+ls -lh *.bin 2>/dev/null | awk '{printf "  %-20s %s\n", $9, $5}'
 
 echo ""
 echo "Guest code built successfully!"
