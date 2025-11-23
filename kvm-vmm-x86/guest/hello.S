@@ -8,16 +8,18 @@
 
 _start:
     # Initialize
-    mov $message, %si   # SI = pointer to message
+    lea message, %si    # SI = pointer to message (use lea for position-independent code)
 
 print_loop:
     lodsb               # Load byte from [SI] into AL, increment SI
     test %al, %al       # Check if AL == 0 (null terminator)
     jz done             # If zero, we're done
 
-    # Output character to UART port 0x3f8
-    mov $0x3f8, %dx     # DX = port number
-    out %al, (%dx)      # Send AL to port DX
+    # Output character using hypercall
+    mov %al, %bl        # BL = character to print
+    mov $0x01, %al      # AL = HC_PUTCHAR (0x01)
+    mov $0x500, %dx     # DX = HYPERCALL_PORT
+    out %al, (%dx)      # Make hypercall
 
     jmp print_loop      # Continue loop
 

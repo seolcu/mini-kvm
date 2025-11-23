@@ -1,112 +1,130 @@
 # Multiplication Table Guest (2-9 dan)
-# Prints: "2 x 1 = 2" ... "9 x 9 = 81"
+# Simplified version: prints "2x1=2 2x2=4 ..." on single line
 #
-# Register Layout:
-#   CL = dan (outer loop, 2-9)
-#   CH = multiplier (inner loop, 1-9)
-#       (CX = dan:multiplier, separate from DX so no conflicts!)
-#   DX = port number (0x500)
-#   AL = hypercall number
-#   BX = hypercall argument (number to print)
+# Register usage:
+#   SI = dan (outer loop 2-9)
+#   DI = multiplier (inner loop 1-9)
+#   AL, BL, DL = temporary
 
 .code16
 .section .text
 .global _start
 
-# Hypercall definitions
 .equ HC_PUTCHAR, 0x01
-.equ HC_PUTNUM, 0x02
-.equ HC_NEWLINE, 0x03
+.equ HC_EXIT, 0x00
 .equ HYPERCALL_PORT, 0x500
 
 _start:
-    # Initialize outer loop: CL = dan (2-9)
-    mov $2, %cl
+    mov $2, %si             # SI = dan start (2)
 
+outer:
+    cmp $10, %si            # if SI >= 10, done
+    jge finish
 
-outer_loop:
-    # Initialize inner loop: CH = multiplier (1-9)
-    # CH is safe even when we use DX!
-    mov $1, %ch
+    mov $1, %di             # DI = multiplier start (1)
 
+inner:
+    cmp $10, %di            # if DI >= 10, next dan
+    jge next_dan
 
-inner_loop:
-    # Print: "{dan} x {multiplier} = {result}"
-
-    # Print dan value using hypercall
-    movzx %cl, %bx          # BX = dan (extend CL to 16-bit)
-    mov $HC_PUTNUM, %al     # AL = hypercall number
-    mov $HYPERCALL_PORT, %dx
-    out %al, (%dx)
-
-    # Print " x "
-    mov $' ', %bl
+    # Print SI (dan)
+    mov %si, %ax
+    add $0x30, %al
+    mov %al, %bl
     mov $HC_PUTCHAR, %al
     mov $HYPERCALL_PORT, %dx
     out %al, (%dx)
 
+    # Print 'x'
     mov $'x', %bl
     mov $HC_PUTCHAR, %al
     mov $HYPERCALL_PORT, %dx
     out %al, (%dx)
 
-    mov $' ', %bl
+    # Print DI (multiplier)
+    mov %di, %ax
+    add $0x30, %al
+    mov %al, %bl
     mov $HC_PUTCHAR, %al
     mov $HYPERCALL_PORT, %dx
     out %al, (%dx)
 
-    # Print multiplier value using hypercall
-    movzx %ch, %bx          # BX = multiplier (extend CH to 16-bit)
-    mov $HC_PUTNUM, %al
-    mov $HYPERCALL_PORT, %dx
-    out %al, (%dx)
-
-    # Print " = "
-    mov $' ', %bl
-    mov $HC_PUTCHAR, %al
-    mov $HYPERCALL_PORT, %dx
-    out %al, (%dx)
-
+    # Print '='
     mov $'=', %bl
     mov $HC_PUTCHAR, %al
     mov $HYPERCALL_PORT, %dx
     out %al, (%dx)
 
+    # Calculate SI * DI
+    mov %si, %ax            # AX = SI (dan)
+    mov %di, %bx            # BX = DI (multiplier)
+    mul %bx                 # AX = SI * DI (result max 81, fits in AX)
+    # Result in AX
+
+    # Print result (1 or 2 digits, max 81)
+    cmp $10, %al
+    jl print_one_digit
+
+    # Two digit result >= 10: separate tens and ones
+    mov %al, %bl            # BL = result (0-81)
+    mov $0, %al             # AL = 0
+    mov $10, %cl            # CL = 10
+
+divide_loop:
+    cmp $10, %bl
+    jl divide_done
+    sub $10, %bl
+    inc %al
+    jmp divide_loop
+
+divide_done:
+    # AL = tens digit, BL = ones digit
+    # Save ones digit to use later
+    mov %bl, %cl            # CL = ones digit (save it!)
+
+    # Print tens
+    add $0x30, %al          # Convert tens to ASCII
+    mov %al, %bl            # BL = tens ASCII
+    mov $HC_PUTCHAR, %al
+    mov $HYPERCALL_PORT, %dx
+    out %al, (%dx)
+
+    # Print ones (restore from CL)
+    mov %cl, %al            # AL = ones digit
+    add $0x30, %al          # Convert ones to ASCII
+    mov %al, %bl            # BL = ones ASCII
+    mov $HC_PUTCHAR, %al
+    mov $HYPERCALL_PORT, %dx
+    out %al, (%dx)
+
+    jmp print_space
+
+print_one_digit:
+    add $0x30, %al
+    mov %al, %bl
+    mov $HC_PUTCHAR, %al
+    mov $HYPERCALL_PORT, %dx
+    out %al, (%dx)
+
+print_space:
+    # Print space
     mov $' ', %bl
     mov $HC_PUTCHAR, %al
     mov $HYPERCALL_PORT, %dx
     out %al, (%dx)
 
-    # Calculate result = dan * multiplier
-    # MUL uses BL to avoid overwriting CL (our loop counter)
-    mov %cl, %al            # AL = dan
-    mov %ch, %bl            # BL = multiplier (BX is partially used, but we'll overwrite anyway)
-    mul %bl                 # AX = AL * BL (dan * multiplier)
-    movzx %al, %bx          # BX = result (8-bit is enough for max 81)
-                            # CL is preserved!
+    # Next multiplier
+    inc %di
+    jmp inner
 
-    # Print result value using hypercall
-    mov $HC_PUTNUM, %al
-    mov $HYPERCALL_PORT, %dx
-    out %al, (%dx)
+next_dan:
+    # Next dan
+    inc %si
+    jmp outer
 
-    # Print newline using hypercall
-    mov $HC_NEWLINE, %al
-    mov $HYPERCALL_PORT, %dx
-    out %al, (%dx)
-
-    # Continue inner loop: increment multiplier
-    inc %ch                 # CH++ (next multiplier)
-    cmp $10, %ch            # Check if multiplier == 10
-    jl inner_loop           # Jump if multiplier < 10
-
-    # Continue outer loop: increment dan
-    inc %cl                 # CL++ (next dan)
-    cmp $10, %cl            # Check if dan == 10
-    jl outer_loop           # Jump if dan < 10
-
-    # Exit via hypercall
-    mov $0x00, %al          # HC_EXIT
+finish:
+    # Exit
+    mov $HC_EXIT, %al
     mov $HYPERCALL_PORT, %dx
     out %al, (%dx)
 
