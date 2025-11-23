@@ -46,3 +46,5 @@ Cargo.lock
 # Editor/IDE metadata
 .obsidian/
 .claude/
+CLAUDE.md
+GEMINI.md
