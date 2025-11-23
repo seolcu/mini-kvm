@@ -65,6 +65,8 @@ Mini-KVM은 Linux KVM API를 사용하여 핵심 가상화 개념을 시연하�
 
 ## 빠른 시작
 
+`kvm-vmm-x86` 디렉토리의 `Makefile`을 통해 모든 빌드와 실행을 한번에 관리할 수 있습니다.
+
 ### 사전 요구사항
 ```bash
 # Fedora/RHEL
@@ -78,52 +80,56 @@ lsmod | grep kvm
 ls -l /dev/kvm
 ```
 
-### VMM 및 게스트 빌드
+### 빌드 및 실행
+
+`make` 명령어를 사용하여 모든 것을 제어할 수 있습니다.
+
 ```bash
 # 저장소 복제
 git clone https://github.com/seolcu/mini-kvm.git
 cd mini-kvm/kvm-vmm-x86
 
-# VMM 빌드
-make vmm
+# 사용법 보기 (모든 명령어 확인)
+make
+# 또는
+make help
 
-# 게스트 프로그램 빌드
-cd guest && ./build.sh && cd ..
-
-# 1K OS 빌드
-cd os-1k && make && cd ..
+# 모든 컴포넌트 빌드 (VMM, 게스트, 1K OS)
+make all
 ```
 
 ### 실행 예제
 
-**1. 최소 기능 게스트 (1바이트)**
+`make run-<target>` 형식의 명령어로 모든 게스트 및 데모를 손쉽게 실행할 수 있습니다.
+
+**1. 리얼 모드 게스트 실행**
 ```bash
-./kvm-vmm guest/minimal.bin
-# 출력: 게스트가 즉시 멈춤 (Guest halts immediately)
+# "Hello, KVM!" 게스트 실행
+make run-hello
+
+# 0-9 카운터 게스트 실행
+make run-counter
 ```
 
-**2. Hello World**
+**2. 다중 vCPU 데모**
 ```bash
-./kvm-vmm guest/hello.bin
-# 출력: Hello, KVM!
+# 2개 게스트 동시 실행
+make run-multi2
+
+# 4개 게스트 동시 실행
+make run-multi4
 ```
 
-**3. 다중 vCPU (2개 게스트 동시 실행)**
+**3. 1K OS (보호 모드) 실행**
 ```bash
-./kvm-vmm guest/multiplication.bin guest/counter.bin
-# 출력: 진정한 병렬 실행을 보여주는 인터리빙된 출력
-```
+# 대화형 셸 실행
+make run-1k-os-shell
 
-**4. 1K OS (보호 모드)**
-```bash
-# 구구단 프로그램 실행
-printf "1\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+# 구구단 프로그램 바로 실행
+make run-1k-os-multiplication
 
-# 피보나치 수열 실행
-printf "4\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
-
-# 대화형 계산기 실행
-printf "6\n12 + 5\n100 - 37\nq\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
+# 계산기 프로그램 바로 실행
+make run-1k-os-calc
 ```
 
 ---

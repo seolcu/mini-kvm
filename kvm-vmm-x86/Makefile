@@ -1,109 +1,147 @@
-# Makefile for KVM VMM (x86)
+# Makefile for Mini-KVM (x86)
+# Unified build and run system
 
+# --- Configuration ---
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -std=gnu11
 LDFLAGS = -pthread
+VMM = kvm-vmm
 
-TARGET = kvm-vmm
-GUEST_BIN = guest/minimal.bin
-GUEST_HELLO = guest/hello.bin
+# List of real-mode guests from the build script
+GUESTS = minimal hello counter multiplication fibonacci hctest pmode_test
 
-.PHONY: all clean guest vmm test test-hello counter hello minimal hctest multiplication pmode_test help
+# --- Default Goal: Show help ---
+.DEFAULT_GOAL := help
 
-all: guest vmm
+# --- Phony Targets (commands that don't produce a file with the same name) ---
+.PHONY: all clean help vmm guests 1k-os
+.PHONY: $(patsubst %, run-%, $(GUESTS))
+.PHONY: run-multi2 run-multi4
+.PHONY: run-1k-os-shell run-1k-os-multiplication run-1k-os-counter run-1k-os-echo run-1k-os-fibonacci run-1k-os-primes run-1k-os-calc run-1k-os-factorial run-1k-os-gcd run-1k-os-about
 
-# Build guest code
-guest:
-	@echo "=== Building guest code ==="
-	cd guest && ./build.sh
+# --- Build Targets ---
+
+# Build everything
+all: vmm guests 1k-os
 	@echo
+	@echo "--- All components built successfully! ---"
+	@echo "Use 'make help' to see available run commands."
 
-# Build VMM
-vmm: src/main.c
-	@echo "=== Building VMM ==="
-	$(CC) $(CFLAGS) -o $(TARGET) src/main.c $(LDFLAGS)
-	@echo "Built: $(TARGET)"
-	@echo
+# Build the VMM
+vmm: $(VMM)
 
-# Run the VMM with minimal guest
-test: all
-	@echo "=== Running VMM (minimal guest) ==="
-	./$(TARGET) $(GUEST_BIN)
+$(VMM): src/main.c src/protected_mode.h
+	@echo "=> Building VMM..."
+	$(CC) $(CFLAGS) -o $(VMM) src/main.c $(LDFLAGS)
 
-# Run the VMM with hello guest
-test-hello: vmm hello
-	@echo "=== Running VMM (hello guest) ==="
-	./$(TARGET) $(GUEST_HELLO)
+# Build all real-mode guest binaries
+guests:
+	@echo "=> Building all real-mode guests..."
+	@cd guest && ./build.sh > /dev/null
 
-# Generic pattern: build any .S file
-# Usage: make build-<name>
-# Example: make build-counter (builds counter.S → counter.bin)
-build-%: guest/%.S
-	@echo "=== Building guest/$*.S ==="
-	cd guest && as -32 -o $*.o $*.S && \
-	ld -m elf_i386 -T guest.ld -o $*.elf $*.o && \
-	objcopy -O binary -j .text -j .rodata $*.elf $*.bin
-	@echo "Built: guest/$*.bin"
-	@ls -lh guest/$*.bin
-	@echo
+# Build the 1K OS
+1k-os:
+	@echo "=> Building 1K OS..."
+	@$(MAKE) -C os-1k > /dev/null
 
-# Generic pattern: run any guest binary
-# Usage: make run-<name>
-# Example: make run-counter (runs counter.bin in VMM)
-run-%: vmm guest/%.bin
-	@echo "=== Running VMM (guest/$*.bin) ==="
-	./$(TARGET) guest/$*.bin
+# --- Run Targets ---
 
-# Convenience shortcuts: build + run in one command
-counter: vmm build-counter run-counter
+# Generic rule for running real-mode guests
+run-%: vmm guests
+	@echo "=> Running Real Mode Guest: $*..."
+	@timeout 5s ./$(VMM) guest/$*.bin
 
-hello: vmm build-hello run-hello
+# Rule for running the protected-mode test guest
+run-pmode_test: vmm guests
+	@echo "=> Running Protected Mode Test Guest: pmode_test..."
+	@timeout 5s ./$(VMM) --paging guest/pmode_test.bin
 
-minimal: vmm build-minimal run-minimal
+# Rules for multi-vCPU demos
+run-multi2: vmm guests
+	@echo "=> Running Multi-vCPU Demo (2 guests)..."
+	@timeout 5s ./$(VMM) guest/multiplication.bin guest/counter.bin
 
-hctest: vmm build-hctest run-hctest
+run-multi4: vmm guests
+	@echo "=> Running Multi-vCPU Demo (4 guests)..."
+	@timeout 5s ./$(VMM) guest/counter.bin guest/hello.bin guest/multiplication.bin guest/minimal.bin
 
-multiplication: vmm build-multiplication run-multiplication
+# Rule for running 1K OS interactive shell
+run-1k-os-shell: vmm 1k-os
+	@echo "=> Running 1K OS (Interactive Shell)..."
+	@./$(VMM) --paging os-1k/kernel.bin
 
-# Protected Mode test guest (requires -p flag)
-pmode_test: vmm build-pmode_test
-	@echo "=== Running VMM (Protected Mode guest) ==="
-	./$(TARGET) -p guest/pmode_test.bin
+# Rules for running specific 1K OS programs
+run-1k-os-multiplication: vmm 1k-os
+	@echo "=> Running 1K OS Demo: Multiplication Table..."
+	@printf "1\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-# Multi-vCPU demos
-multi-2: vmm build-multiplication build-counter
-	@echo "=== Running Multi-vCPU (2 guests) ==="
-	./$(TARGET) guest/multiplication.bin guest/counter.bin
+run-1k-os-counter: vmm 1k-os
+	@echo "=> Running 1K OS Demo: Counter..."
+	@printf "2\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-multi-4: vmm build-multiplication build-counter build-hello build-hctest
-	@echo "=== Running Multi-vCPU (4 guests) ==="
-	./$(TARGET) guest/multiplication.bin guest/counter.bin guest/hello.bin guest/hctest.bin
+run-1k-os-echo: vmm 1k-os
+	@echo "=> Running 1K OS Demo: Echo..."
+	@printf "3\nHello 1K OS\nquit\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-# Clean build artifacts
+run-1k-os-fibonacci: vmm 1k-os
+	@echo "=> Running 1K OS Demo: Fibonacci..."
+	@printf "4\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
+
+run-1k-os-primes: vmm 1k-os
+	@echo "=> Running 1K OS Demo: Prime Numbers..."
+	@printf "5\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
+
+run-1k-os-calc: vmm 1k-os
+	@echo "=> Running 1K OS Demo: Calculator..."
+	@printf "6\n123+456\nq\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
+
+run-1k-os-factorial: vmm 1k-os
+	@echo "=> Running 1K OS Demo: Factorial..."
+	@printf "7\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
+
+run-1k-os-gcd: vmm 1k-os
+	@echo "=> Running 1K OS Demo: GCD..."
+	@printf "8\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
+
+run-1k-os-about: vmm 1k-os
+	@echo "=> Running 1K OS Demo: About..."
+	@printf "9\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
+
+
+# --- Cleanup ---
 clean:
-	rm -f $(TARGET)
-	cd guest && rm -f *.o *.elf *.bin
+	@echo "=> Cleaning build artifacts..."
+	@rm -f $(VMM)
+	@$(MAKE) -C guest clean > /dev/null
+	@$(MAKE) -C os-1k clean > /dev/null
+	@echo "Cleanup complete."
 
-# Show help
+
+# --- Help ---
 help:
-	@echo "Available targets:"
-	@echo "  make all            - Build guest and VMM"
-	@echo "  make vmm            - Build VMM only"
-	@echo "  make test           - Build and run VMM with minimal guest"
-	@echo ""
-	@echo "Quick commands (build + run):"
-	@echo "  make counter        - Build and run counter.S (Real Mode)"
-	@echo "  make hello          - Build and run hello.S (Real Mode)"
-	@echo "  make minimal        - Build and run minimal.S (Real Mode)"
-	@echo "  make pmode_test     - Build and run pmode_test.S (Protected Mode)"
-	@echo ""
-	@echo "Manual build/run:"
-	@echo "  make build-<name>   - Build guest/<name>.S → guest/<name>.bin"
-	@echo "  make run-<name>     - Run guest/<name>.bin in VMM"
-	@echo ""
-	@echo "Examples:"
-	@echo "  make build-counter  - Build counter.S"
-	@echo "  make run-counter    - Run counter.bin"
-	@echo "  make counter        - Build + run counter.S (shortcut)"
-	@echo ""
-	@echo "  make clean          - Remove build artifacts"
+	@echo "Mini-KVM Build & Run System"
+	@echo
+	@echo "Usage: make <target>"
+	@echo
+	@echo "--- Build Targets ---"
+	@echo "  all                    Build all components (VMM, guests, 1K OS)"
+	@echo "  vmm                    Build only the VMM"
+	@echo "  guests                 Build all real-mode guests"
+	@echo "  1k-os                  Build only the 1K OS"
+	@echo "  clean                  Remove all build artifacts"
+	@echo
+	@echo "--- Run Real-Mode Guests (e.g., make run-hello) ---"
+	@echo "  run-minimal            run-hello                run-counter"
+	@echo "  run-multiplication     run-fibonacci            run-hctest"
+	@echo "  run-pmode_test"
+	@echo
+	@echo "--- Run Multi-vCPU Demos ---"
+	@echo "  run-multi2             Run 2 guests simultaneously"
+	@echo "  run-multi4             Run 4 guests simultaneously"
+	@echo
+	@echo "--- Run 1K OS (Protected Mode) ---"
+	@echo "  run-1k-os-shell        Run in interactive shell mode"
+	@echo "  run-1k-os-multiplication, run-1k-os-counter, run-1k-os-echo, ..."
+	@echo "  run-1k-os-fibonacci,    run-1k-os-primes,     run-1k-os-calc, ..."
+	@echo "  run-1k-os-factorial,    run-1k-os-gcd,        run-1k-os-about"
+	@echo

@@ -72,9 +72,7 @@ common.o: common.c common.h
 	$(CC) $(CFLAGS) -c -o common.o common.c
 
 clean:
-	@echo "=== Cleaning ==="
 	rm -f *.o *.elf *.bin *.map *.asm
-	@echo "Clean complete"
 
 # Show kernel info
 info: kernel.elf
