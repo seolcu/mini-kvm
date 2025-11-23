@@ -30,10 +30,16 @@ Mini-KVM은 Linux KVM API를 사용하여 핵심 가상화 개념을 시연하�
 
 ### VMM 핵심 기능
 - **다중 vCPU 지원**: 최대 4개의 게스트 프로그램을 병렬로 실행
+  - 색상 출력으로 vCPU 구분 (빨강/초록/노랑/파랑)
+  - 진짜 병렬 실행: 출력이 실시간으로 섞임
 - **리얼 모드 (16비트)**: 레거시 x86 코드 직접 지원
+  - 조건부 IRQCHIP: 불필요한 인터럽트 없이 즉시 실행/종료
 - **보호 모드 (32비트)**: 세그멘테이션 및 페이징 완벽 지원
+  - 4MB 페이지 (PSE), GDT/IDT 완벽 지원
 - **인터럽트 처리**: 타이머 및 키보드 인터럽트
+  - Protected Mode에서만 활성화 (성능 최적화)
 - **하이퍼콜 인터페이스**: 효율적인 게스트-호스트 통신
+  - PUTCHAR, GETCHAR, EXIT 하이퍼콜
 - **I/O 에뮬레이션**: UART 시리얼 포트, 키보드 입력
 
 ### 게스트 운영체제
@@ -82,54 +88,65 @@ ls -l /dev/kvm
 
 ### 빌드 및 실행
 
-`make` 명령어를 사용하여 모든 것을 제어할 수 있습니다.
-
 ```bash
 # 저장소 복제
 git clone https://github.com/seolcu/mini-kvm.git
 cd mini-kvm/kvm-vmm-x86
 
-# 사용법 보기 (모든 명령어 확인)
-make
-# 또는
-make help
-
 # 모든 컴포넌트 빌드 (VMM, 게스트, 1K OS)
 make all
+
+# 사용법 보기 (모든 명령어 확인)
+make help
 ```
 
 ### 실행 예제
 
-`make run-<target>` 형식의 명령어로 모든 게스트 및 데모를 손쉽게 실행할 수 있습니다.
+빌드 후 `./kvm-vmm` 바이너리로 게스트를 직접 실행합니다.
 
-**1. 리얼 모드 게스트 실행**
+**1. 단일 게스트 실행 (리얼 모드)**
 ```bash
-# "Hello, KVM!" 게스트 실행
-make run-hello
+# "Hello, KVM!" 출력
+./kvm-vmm guest/hello.bin
 
-# 0-9 카운터 게스트 실행
-make run-counter
+# 0-9 카운터
+./kvm-vmm guest/counter.bin
+
+# 2-9단 구구단
+./kvm-vmm guest/multiplication.bin
+
+# 최소 게스트 (HLT)
+./kvm-vmm guest/minimal.bin
 ```
 
-**2. 다중 vCPU 데모**
+**2. 다중 vCPU 병렬 실행** (색상으로 구분)
 ```bash
-# 2개 게스트 동시 실행
-make run-multi2
+# 2개 게스트 동시 실행 (빨강/초록 색상)
+./kvm-vmm guest/multiplication.bin guest/counter.bin
 
-# 4개 게스트 동시 실행
-make run-multi4
+# 4개 게스트 동시 실행 (빨강/초록/노랑/파랑 색상)
+./kvm-vmm guest/counter.bin guest/hello.bin guest/multiplication.bin guest/minimal.bin
 ```
 
 **3. 1K OS (보호 모드) 실행**
 ```bash
 # 대화형 셸 실행
-make run-1k-os-shell
+./kvm-vmm --paging os-1k/kernel.bin
 
-# 구구단 프로그램 바로 실행
-make run-1k-os-multiplication
+# 구구단 프로그램 바로 실행 (프로그램 1 선택 후 종료)
+printf '1\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin
 
-# 계산기 프로그램 바로 실행
-make run-1k-os-calc
+# 에코 프로그램 실행 (프로그램 3 선택, 메시지 입력, quit 후 종료)
+printf '3\nHello\nquit\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin
+
+# 계산기 실행 (프로그램 6 선택, 10+5 계산, quit 후 종료)
+printf '6\n10+5\nquit\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin
+```
+
+**4. Verbose 모드** (디버깅용)
+```bash
+# VM exit 및 하이퍼콜 상세 로그 출력
+./kvm-vmm --verbose guest/hello.bin
 ```
 
 ---
