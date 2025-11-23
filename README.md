@@ -1,71 +1,71 @@
-# Mini-KVM: Educational x86 Hypervisor
+# Mini-KVM: 교육용 x86 하이퍼바이저
 
-> A minimal but fully-functional x86 hypervisor built with Linux KVM API for educational purposes
+> Linux KVM API를 사용하여 제작된 작지만 모든 기능이 동작하는 교육용 x86 하이퍼바이저입니다.
 
-[![Project Status](https://img.shields.io/badge/status-complete-success)]() 
+[![Project Status](https://img.shields.io/badge/status-complete-success)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
-**Ajou University Independent Research Project** (2025 Fall)  
-**Author**: Seolcu  
-**Completion Date**: November 22, 2025
+**아주대학교 개인연구 프로젝트** (2025 가을)  
+**작성자**: Seolcu  
+**완료일**: 2025년 11월 22일
 
 ---
 
-## Overview
+## 프로젝트 개요
 
-Mini-KVM is an educational hypervisor that demonstrates core virtualization concepts using the Linux KVM API. Despite its compact size (~3,500 lines of C code), it supports:
+Mini-KVM은 Linux KVM API를 사용하여 핵심 가상화 개념을 시연하는 교육용 하이퍼바이저입니다. 약 3,500줄의 C 코드로 이루어진 작은 크기에도 불구하고 다음과 같은 기능을 지원합니다.
 
-- **Multiple vCPUs**: Up to 4 virtual CPUs running simultaneously
-- **Real Mode guests**: Simple 16-bit x86 programs
-- **Protected Mode with Paging**: Full 32-bit OS support (1K OS)
-- **9 User Programs**: Interactive shell with mathematical/utility programs
-- **Near-native Performance**: Minimal virtualization overhead
+- **다중 vCPU**: 최대 4개의 가상 CPU를 동시에 실행
+- **리얼 모드 게스트**: 간단한 16비트 x86 프로그램 실행
+- **보호 모드 및 페이징**: 32비트 운영체제 '1K OS' 완벽 지원
+- **9개의 사용자 프로그램**: 수학/유틸리티 프로그램을 포함한 대화형 셸
+- **네이티브에 가까운 성능**: 최소한의 가상화 오버헤드
 
-This project proves that a complete, working hypervisor can be understood and built from scratch in a reasonable timeframe.
-
----
-
-## Features
-
-### Core VMM Capabilities
-- ✅ **Multi-vCPU Support**: Run up to 4 guest programs in parallel
-- ✅ **Real Mode (16-bit)**: Direct support for legacy x86 code
-- ✅ **Protected Mode (32-bit)**: Full segmentation and paging
-- ✅ **Interrupt Handling**: Timer and keyboard interrupts
-- ✅ **Hypercall Interface**: Efficient guest-host communication
-- ✅ **I/O Emulation**: UART serial port, keyboard input
-
-### Guest Operating Systems
-1. **Real Mode Guests** (6 programs)
-   - `minimal.bin`: 1-byte HLT instruction (simplest possible guest)
-   - `hello.bin`: "Hello, KVM!" via UART
-   - `counter.bin`: Counts 0-9
-   - `multiplication.bin`: Multiplication table via hypercalls
-   - `fibonacci.bin`: Fibonacci sequence generator
-   - `hctest.bin`: Hypercall test suite
-
-2. **1K OS** (Protected Mode)
-   - **9 Interactive Programs**:
-     1. Multiplication Table (2×1 to 9×9)
-     2. Counter (0-9)
-     3. Echo (interactive input/output)
-     4. Fibonacci Sequence (first 15 numbers)
-     5. Prime Numbers (up to 100)
-     6. Calculator (+, -, *, /)
-     7. Factorial (0! to 12!)
-     8. GCD (Euclidean algorithm)
-     9. About 1K OS
-   - Kernel space with GDT/IDT
-   - User space programs via syscalls
-   - Hypercall-based I/O
-   - Timer interrupts
+이 프로젝트는 완전한 기능의 하이퍼바이저를 합리적인 시간 안에 처음부터 이해하고 구축할 수 있음을 증명합니다.
 
 ---
 
-## Quick Start
+## 주요 기능
 
-### Prerequisites
+### VMM 핵심 기능
+- ✅ **다중 vCPU 지원**: 최대 4개의 게스트 프로그램을 병렬로 실행
+- ✅ **리얼 모드 (16비트)**: 레거시 x86 코드 직접 지원
+- ✅ **보호 모드 (32비트)**: 세그멘테이션 및 페이징 완벽 지원
+- ✅ **인터럽트 처리**: 타이머 및 키보드 인터럽트
+- ✅ **하이퍼콜 인터페이스**: 효율적인 게스트-호스트 통신
+- ✅ **I/O 에뮬레이션**: UART 시리얼 포트, 키보드 입력
+
+### 게스트 운영체제
+1. **리얼 모드 게스트** (6개 프로그램)
+   - `minimal.bin`: 가장 간단한 1바이트 HLT 명령어 게스트
+   - `hello.bin`: UART를 통해 "Hello, KVM!" 출력
+   - `counter.bin`: 0부터 9까지 카운트
+   - `multiplication.bin`: 하이퍼콜을 이용한 구구단 출력
+   - `fibonacci.bin`: 피보나치 수열 생성기
+   - `hctest.bin`: 하이퍼콜 테스트 모음
+
+2. **1K OS** (보호 모드)
+   - **9개의 대화형 프로그램**:
+     1. 구구단 (2단 ~ 9단)
+     2. 카운터 (0~9)
+     3. 에코 (대화형 입출력)
+     4. 피보나치 수열 (처음 15개 숫자)
+     5. 소수 (100까지)
+     6. 계산기 (+, -, *, /)
+     7. 팩토리얼 (0! ~ 12!)
+     8. 최대공약수 (유클리드 호제법)
+     9. 1K OS 정보
+   - GDT/IDT를 포함한 커널 공간
+   - 시스템 콜을 통한 사용자 공간 프로그램
+   - 하이퍼콜 기반 I/O
+   - 타이머 인터럽트
+
+---
+
+## 빠른 시작
+
+### 사전 요구사항
 ```bash
 # Fedora/RHEL
 sudo dnf install gcc make binutils qemu-kvm
@@ -73,457 +73,128 @@ sudo dnf install gcc make binutils qemu-kvm
 # Ubuntu/Debian
 sudo apt install gcc make binutils qemu-kvm
 
-# Verify KVM support
+# KVM 지원 확인
 lsmod | grep kvm
 ls -l /dev/kvm
 ```
 
-### Build VMM and Guests
+### VMM 및 게스트 빌드
 ```bash
-# Clone repository
+# 저장소 복제
 git clone https://github.com/seolcu/mini-kvm.git
 cd mini-kvm/kvm-vmm-x86
 
-# Build VMM
+# VMM 빌드
 make vmm
 
-# Build guest programs
+# 게스트 프로그램 빌드
 cd guest && ./build.sh && cd ..
 
-# Build 1K OS
+# 1K OS 빌드
 cd os-1k && make && cd ..
 ```
 
-### Run Examples
+### 실행 예제
 
-**1. Minimal Guest (1 byte)**
+**1. 최소 기능 게스트 (1바이트)**
 ```bash
 ./kvm-vmm guest/minimal.bin
-# Output: Guest halts immediately
+# 출력: 게스트가 즉시 멈춤 (Guest halts immediately)
 ```
 
 **2. Hello World**
 ```bash
 ./kvm-vmm guest/hello.bin
-# Output: Hello, KVM!
+# 출력: Hello, KVM!
 ```
 
-**3. Multi-vCPU (2 guests simultaneously)**
+**3. 다중 vCPU (2개 게스트 동시 실행)**
 ```bash
 ./kvm-vmm guest/multiplication.bin guest/counter.bin
-# Output: Interleaved output showing true parallelism
+# 출력: 진정한 병렬 실행을 보여주는 인터리빙된 출력
 ```
 
-**4. 1K OS (Protected Mode)**
+**4. 1K OS (보호 모드)**
 ```bash
-# Run multiplication table program
+# 구구단 프로그램 실행
 printf "1\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 
-# Run Fibonacci sequence
+# 피보나치 수열 실행
 printf "4\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 
-# Run interactive calculator
+# 대화형 계산기 실행
 printf "6\n12 + 5\n100 - 37\nq\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 ```
 
 ---
 
-## Architecture
+## 아키텍처
 
-### System Overview
+### 시스템 개요
 ```
 ┌─────────────────────────────────────────────┐
-│           User Space (Host)                 │
+│           사용자 공간 (호스트)              │
 │  ┌───────────────────────────────────────┐  │
 │  │  Mini-KVM VMM (main.c)                │  │
-│  │  - VM creation & management           │  │
-│  │  - vCPU threads (pthreads)            │  │
-│  │  - I/O handling (UART, hypercalls)    │  │
-│  │  - Interrupt injection                │  │
+│  │  - VM 생성 및 관리                      │  │
+│  │  - vCPU 스레드 (pthreads)               │  │
+│  │  - I/O 처리 (UART, 하이퍼콜)            │  │
+│  │  - 인터럽트 주입                        │  │
 │  └───────────────────────────────────────┘  │
 │              ↕ KVM ioctl()                   │
 ├─────────────────────────────────────────────┤
-│           Kernel Space (Host)               │
+│           커널 공간 (호스트)                │
 │  ┌───────────────────────────────────────┐  │
-│  │  Linux KVM Module                     │  │
-│  │  - Hardware virtualization (Intel VT) │  │
-│  │  - VM exits handling                  │  │
-│  │  - Memory management (EPT)            │  │
+│  │  Linux KVM 모듈                       │  │
+│  │  - 하드웨어 가상화 (Intel VT)           │  │
+│  │  - VM exit 처리                       │  │
+│  │  - 메모리 관리 (EPT)                    │  │
 │  └───────────────────────────────────────┘  │
-│              ↕ Hardware                      │
+│              ↕ 하드웨어                      │
 ├─────────────────────────────────────────────┤
-│           Guest (Virtual Machine)           │
+│           게스트 (가상 머신)                │
 │  ┌───────────────────────────────────────┐  │
-│  │  Real Mode Guests                     │  │
-│  │  - Direct x86 16-bit code             │  │
+│  │  리얼 모드 게스트                     │  │
+│  │  - 직접 x86 16비트 코드 실행          │  │
 │  │  - UART I/O (port 0x3f8)              │  │
-│  │  - Hypercalls (port 0x500)            │  │
+│  │  - 하이퍼콜 (port 0x500)                │  │
 │  └───────────────────────────────────────┘  │
-│                   OR                         │
+│                   또는                         │
 │  ┌───────────────────────────────────────┐  │
-│  │  1K OS (Protected Mode)               │  │
+│  │  1K OS (보호 모드)                    │  │
 │  │  ┌─────────────────────────────────┐  │  │
-│  │  │ Kernel Space                    │  │  │
+│  │  │ 커널 공간                       │  │  │
 │  │  │ - GDT/IDT                       │  │  │
-│  │  │ - Paging (4MB pages)            │  │  │
-│  │  │ - Interrupt handlers            │  │  │
+│  │  │ - 페이징 (4MB 페이지)             │  │  │
+│  │  │ - 인터럽트 핸들러                 │  │  │
 │  │  └─────────────────────────────────┘  │  │
 │  │  ┌─────────────────────────────────┐  │  │
-│  │  │ User Space                      │  │  │
-│  │  │ - Shell (9 programs)            │  │  │
-│  │  │ - Syscalls via hypercalls       │  │  │
+│  │  │ 사용자 공간                     │  │  │
+│  │  │ - 셸 (9개 프로그램)             │  │  │
+│  │  │ - 하이퍼콜을 통한 시스템 콜     │  │  │
 │  │  └─────────────────────────────────┘  │  │
 │  └───────────────────────────────────────┘  │
 └─────────────────────────────────────────────┘
 ```
 
-### Memory Layout
+---
 
-**Real Mode (per vCPU)**
-```
-0x00000 - 0x3FFFF:  vCPU 0 (256 KB)
-0x40000 - 0x7FFFF:  vCPU 1 (256 KB)
-0x80000 - 0xBFFFF:  vCPU 2 (256 KB)
-0xC0000 - 0xFFFFF:  vCPU 3 (256 KB)
-```
+## 문서
 
-**Protected Mode (1K OS)**
-```
-0x00000000 - 0x003FFFFF:  Physical memory (4 MB)
-0x80000000 - 0x803FFFFF:  Virtual mapped region (kernel)
-```
+### 주요 문서
+- **[README.md](README.md)** (현재 파일): 빠른 시작 및 프로젝트 개요
+- **[최종보고서.md](docs/FINAL_REPORT.md)**: 포괄적인 프로젝트 보고서
+- **[데모가이드.md](docs/DEMO_GUIDE.md)**: 단계별 시연 가이드
+- **[성능테스트.md](docs/performance_test.md)**: 성능 측정 결과
 
-### Key Techniques
+### 개발 가이드
+- **[CLAUDE.md](CLAUDE.md)**: AI 어시스턴트 설정
 
-1. **Multi-vCPU Implementation**
-   - Each vCPU runs in separate pthread
-   - Independent memory regions in Real Mode
-   - Shared memory in Protected Mode
-   - Thread-safe I/O with mutexes
-
-2. **Hypercall Interface**
-   - Port 0x500 for VMM communication
-   - OUT instruction triggers VM exit
-   - IN instruction reads result
-   - Types: EXIT (0x00), PUTCHAR (0x01), GETCHAR (0x02)
-
-3. **Protected Mode Support**
-   - VMM sets up initial GDT/IDT
-   - 4MB PSE paging
-   - CR0.PE=1, CR0.PG=1
-   - Kernel/User mode separation (CPL 0/3)
+### 연구 노트
+- **[research/week1-12/](research/)**: 주간 진행 상황 보고서
 
 ---
 
-## Performance
+## 라이선스
 
-**Measured on**: Intel Core i7 (4 cores, KVM-enabled)
-
-| Guest Program | Execution Time | VM Exits | Notes |
-|--------------|----------------|----------|-------|
-| Minimal (HLT) | < 1 ms | 1 | Single HLT instruction |
-| Hello World | 10 ms | ~20 | Serial output |
-| Counter (0-9) | 12 ms | ~50 | 10 UART writes |
-| 1K OS Counter | 120 ms | ~1,461 | Protected Mode overhead |
-| Multi-vCPU (4×) | 18 ms | ~200 | Parallel execution |
-
-**Key Findings**:
-- VM creation overhead: < 5 ms
-- Hypercall latency: ~0.5 μs per call
-- Near-native performance for compute-intensive tasks
-- I/O operations dominate execution time
-
----
-
-## Project Structure
-
-```
-mini-kvm/
-├── kvm-vmm-x86/              # Main VMM implementation (C, 16/32-bit guests)
-│   ├── src/
-│   │   ├── main.c            # Core VMM (1,400 LOC)
-│   │   └── protected_mode.h  # Protected Mode structures
-│   ├── guest/                # Real Mode guest programs
-│   └── os-1k/                # 1K OS (Protected Mode guest)
-├── hypervisor/               # Experimental RISC-V hypervisor (Rust)
-├── HLeOs/                    # Experimental 64-bit x86 OS (Rust)
-├── docs/
-│   ├── README.md             # This file
-│   ├── FINAL_REPORT.md       # Detailed project report
-│   └── ...
-└── research/                 # Weekly research notes
-```
-
----
-
-## Documentation
-
-### Primary Documents
-- **[README.md](README.md)** (this file): Quick start and overview
-- **[FINAL_REPORT.md](docs/FINAL_REPORT.md)**: Comprehensive project report
-- **[DEMO_GUIDE.md](docs/DEMO_GUIDE.md)**: Step-by-step demonstration guide
-- **[performance_test.md](docs/performance_test.md)**: Performance measurements
-
-### Development Guides
-- **[CLAUDE.md](CLAUDE.md)**: AI assistant configuration
-
-### Research Notes
-- **[research/week1-12/](research/)**: Weekly progress reports
-
----
-
-## Technical Highlights
-
-### What Makes This Project Special
-
-1. **Educational Focus**
-   - ~3,500 lines of clear, well-commented C code
-   - Progressive complexity (1-byte guest → full OS)
-   - Demonstrates core virtualization concepts
-
-2. **Complete Implementation**
-   - Both Real Mode and Protected Mode
-   - Multi-vCPU with true parallelism
-   - Interrupt handling and I/O emulation
-
-3. **Practical Results**
-   - Boots and runs a real OS (1K OS)
-   - 9 interactive user programs
-   - Near-native performance
-
-4. **From Scratch**
-   - No framework dependencies (only KVM API)
-   - Direct hardware interaction
-   - Full control over virtualization
-
----
-
-## Development Timeline
-
-| Week | Date | Milestone |
-|------|------|-----------|
-| 1-2 | Sep | KVM API study, project design |
-| 3-4 | Sep | VM creation, memory management |
-| 5-6 | Oct | vCPU creation, register control |
-| 7-8 | Oct | Real Mode guests, I/O handling |
-| 9-10 | Nov | Multi-vCPU support |
-| 11-12 | Nov | Protected Mode, 1K OS port |
-| 13-14 | Nov | Testing, optimization, documentation |
-
-**Total Development Time**: ~14 weeks (part-time)  
-**Final Status**: ✅ Feature Complete
-
----
-
-## Building From Source
-
-### System Requirements
-- **OS**: Linux (kernel 4.20+)
-- **CPU**: Intel with VT-x or AMD with AMD-V
-- **RAM**: 512 MB minimum
-- **Compiler**: GCC 7.0+ or Clang 8.0+
-- **Tools**: GNU Make, binutils (as, ld, objcopy)
-
-### Detailed Build Instructions
-
-**1. Verify KVM Support**
-```bash
-# Check hardware virtualization
-egrep -c '(vmx|svm)' /proc/cpuinfo  # Should be > 0
-
-# Load KVM module (if not loaded)
-sudo modprobe kvm_intel  # For Intel
-sudo modprobe kvm_amd    # For AMD
-
-# Check KVM device
-ls -l /dev/kvm
-```
-
-**2. Build VMM**
-```bash
-cd kvm-vmm-x86
-make vmm
-
-# Output: kvm-vmm executable (~27 KB)
-```
-
-**3. Build Guest Programs**
-```bash
-cd guest
-./build.sh
-
-# Builds 6 guest binaries:
-# - minimal.bin (1 byte)
-# - hello.bin (15 bytes)
-# - counter.bin (18 bytes)
-# - multiplication.bin (112 bytes)
-# - fibonacci.bin (82 bytes)
-# - hctest.bin (79 bytes)
-```
-
-**4. Build 1K OS**
-```bash
-cd os-1k
-make
-
-# Output: kernel.bin (~12 KB)
-```
-
-### Compilation Flags
-```makefile
-# VMM flags
-CFLAGS = -Wall -Wextra -O2 -std=gnu11 -pthread
-
-# 1K OS flags (32-bit)
-CFLAGS = -m32 -std=c11 -O2 -ffreestanding -nostdlib \
-         -fno-builtin -fno-stack-protector -fno-pie
-```
-
----
-
-## Testing
-
-### Unit Tests
-```bash
-# Test minimal guest
-./kvm-vmm guest/minimal.bin
-# Expected: Immediate halt
-
-# Test I/O
-./kvm-vmm guest/hello.bin
-# Expected: "Hello, KVM!"
-
-# Test multi-vCPU
-./kvm-vmm guest/counter.bin guest/hello.bin
-# Expected: Interleaved output
-```
-
-### Integration Tests
-```bash
-# Run all 1K OS programs
-for i in {1..9}; do
-  printf "${i}\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
-done
-
-# Test 4 vCPUs simultaneously
-./kvm-vmm guest/minimal.bin guest/hello.bin \
-          guest/counter.bin guest/fibonacci.bin
-```
-
-### Performance Profiling
-```bash
-# Measure execution time
-time ./kvm-vmm guest/counter.bin
-
-# Count VM exits (check debug output)
-./kvm-vmm guest/counter.bin 2>&1 | grep "Thread exiting"
-```
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-**1. Permission denied on /dev/kvm**
-```bash
-# Add user to kvm group
-sudo usermod -aG kvm $USER
-# Log out and back in
-```
-
-**2. KVM module not loaded**
-```bash
-# Load appropriate module
-sudo modprobe kvm_intel  # or kvm_amd
-```
-
-**3. Guest doesn't run**
-```bash
-# Rebuild guests
-cd guest && ./build.sh
-
-# Check guest size
-ls -lh guest/*.bin
-```
-
-**4. 1K OS input doesn't work**
-```bash
-# Use input redirection, not interactive typing
-printf "1\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
-```
-
----
-
-## Contributing
-
-This is an educational project completed as part of university coursework. While the project is feature-complete, suggestions and feedback are welcome!
-
-### Code Style
-- **C Code**: K&R style, 4-space indentation
-- **Assembly**: Intel syntax, lowercase mnemonics
-- **Comments**: Explain "why", not "what"
-- **Naming**: snake_case for functions, UPPER_CASE for macros
-
-See `CLAUDE.md` for the AI assistant's configuration.
-
----
-
-## Acknowledgments
-
-### References
-- **KVM Documentation**: https://www.kernel.org/doc/html/latest/virt/kvm/
-- **1K OS**: Original RISC-V implementation by Yuma Ohgami
-- **Intel SDM**: Intel 64 and IA-32 Architectures Software Developer's Manual
-
-### Tools & Libraries
-- **Linux KVM**: Hardware-assisted virtualization
-- **GCC/Binutils**: Compilation toolchain
-- **QEMU**: Testing and comparison
-
-### Inspiration
-- **xv6**: MIT's educational Unix-like OS
-- **Bochs**: x86 emulator architecture
-
----
-
-## License
-
-MIT License - See [LICENSE](LICENSE) for details.
-
----
-
-## Contact
-
-**Author**: Seolcu  
-**University**: Ajou University  
-**Project**: Independent Research (2025 Fall)  
-**Repository**: https://github.com/seolcu/mini-kvm
-
-For questions or feedback, please open an issue on GitHub.
-
----
-
-## Project Statistics
-
-**Final Metrics** (as of November 22, 2025):
-- **Total Lines of Code**: ~3,500 LOC (C + Assembly)
-  - VMM: ~1,400 LOC
-  - 1K OS: ~1,200 LOC
-  - Guests: ~500 LOC
-  - Build system: ~400 LOC
-- **Guest Programs**: 15 total (6 Real Mode + 9 in 1K OS)
-- **Supported Modes**: Real Mode (16-bit) + Protected Mode (32-bit)
-- **Max vCPUs**: 4 simultaneous
-- **Git Commits**: 50+
-- **Documentation**: 5 comprehensive guides
-
-**Development Statistics**:
-- **Study Phase**: 4 weeks
-- **Implementation**: 8 weeks
-- **Testing & Documentation**: 2 weeks
-- **Total**: 14 weeks (part-time)
-
----
-
-**Status**: ✅ Complete | 🎓 Educational | 🚀 Production-Quality Code
+MIT 라이선스 - 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
