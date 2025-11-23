@@ -239,34 +239,19 @@ printf "6\n12 + 5\n100 - 37\nq\n0\n" | ./kvm-vmm --paging os-1k/kernel.bin
 
 ```
 mini-kvm/
-├── kvm-vmm-x86/              # Main VMM implementation
+├── kvm-vmm-x86/              # Main VMM implementation (C, 16/32-bit guests)
 │   ├── src/
 │   │   ├── main.c            # Core VMM (1,400 LOC)
 │   │   └── protected_mode.h  # Protected Mode structures
 │   ├── guest/                # Real Mode guest programs
-│   │   ├── minimal.S         # 1-byte guest
-│   │   ├── hello.S           # Hello World
-│   │   ├── counter.S         # Counter 0-9
-│   │   ├── multiplication.S  # Multiplication table
-│   │   ├── fibonacci.S       # Fibonacci generator
-│   │   ├── hctest.S          # Hypercall tests
-│   │   └── build.sh          # Guest build script
-│   ├── os-1k/                # 1K OS (Protected Mode)
-│   │   ├── boot.S            # Boot sequence
-│   │   ├── kernel.c          # Kernel implementation
-│   │   ├── shell.c           # User programs (9×)
-│   │   ├── user.c            # User library
-│   │   └── common.c          # Common utilities
-│   └── Makefile              # Build system
+│   └── os-1k/                # 1K OS (Protected Mode guest)
+├── hypervisor/               # Experimental RISC-V hypervisor (Rust)
+├── HLeOs/                    # Experimental 64-bit x86 OS (Rust)
 ├── docs/
 │   ├── README.md             # This file
 │   ├── FINAL_REPORT.md       # Detailed project report
-│   ├── DEMO_GUIDE.md         # Demonstration guide
-│   ├── performance_test.md   # Performance analysis
-│   └── AGENTS.md             # Build & style guide
+│   └── ...
 └── research/                 # Weekly research notes
-    └── week*/
-        └── README.md
 ```
 
 ---

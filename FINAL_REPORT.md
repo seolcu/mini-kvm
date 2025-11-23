@@ -459,7 +459,25 @@ void *vcpu_thread(void *arg) {
 
 ## 6. Future Work
 
-### 6.1 Short-Term Enhancements (1-2 weeks)
+### 6.1 Architectural Evolution (Post-Project Analysis)
+
+A post-project analysis revealed that the repository contains three distinct components with varying goals and levels of completion. The following long-term architectural paths are recommended based on this analysis:
+
+1.  **Extend C-VMM to Support 64-bit (Long Mode)**
+    *   **Goal**: The most direct evolution for the main project. Extend the stable C-VMM to support 64-bit guests.
+    *   **Key Steps**:
+        *   Implement Long Mode setup (CR0, CR4, EFER MSRs).
+        *   Create and manage 4-level page tables (PML4).
+        *   Update segment register handling for 64-bit code segments.
+    *   **Outcome**: This would enable the VMM to run the experimental `HLeOs` kernel, unifying the C and Rust x86 projects and significantly increasing the VMM's capabilities.
+
+2.  **Separate and Focus Rust Projects**
+    *   **Goal**: Allow the experimental Rust projects to mature independently.
+    *   **Key Steps**:
+        *   **`HLeOs`**: Move the 64-bit OS to a dedicated repository. Continue its development with a clear focus on running on standard hypervisors like QEMU or, eventually, the 64-bit-enabled C-VMM.
+        *   **`hypervisor`**: Move the experimental RISC-V hypervisor to a separate repository. This clarifies its distinct architecture (RISC-V, not x86) and allows for focused development in the embedded/RISC-V space.
+
+### 6.2 Short-Term Enhancements (1-2 weeks)
 
 1. **Full keyboard support**
    - Implement complete scancode translation
