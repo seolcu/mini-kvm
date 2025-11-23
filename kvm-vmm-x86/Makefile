@@ -1,5 +1,5 @@
 # Makefile for Mini-KVM (x86)
-# Unified build and run system
+# Build system only - run binaries directly
 
 # --- Configuration ---
 CC = gcc
@@ -7,17 +7,11 @@ CFLAGS = -Wall -Wextra -O2 -std=gnu11
 LDFLAGS = -pthread
 VMM = kvm-vmm
 
-# List of real-mode guests from the build script
-GUESTS = minimal hello counter multiplication fibonacci hctest pmode_test
-
 # --- Default Goal: Show help ---
 .DEFAULT_GOAL := help
 
-# --- Phony Targets (commands that don't produce a file with the same name) ---
+# --- Phony Targets ---
 .PHONY: all clean help vmm guests 1k-os
-.PHONY: $(patsubst %, run-%, $(GUESTS))
-.PHONY: run-multi2 run-multi4
-.PHONY: run-1k-os-shell run-1k-os-multiplication run-1k-os-counter run-1k-os-echo run-1k-os-fibonacci run-1k-os-primes run-1k-os-calc run-1k-os-factorial run-1k-os-gcd run-1k-os-about
 
 # --- Build Targets ---
 
@@ -25,7 +19,9 @@ GUESTS = minimal hello counter multiplication fibonacci hctest pmode_test
 all: vmm guests 1k-os
 	@echo
 	@echo "--- All components built successfully! ---"
-	@echo "Use 'make help' to see available run commands."
+	@echo "Run binaries directly:"
+	@echo "  ./kvm-vmm guest/<name>.bin"
+	@echo "  ./kvm-vmm --paging os-1k/kernel.bin"
 
 # Build the VMM
 vmm: $(VMM)
@@ -44,98 +40,6 @@ guests:
 	@echo "=> Building 1K OS..."
 	@$(MAKE) -C os-1k > /dev/null
 
-# --- Run Targets ---
-
-# Generic rule for running real-mode guests
-run-%:
-	@$(MAKE) vmm
-	@$(MAKE) guests
-	@echo "=> Running Real Mode Guest: $*..."
-	@timeout 5s ./$(VMM) guest/$*.bin
-
-# Rule for running the protected-mode test guest
-run-pmode_test:
-	@$(MAKE) vmm
-	@$(MAKE) guests
-	@echo "=> Running Protected Mode Test Guest: pmode_test..."
-	@timeout 5s ./$(VMM) --paging guest/pmode_test.bin
-
-# Rules for multi-vCPU demos
-run-multi2:
-	@$(MAKE) vmm
-	@$(MAKE) guests
-	@echo "=> Running Multi-vCPU Demo (2 guests)..."
-	@timeout 5s ./$(VMM) guest/multiplication.bin guest/counter.bin
-
-run-multi4:
-	@$(MAKE) vmm
-	@$(MAKE) guests
-	@echo "=> Running Multi-vCPU Demo (4 guests)..."
-	@timeout 5s ./$(VMM) guest/counter.bin guest/hello.bin guest/multiplication.bin guest/minimal.bin
-
-# Rule for running 1K OS interactive shell
-run-1k-os-shell:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS (Interactive Shell)..."
-	@./$(VMM) --paging os-1k/kernel.bin
-
-# Rules for running specific 1K OS programs
-run-1k-os-multiplication:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS Demo: Multiplication Table..."
-	@printf "1\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
-
-run-1k-os-counter:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS Demo: Counter..."
-	@printf "2\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
-
-run-1k-os-echo:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS Demo: Echo..."
-	@printf "3\nHello 1K OS\nquit\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
-
-run-1k-os-fibonacci:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS Demo: Fibonacci..."
-	@printf "4\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
-
-run-1k-os-primes:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS Demo: Prime Numbers..."
-	@printf "5\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
-
-run-1k-os-calc:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS Demo: Calculator..."
-	@printf "6\n123+456\nq\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
-
-run-1k-os-factorial:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS Demo: Factorial..."
-	@printf "7\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
-
-run-1k-os-gcd:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS Demo: GCD..."
-	@printf "8\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
-
-run-1k-os-about:
-	@$(MAKE) vmm
-	@$(MAKE) 1k-os
-	@echo "=> Running 1K OS Demo: About..."
-	@printf "9\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
-
-
 # --- Cleanup ---
 clean:
 	@echo "=> Cleaning build artifacts..."
@@ -144,10 +48,9 @@ clean:
 	@$(MAKE) -C os-1k clean > /dev/null
 	@echo "Cleanup complete."
 
-
 # --- Help ---
 help:
-	@echo "Mini-KVM Build & Run System"
+	@echo "Mini-KVM Build System"
 	@echo
 	@echo "Usage: make <target>"
 	@echo
@@ -158,18 +61,21 @@ help:
 	@echo "  1k-os                  Build only the 1K OS"
 	@echo "  clean                  Remove all build artifacts"
 	@echo
-	@echo "--- Run Real-Mode Guests (e.g., make run-hello) ---"
-	@echo "  run-minimal            run-hello                run-counter"
-	@echo "  run-multiplication     run-fibonacci            run-hctest"
-	@echo "  run-pmode_test"
+	@echo "--- Running Programs ---"
+	@echo "Real Mode Guests:"
+	@echo "  ./kvm-vmm guest/minimal.bin"
+	@echo "  ./kvm-vmm guest/hello.bin"
+	@echo "  ./kvm-vmm guest/counter.bin"
+	@echo "  ./kvm-vmm guest/multiplication.bin"
+	@echo "  ./kvm-vmm guest/fibonacci.bin"
+	@echo "  ./kvm-vmm guest/hctest.bin"
 	@echo
-	@echo "--- Run Multi-vCPU Demos ---"
-	@echo "  run-multi2             Run 2 guests simultaneously"
-	@echo "  run-multi4             Run 4 guests simultaneously"
+	@echo "Multi-vCPU (2-4 guests):"
+	@echo "  ./kvm-vmm guest/multiplication.bin guest/counter.bin"
+	@echo "  ./kvm-vmm guest/counter.bin guest/hello.bin guest/multiplication.bin guest/minimal.bin"
 	@echo
-	@echo "--- Run 1K OS (Protected Mode) ---"
-	@echo "  run-1k-os-shell        Run in interactive shell mode"
-	@echo "  run-1k-os-multiplication, run-1k-os-counter, run-1k-os-echo, ..."
-	@echo "  run-1k-os-fibonacci,    run-1k-os-primes,     run-1k-os-calc, ..."
-	@echo "  run-1k-os-factorial,    run-1k-os-gcd,        run-1k-os-about"
+	@echo "1K OS (Protected Mode):"
+	@echo "  ./kvm-vmm --paging os-1k/kernel.bin"
+	@echo "  printf '1\\n0\\n' | ./kvm-vmm --paging os-1k/kernel.bin  # Run multiplication"
+	@echo "  printf '3\\nHello\\nquit\\n0\\n' | ./kvm-vmm --paging os-1k/kernel.bin  # Run echo"
 	@echo

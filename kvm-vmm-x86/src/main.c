@@ -75,8 +75,6 @@ typedef struct {
     uint32_t load_offset;         // Offset to load binary in guest memory
     int pending_getchar;          // GETCHAR request pending (0=no, 1=yes)
     int getchar_result;           // Cached GETCHAR result for IN instruction
-    char output_buffer[512];      // Per-vCPU output buffer for cleaner multi-vCPU display
-    int output_pos;               // Current position in output buffer
 } vcpu_context_t;
 
 // Global KVM state (shared across vCPUs)
@@ -99,15 +97,20 @@ static bool verbose = false;
 static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
     pthread_mutex_lock(&stdout_mutex);
 
-    // Color code based on vCPU ID
-    const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
-    const char *reset = "\033[0m";
+    // Use color only for multi-vCPU (num_vcpus > 1)
+    if (num_vcpus > 1) {
+        const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
+        const char *reset = "\033[0m";
 
-    printf("%s[vCPU %d:%s]%s ",
-           colors[ctx->vcpu_id % 4],
-           ctx->vcpu_id,
-           ctx->name,
-           reset);
+        printf("%s[vCPU %d:%s]%s ",
+               colors[ctx->vcpu_id % 4],
+               ctx->vcpu_id,
+               ctx->name,
+               reset);
+    } else {
+        // Single vCPU: no color, simple prefix
+        printf("[%s] ", ctx->name);
+    }
 
     va_list args;
     va_start(args, fmt);
@@ -120,27 +123,23 @@ static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
 }
 
 /*
- * Flush per-vCPU output buffer
+ * Output single character with color for vCPU identification
  */
-static void vcpu_flush_output(vcpu_context_t *ctx) {
-    if (ctx->output_pos == 0) return;
-
+static void vcpu_putchar(vcpu_context_t *ctx, char ch) {
     pthread_mutex_lock(&stdout_mutex);
 
-    // Color code based on vCPU ID
-    const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
-    const char *reset = "\033[0m";
-
-    // Output content in color to distinguish vCPUs visually
-    printf("%s", colors[ctx->vcpu_id % 4]);
-    fwrite(ctx->output_buffer, 1, ctx->output_pos, stdout);
-    printf("%s", reset);
+    // Use color only for multi-vCPU (num_vcpus > 1)
+    if (num_vcpus > 1) {
+        const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
+        const char *reset = "\033[0m";
+        printf("%s%c%s", colors[ctx->vcpu_id % 4], ch, reset);
+    } else {
+        // Single vCPU: no color
+        putchar(ch);
+    }
     fflush(stdout);
 
     pthread_mutex_unlock(&stdout_mutex);
-
-    // Reset buffer position
-    ctx->output_pos = 0;
 }
 
 /*
@@ -311,8 +310,9 @@ static void *stdin_monitor_thread_func(void *arg) {
 
 /*
  * Initialize KVM and create VM
+ * need_irqchip: true for Protected Mode (needs interrupts), false for Real Mode
  */
-static int init_kvm(void) {
+static int init_kvm(bool need_irqchip) {
     int api_version;
 
     // 1. Open /dev/kvm
@@ -347,14 +347,16 @@ static int init_kvm(void) {
 
     printf("Created VM (fd=%d)\n", vm_fd);
 
-    // 4. Create interrupt controller (IRQCHIP)
-    // This enables interrupt injection via KVM_IRQ_LINE
-    if (ioctl(vm_fd, KVM_CREATE_IRQCHIP) < 0) {
-        perror("KVM_CREATE_IRQCHIP");
-        fprintf(stderr, "Warning: Interrupt controller creation failed. Interrupts disabled.\n");
-        // Continue anyway - hypercall-based I/O will still work
-    } else {
-        printf("Created interrupt controller (IRQCHIP)\n");
+    // 4. Create interrupt controller (IRQCHIP) only if needed
+    // Real Mode guests don't need interrupts, Protected Mode does
+    if (need_irqchip) {
+        if (ioctl(vm_fd, KVM_CREATE_IRQCHIP) < 0) {
+            perror("KVM_CREATE_IRQCHIP");
+            fprintf(stderr, "Warning: Interrupt controller creation failed. Interrupts disabled.\n");
+            // Continue anyway - hypercall-based I/O will still work
+        } else {
+            printf("Created interrupt controller (IRQCHIP)\n");
+        }
     }
 
     return 0;
@@ -1075,15 +1077,8 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                         case HC_PUTCHAR: {
                             char ch = regs.rbx & 0xFF;
 
-                            // Add character to output buffer
-                            if (ctx->output_pos < 511) {
-                                ctx->output_buffer[ctx->output_pos++] = ch;
-                            }
-
-                            // Flush on newline or when buffer is full
-                            if (ch == '\n' || ctx->output_pos >= 511) {
-                                vcpu_flush_output(ctx);
-                            }
+                            // Output character immediately with color
+                            vcpu_putchar(ctx, ch);
                             break;
                         }
 
@@ -1197,11 +1192,6 @@ static void *vcpu_thread(void *arg) {
         if (handle_vm_exit(ctx) < 0) {
             break;
         }
-    }
-
-    // Flush any remaining buffered output before exiting
-    if (ctx->output_pos > 0) {
-        vcpu_flush_output(ctx);
     }
 
     vcpu_printf(ctx, "Thread exiting (total exits: %d)\n", ctx->exit_count);
@@ -1338,7 +1328,8 @@ int main(int argc, char **argv) {
     printf("Starting %d vCPU(s)\n\n", num_vcpus);
 
     // Step 1: Initialize KVM and create VM
-    if (init_kvm() < 0) {
+    // Only create IRQCHIP for Protected Mode (paging enabled)
+    if (init_kvm(enable_paging) < 0) {
         ret = 1;
         goto cleanup_early;
     }
@@ -1382,18 +1373,20 @@ int main(int argc, char **argv) {
         printf("\n");
     }
 
-    // Step 3: Start timer thread for periodic interrupts
-    timer_thread_running = true;
-    if (pthread_create(&timer_thread, NULL, timer_thread_func, NULL) != 0) {
-        fprintf(stderr, "Warning: Failed to create timer thread. Timer interrupts disabled.\n");
-        timer_thread_running = false;
-    }
+    // Step 3: Start timer and stdin threads (only for Protected Mode with paging)
+    // Real Mode guests don't use interrupts, so skip these threads
+    if (enable_paging) {
+        timer_thread_running = true;
+        if (pthread_create(&timer_thread, NULL, timer_thread_func, NULL) != 0) {
+            fprintf(stderr, "Warning: Failed to create timer thread. Timer interrupts disabled.\n");
+            timer_thread_running = false;
+        }
 
-    // Step 3b: Start stdin monitoring thread for keyboard interrupts
-    stdin_thread_running = true;
-    if (pthread_create(&stdin_thread, NULL, stdin_monitor_thread_func, NULL) != 0) {
-        fprintf(stderr, "Warning: Failed to create stdin monitoring thread. Keyboard input disabled.\n");
-        stdin_thread_running = false;
+        stdin_thread_running = true;
+        if (pthread_create(&stdin_thread, NULL, stdin_monitor_thread_func, NULL) != 0) {
+            fprintf(stderr, "Warning: Failed to create stdin monitoring thread. Keyboard input disabled.\n");
+            stdin_thread_running = false;
+        }
     }
 
     // Step 4: Spawn vCPU threads
@@ -1415,7 +1408,7 @@ int main(int argc, char **argv) {
     printf("\n=== All vCPUs completed ===\n");
 
 cleanup_stdin:
-    // Stop monitoring threads
+    // Stop monitoring threads immediately after vCPUs complete
     if (timer_thread_running) {
         timer_thread_running = false;
         pthread_join(timer_thread, NULL);
