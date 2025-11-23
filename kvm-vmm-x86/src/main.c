@@ -75,6 +75,8 @@ typedef struct {
     uint32_t load_offset;         // Offset to load binary in guest memory
     int pending_getchar;          // GETCHAR request pending (0=no, 1=yes)
     int getchar_result;           // Cached GETCHAR result for IN instruction
+    char output_buffer[512];      // Per-vCPU output buffer for cleaner multi-vCPU display
+    int output_pos;               // Current position in output buffer
 } vcpu_context_t;
 
 // Global KVM state (shared across vCPUs)
@@ -115,6 +117,34 @@ static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
     fflush(stdout);
 
     pthread_mutex_unlock(&stdout_mutex);
+}
+
+/*
+ * Flush per-vCPU output buffer
+ */
+static void vcpu_flush_output(vcpu_context_t *ctx) {
+    if (ctx->output_pos == 0) return;
+
+    pthread_mutex_lock(&stdout_mutex);
+
+    // Color code based on vCPU ID
+    const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
+    const char *reset = "\033[0m";
+
+    printf("%s[vCPU %d:%s]%s ",
+           colors[ctx->vcpu_id % 4],
+           ctx->vcpu_id,
+           ctx->name,
+           reset);
+
+    // Write buffered content
+    fwrite(ctx->output_buffer, 1, ctx->output_pos, stdout);
+    fflush(stdout);
+
+    pthread_mutex_unlock(&stdout_mutex);
+
+    // Reset buffer position
+    ctx->output_pos = 0;
 }
 
 /*
@@ -210,8 +240,8 @@ static void *timer_thread_func(void *arg) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
 
     while (timer_thread_running) {
-        // Sleep for 10ms
-        usleep(10000);
+        // Sleep for 100ms (reduced frequency to allow more interactive use)
+        usleep(100000);
 
         timer_ticks++;
 
@@ -1048,10 +1078,16 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
 
                         case HC_PUTCHAR: {
                             char ch = regs.rbx & 0xFF;
-                            pthread_mutex_lock(&stdout_mutex);
-                            putchar(ch);
-                            fflush(stdout);
-                            pthread_mutex_unlock(&stdout_mutex);
+
+                            // Add character to output buffer
+                            if (ctx->output_pos < 511) {
+                                ctx->output_buffer[ctx->output_pos++] = ch;
+                            }
+
+                            // Flush on newline or when buffer is full
+                            if (ch == '\n' || ctx->output_pos >= 511) {
+                                vcpu_flush_output(ctx);
+                            }
                             break;
                         }
 
@@ -1137,8 +1173,8 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
             return -1;
     }
 
-    // Safety limit
-    if (ctx->exit_count > 10000) {
+    // Safety limit (increased to allow interactive use with 1K OS)
+    if (ctx->exit_count > 100000) {
         vcpu_printf(ctx, "Too many exits (%d), stopping\n", ctx->exit_count);
         return -1;
     }
@@ -1165,6 +1201,11 @@ static void *vcpu_thread(void *arg) {
         if (handle_vm_exit(ctx) < 0) {
             break;
         }
+    }
+
+    // Flush any remaining buffered output before exiting
+    if (ctx->output_pos > 0) {
+        vcpu_flush_output(ctx);
     }
 
     vcpu_printf(ctx, "Thread exiting (total exits: %d)\n", ctx->exit_count);
