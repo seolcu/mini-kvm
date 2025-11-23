@@ -16,6 +16,7 @@
 #include <linux/kvm.h>
 #include <errno.h>
 #include <pthread.h>
+#include <termios.h>
 #include "protected_mode.h"
 
 // Guest memory configuration
@@ -52,6 +53,10 @@ static keyboard_buffer_t keyboard_buffer = {
 // Stdin monitoring thread
 static pthread_t stdin_thread;
 static bool stdin_thread_running = false;
+
+// Terminal settings
+static struct termios orig_termios;
+static bool termios_saved = false;
 
 // Timer thread
 static pthread_t timer_thread;
@@ -257,6 +262,60 @@ static void *timer_thread_func(void *arg) {
 
     printf("[Timer] Timer thread stopped\n");
     return NULL;
+}
+
+/*
+ * Set terminal to raw mode for character-by-character input
+ * Disables local echo and line buffering
+ */
+static void set_raw_mode(void) {
+    if (!isatty(STDIN_FILENO)) {
+        // Not a terminal (piped input), skip raw mode
+        return;
+    }
+    
+    // Save original terminal settings
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+        perror("tcgetattr");
+        return;
+    }
+    termios_saved = true;
+    
+    struct termios raw = orig_termios;
+    
+    // Disable echo (ECHO) and canonical mode (ICANON)
+    // ICANON: line buffering
+    // ECHO: local echo
+    // ISIG: signal generation (Ctrl+C, Ctrl+Z)
+    raw.c_lflag &= ~(ECHO | ICANON | ISIG);
+    
+    // Disable input processing
+    // IXON: Ctrl+S/Ctrl+Q flow control
+    // ICRNL: translate CR to NL
+    raw.c_iflag &= ~(IXON | ICRNL);
+    
+    // Disable output processing
+    // OPOST: implementation-defined output processing
+    raw.c_oflag &= ~(OPOST);
+    
+    // Set read to return immediately with at least 1 character
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        perror("tcsetattr");
+        termios_saved = false;
+    }
+}
+
+/*
+ * Restore terminal to original settings
+ */
+static void restore_terminal(void) {
+    if (termios_saved) {
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+        termios_saved = false;
+    }
 }
 
 /*
@@ -1367,6 +1426,11 @@ int main(int argc, char **argv) {
     }
     printf("Starting %d vCPU(s)\n\n", num_vcpus);
 
+    // Set terminal to raw mode for character-by-character input (Protected Mode only)
+    if (enable_paging) {
+        set_raw_mode();
+    }
+
     // Step 1: Initialize KVM and create VM
     // Only create IRQCHIP for Protected Mode (paging enabled)
     if (init_kvm(enable_paging) < 0) {
@@ -1466,6 +1530,9 @@ cleanup_vcpus:
     }
 
 cleanup_early:
+    // Restore terminal settings
+    restore_terminal();
+    
     // Cleanup global resources
     if (vm_fd >= 0) close(vm_fd);
     if (kvm_fd >= 0) close(kvm_fd);

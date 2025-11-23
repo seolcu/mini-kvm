@@ -256,7 +256,13 @@ void main(void) {
 
         // Read choice (readline handles echo automatically)
         char input[8];
-        readline(input, sizeof(input));
+        int len = readline(input, sizeof(input));
+        
+        // Skip empty input (just pressed Enter)
+        if (len == 0 || input[0] == '\0') {
+            continue;
+        }
+        
         char choice = input[0];
 
         if (choice == '0') {
