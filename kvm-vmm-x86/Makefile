@@ -18,15 +18,6 @@ guest:
 	cd guest && ./build.sh
 	@echo
 
-# Build hello guest
-hello:
-	@echo "=== Building hello guest ==="
-	cd guest && as -32 -o hello.o hello.S && \
-	ld -m elf_i386 -T guest.ld -o hello.elf hello.o && \
-	objcopy -O binary -j .text -j .rodata hello.elf hello.bin
-	@ls -lh guest/hello.bin
-	@echo
-
 # Build VMM
 vmm: src/main.c
 	@echo "=== Building VMM ==="

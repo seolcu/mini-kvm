@@ -22,8 +22,8 @@ for guest in $GUESTS; do
     # Link with custom linker script
     ld -m elf_i386 -T guest.ld -o ${guest}.elf ${guest}.o
     
-    # Extract raw binary (.text section only)
-    objcopy -O binary -j .text ${guest}.elf ${guest}.bin
+    # Extract raw binary (.text and .rodata sections)
+    objcopy -O binary -j .text -j .rodata ${guest}.elf ${guest}.bin
     
     echo "  ${guest}.bin: $(stat -c%s ${guest}.bin) bytes"
 done

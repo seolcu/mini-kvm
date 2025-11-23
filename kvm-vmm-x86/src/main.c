@@ -131,14 +131,10 @@ static void vcpu_flush_output(vcpu_context_t *ctx) {
     const char *colors[] = {"\033[31m", "\033[32m", "\033[33m", "\033[34m"};
     const char *reset = "\033[0m";
 
-    printf("%s[vCPU %d:%s]%s ",
-           colors[ctx->vcpu_id % 4],
-           ctx->vcpu_id,
-           ctx->name,
-           reset);
-
-    // Write buffered content
+    // Output content in color to distinguish vCPUs visually
+    printf("%s", colors[ctx->vcpu_id % 4]);
     fwrite(ctx->output_buffer, 1, ctx->output_pos, stdout);
+    printf("%s", reset);
     fflush(stdout);
 
     pthread_mutex_unlock(&stdout_mutex);
@@ -1173,8 +1169,8 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
             return -1;
     }
 
-    // Safety limit (increased to allow interactive use with 1K OS)
-    if (ctx->exit_count > 100000) {
+    // Safety limit (disabled for Protected Mode to allow indefinite interactive use with 1K OS)
+    if (!ctx->use_paging && ctx->exit_count > 100000) {
         vcpu_printf(ctx, "Too many exits (%d), stopping\n", ctx->exit_count);
         return -1;
     }
