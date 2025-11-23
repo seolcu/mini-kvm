@@ -5,7 +5,7 @@ set -e
 echo "Building x86 Real Mode guest code..."
 
 # List of guest programs to build
-GUESTS="minimal hello counter multiplication fibonacci hctest matrix"
+GUESTS="minimal hello counter multiplication multiplication_short fibonacci hctest matrix"
 
 for guest in $GUESTS; do
     if [ ! -f "${guest}.S" ]; then

@@ -104,8 +104,8 @@ static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
 
     // Use color only for multi-vCPU (num_vcpus > 1)
     if (num_vcpus > 1) {
-        // Cyan, Green, Yellow, Blue (avoid red - looks like error)
-        const char *colors[] = {"\033[36m", "\033[32m", "\033[33m", "\033[34m"};
+        // Magenta, Green, Yellow, Blue (Magenta distinguishes clearly from Green)
+        const char *colors[] = {"\033[35m", "\033[32m", "\033[33m", "\033[34m"};
         const char *reset = "\033[0m";
 
         printf("%s[vCPU %d:%s]%s ",
@@ -136,8 +136,8 @@ static void vcpu_putchar(vcpu_context_t *ctx, char ch) {
 
     // Use color only for multi-vCPU (num_vcpus > 1)
     if (num_vcpus > 1) {
-        // Cyan, Green, Yellow, Blue (avoid red - looks like error)
-        const char *colors[] = {"\033[36m", "\033[32m", "\033[33m", "\033[34m"};
+        // Magenta, Green, Yellow, Blue (Magenta distinguishes clearly from Green)
+        const char *colors[] = {"\033[35m", "\033[32m", "\033[33m", "\033[34m"};
         const char *reset = "\033[0m";
         printf("%s%c%s", colors[ctx->vcpu_id % 4], ch, reset);
     } else {
