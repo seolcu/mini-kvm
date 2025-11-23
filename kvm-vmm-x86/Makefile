@@ -47,63 +47,91 @@ guests:
 # --- Run Targets ---
 
 # Generic rule for running real-mode guests
-run-%: vmm guests
+run-%:
+	@$(MAKE) vmm
+	@$(MAKE) guests
 	@echo "=> Running Real Mode Guest: $*..."
 	@timeout 5s ./$(VMM) guest/$*.bin
 
 # Rule for running the protected-mode test guest
-run-pmode_test: vmm guests
+run-pmode_test:
+	@$(MAKE) vmm
+	@$(MAKE) guests
 	@echo "=> Running Protected Mode Test Guest: pmode_test..."
 	@timeout 5s ./$(VMM) --paging guest/pmode_test.bin
 
 # Rules for multi-vCPU demos
-run-multi2: vmm guests
+run-multi2:
+	@$(MAKE) vmm
+	@$(MAKE) guests
 	@echo "=> Running Multi-vCPU Demo (2 guests)..."
 	@timeout 5s ./$(VMM) guest/multiplication.bin guest/counter.bin
 
-run-multi4: vmm guests
+run-multi4:
+	@$(MAKE) vmm
+	@$(MAKE) guests
 	@echo "=> Running Multi-vCPU Demo (4 guests)..."
 	@timeout 5s ./$(VMM) guest/counter.bin guest/hello.bin guest/multiplication.bin guest/minimal.bin
 
 # Rule for running 1K OS interactive shell
-run-1k-os-shell: vmm 1k-os
+run-1k-os-shell:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS (Interactive Shell)..."
 	@./$(VMM) --paging os-1k/kernel.bin
 
 # Rules for running specific 1K OS programs
-run-1k-os-multiplication: vmm 1k-os
+run-1k-os-multiplication:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS Demo: Multiplication Table..."
 	@printf "1\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-run-1k-os-counter: vmm 1k-os
+run-1k-os-counter:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS Demo: Counter..."
 	@printf "2\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-run-1k-os-echo: vmm 1k-os
+run-1k-os-echo:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS Demo: Echo..."
 	@printf "3\nHello 1K OS\nquit\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-run-1k-os-fibonacci: vmm 1k-os
+run-1k-os-fibonacci:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS Demo: Fibonacci..."
 	@printf "4\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-run-1k-os-primes: vmm 1k-os
+run-1k-os-primes:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS Demo: Prime Numbers..."
 	@printf "5\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-run-1k-os-calc: vmm 1k-os
+run-1k-os-calc:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS Demo: Calculator..."
 	@printf "6\n123+456\nq\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-run-1k-os-factorial: vmm 1k-os
+run-1k-os-factorial:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS Demo: Factorial..."
 	@printf "7\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-run-1k-os-gcd: vmm 1k-os
+run-1k-os-gcd:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS Demo: GCD..."
 	@printf "8\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
-run-1k-os-about: vmm 1k-os
+run-1k-os-about:
+	@$(MAKE) vmm
+	@$(MAKE) 1k-os
 	@echo "=> Running 1K OS Demo: About..."
 	@printf "9\n0\n" | ./$(VMM) --paging os-1k/kernel.bin
 
