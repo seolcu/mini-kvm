@@ -294,9 +294,11 @@ static void set_raw_mode(void) {
     // ICRNL: translate CR to NL
     raw.c_iflag &= ~(IXON | ICRNL);
     
-    // Disable output processing
-    // OPOST: implementation-defined output processing
-    raw.c_oflag &= ~(OPOST);
+    // Keep output processing enabled for proper newline handling
+    // OPOST enables automatic \n to \r\n translation (ONLCR flag)
+    // This is essential for correct line breaks in terminal output
+    // Without OPOST, each \n only moves cursor down, not to start of line
+    // raw.c_oflag &= ~(OPOST);  // DO NOT disable OPOST!
     
     // Set read to return immediately with at least 1 character
     raw.c_cc[VMIN] = 1;
