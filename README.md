@@ -260,12 +260,11 @@ mini-kvm/
 
 ### Primary Documents
 - **[README.md](README.md)** (this file): Quick start and overview
-- **[FINAL_REPORT.md](FINAL_REPORT.md)**: Comprehensive project report
-- **[DEMO_GUIDE.md](DEMO_GUIDE.md)**: Step-by-step demonstration guide
-- **[performance_test.md](performance_test.md)**: Performance measurements
+- **[FINAL_REPORT.md](docs/FINAL_REPORT.md)**: Comprehensive project report
+- **[DEMO_GUIDE.md](docs/DEMO_GUIDE.md)**: Step-by-step demonstration guide
+- **[performance_test.md](docs/performance_test.md)**: Performance measurements
 
 ### Development Guides
-- **[AGENTS.md](AGENTS.md)**: Build commands and code style
 - **[CLAUDE.md](CLAUDE.md)**: AI assistant configuration
 
 ### Research Notes
@@ -466,7 +465,7 @@ This is an educational project completed as part of university coursework. While
 - **Comments**: Explain "why", not "what"
 - **Naming**: snake_case for functions, UPPER_CASE for macros
 
-See [AGENTS.md](AGENTS.md) for detailed style guide.
+See `CLAUDE.md` for the AI assistant's configuration.
 
 ---
 
