@@ -1114,17 +1114,21 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
                     // GETCHAR: Return cached result from previous OUT
                     data[0] = (ctx->getchar_result == -1) ? 0xFF : (unsigned char)ctx->getchar_result;
                     
-                    static int in_count = 0;
-                    if (in_count++ < 50) {
-                        vcpu_printf(ctx, "IN[%d] from 0x500: returning ch=%d (0x%02x)\n", 
-                                   in_count, ctx->getchar_result, data[0]);
+                    if (verbose) {
+                        static int in_count = 0;
+                        if (in_count++ < 50) {
+                            vcpu_printf(ctx, "IN[%d] from 0x500: returning ch=%d (0x%02x)\n", 
+                                       in_count, ctx->getchar_result, data[0]);
+                        }
                     }
                     ctx->pending_getchar = 0;
                 } else if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
                     // IN without pending_getchar - this shouldn't happen
-                    static int unexpected_in = 0;
-                    if (unexpected_in++ < 20) {
-                        vcpu_printf(ctx, "WARN[%d]: IN from 0x500 without pending_getchar!\n", unexpected_in);
+                    if (verbose) {
+                        static int unexpected_in = 0;
+                        if (unexpected_in++ < 20) {
+                            vcpu_printf(ctx, "WARN[%d]: IN from 0x500 without pending_getchar!\n", unexpected_in);
+                        }
                     }
                     data[0] = 0;  // Return 0 by default
                 }
