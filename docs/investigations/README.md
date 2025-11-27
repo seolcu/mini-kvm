@@ -6,26 +6,26 @@
 
 ## 조사 문서 목록
 
-### ✅ 해결된 이슈
+###  해결된 이슈
 
 #### 1. [Arch vs Fedora Build Issue](arch_vs_fedora_build_issue.md)
 - **문제**: Arch Linux에서 빌드한 1K OS 커널이 즉시 Double Fault로 크래시
 - **원인**: GCC 기본 타겟 아키텍처 차이 (Arch: i386, Fedora: i686)
 - **해결**: `-march=i686` 플래그 추가
 - **날짜**: 2024-11-27 ~ 2025-11-27
-- **상태**: ✅ **해결됨**
+- **상태**:  **해결됨**
 - **영향**: 1K OS가 Arch Linux에서 정상 동작
 
 ---
 
-### ⚠️ 미해결 이슈
+###  미해결 이슈
 
 #### 2. [1K OS Protected Mode SHUTDOWN](INVESTIGATION_1K_OS_SHUTDOWN.md)
 - **문제**: AMD Zen 5 CPU에서 1K OS 실행 시 종료 시점에 SHUTDOWN 발생
 - **증상**: 프로그램은 정상 실행되나 메뉴 복귀 시 크래시
 - **환경**: AMD Ryzen 5 9600X (Zen 5), Arch Linux
 - **날짜**: 2025-11-27
-- **상태**: ⚠️ **미해결** (CPU 특정 이슈로 추정)
+- **상태**:  **미해결** (CPU 특정 이슈로 추정)
 - **영향**: 제한적 (기능은 동작하나 깔끔한 종료 불가)
 - **Workaround**: 프로그램 실행 후 강제 종료 허용
 

@@ -4,7 +4,7 @@
 
 ---
 
-## 📚 주요 문서
+##  주요 문서
 
 프로젝트를 처음 시작하거나 발표 준비 시 읽어야 할 핵심 문서:
 
@@ -53,13 +53,13 @@
 
 ---
 
-## 📖 Historical 문서
+##  Historical 문서
 
 과거 설계 및 개발 과정을 기록한 참고 문서:
 
 ### 6. [1K_OS_설계.md](1K_OS_설계.md)
 - **내용**: 1K OS x86 포팅 초기 설계 문서
-- **상태**: ⚠️ Historical (일부 내용 구식)
+- **상태**:  Historical (일부 내용 구식)
 - **특징**:
   - 메모리 레이아웃 설계
   - RISC-V → x86 아키텍처 변환
@@ -71,7 +71,7 @@
 
 ---
 
-## 🔍 Troubleshooting 기록
+##  Troubleshooting 기록
 
 개발 중 발생한 버그 조사 및 해결 과정:
 
@@ -79,41 +79,41 @@
 - **내용**: 주요 버그 조사 및 해결 기록
 - **하위 문서**:
 
-#### ✅ [Arch vs Fedora Build Issue](investigations/arch_vs_fedora_build_issue.md)
+####  [Arch vs Fedora Build Issue](investigations/arch_vs_fedora_build_issue.md)
 - **문제**: Arch Linux 빌드 시 Double Fault 크래시
 - **원인**: GCC 기본 아키텍처 차이 (i386 vs i686)
 - **해결**: `-march=i686` 플래그 추가
-- **상태**: ✅ 해결됨
+- **상태**:  해결됨
 
-#### ⚠️ [1K OS SHUTDOWN Issue](investigations/INVESTIGATION_1K_OS_SHUTDOWN.md)
+####  [1K OS SHUTDOWN Issue](investigations/INVESTIGATION_1K_OS_SHUTDOWN.md)
 - **문제**: AMD Zen 5 CPU에서 1K OS 종료 시 SHUTDOWN
 - **원인**: CPU 특정 이슈로 추정
-- **상태**: ⚠️ 미해결 (Workaround 적용)
+- **상태**:  미해결 (Workaround 적용)
 
 더 자세한 내용은 [investigations/README.md](investigations/README.md) 참조.
 
 ---
 
-## 📁 문서 구조
+##  문서 구조
 
 ```
 docs/
 ├── INDEX.md                    (이 문서)
 ├── README.md                   → ../README.md 참조
-├── 데모가이드.md               ✅ 주요
-├── 최종보고서.md               ✅ 주요
-├── 기술평가.md                 ✅ 주요
-├── 벤치마크_결과.md            ✅ 주요
-├── 1K_OS_설계.md               📖 Historical
-└── investigations/             🔍 Troubleshooting
+├── 데모가이드.md                주요
+├── 최종보고서.md                주요
+├── 기술평가.md                  주요
+├── 벤치마크_결과.md             주요
+├── 1K_OS_설계.md                Historical
+└── investigations/              Troubleshooting
     ├── README.md
-    ├── arch_vs_fedora_build_issue.md  (✅ 해결)
-    └── INVESTIGATION_1K_OS_SHUTDOWN.md (⚠️ 미해결)
+    ├── arch_vs_fedora_build_issue.md  ( 해결)
+    └── INVESTIGATION_1K_OS_SHUTDOWN.md ( 미해결)
 ```
 
 ---
 
-## 🎯 사용 시나리오별 권장 문서
+##  사용 시나리오별 권장 문서
 
 ### 처음 프로젝트를 접하는 경우
 1. [README.md](../README.md) - 프로젝트 개요
@@ -141,7 +141,7 @@ docs/
 
 ---
 
-## 🔄 문서 업데이트 정책
+##  문서 업데이트 정책
 
 ### 항상 최신 유지
 - **데모가이드.md**: 명령어, 사용법
@@ -155,7 +155,7 @@ docs/
 
 ---
 
-## 📝 문서 작성 규칙
+##  문서 작성 규칙
 
 ### 제목 형식
 ```markdown
@@ -189,11 +189,11 @@ docs/
 - **굵게**: `**텍스트**`
 - *기울임*: `*텍스트*`
 - `코드`: `` `코드` ``
-- ✅, ❌, ⚠️: 상태 표시
+- , , : 상태 표시
 
 ---
 
-## 🤝 기여 가이드
+##  기여 가이드
 
 문서 업데이트 시:
 

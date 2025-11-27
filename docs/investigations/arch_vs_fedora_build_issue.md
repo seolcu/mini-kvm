@@ -8,7 +8,7 @@
 
 **Solution**: Add `-march=i686` and proper linker flags to compilation to match Fedora's code generation.
 
-**Status**: ✅ **RESOLVED** (2025-11-27 23:40 KST)
+**Status**:  **RESOLVED** (2025-11-27 23:40 KST)
 
 ---
 
@@ -43,7 +43,7 @@ When running the Arch-built kernel on KVM:
 | Aspect | Fedora 43 (Working) | Arch Linux (Failing) |
 |--------|---------------------|----------------------|
 | GCC Version | 15.2.1 20251111 (Red Hat) | 15.2.1 20251112 |
-| Build Result | ✅ Works | ❌ SHUTDOWN |
+| Build Result |  Works |  SHUTDOWN |
 | Hardware | AMD Zen 5 | Same |
 | Binary Size | 13K | 13K → 12K (after fix) |
 | Linux Kernel | 6.x | 6.17.8 |
@@ -69,22 +69,22 @@ When running the Arch-built kernel on KVM:
 #### 1. TSS Address Fix
 - **Hypothesis**: GDT/IDT overlap causing corruption
 - **Change**: TSS address 0x500 → 0x1a00
-- **Result**: ❌ No effect
+- **Result**:  No effect
 
 #### 2. Segment Descriptor Fix
 - **Change**: Fixed segment types for kernel/user code/data
-- **Result**: ❌ No effect
+- **Result**:  No effect
 
 #### 3. IRQCHIP Disable
 - **Change**: Disabled IRQCHIP creation for protected mode
-- **Result**: ❌ No effect
+- **Result**:  No effect
 
 #### 4. Timer/Keyboard Thread Disable
 - **Change**: Disabled interrupt injection threads
 ```c
 if (enable_paging && 0) {  // Timer thread disabled
 ```
-- **Result**: ❌ No effect
+- **Result**:  No effect
 
 #### 5. Debug Logging
 - Added extensive debug output:
@@ -100,13 +100,13 @@ Created 15+ test binaries to isolate the issue:
 
 | Binary | Size | Description | Result |
 |--------|------|-------------|--------|
-| test_hlt_only.bin | 1 byte | Just HLT instruction | ✅ SUCCESS |
-| test_one_out.bin | 33 bytes | Single character output | ✅ SUCCESS |
-| test_stack_set.bin | ~50 bytes | Stack setup + output | ✅ SUCCESS |
-| test_bss_step.bin | ~100 bytes | BSS clear, stack, function call | ✅ SUCCESS |
-| test_exact_kernel.bin | 3088 bytes | Same first 32 bytes as kernel.bin | ✅ SUCCESS |
-| test_128.bin | 128 bytes | kernel.bin first 128 bytes + test code | ✅ SUCCESS |
-| **kernel.bin** | **13040 bytes** | **Full 1K OS kernel** | ❌ **FAIL** |
+| test_hlt_only.bin | 1 byte | Just HLT instruction |  SUCCESS |
+| test_one_out.bin | 33 bytes | Single character output |  SUCCESS |
+| test_stack_set.bin | ~50 bytes | Stack setup + output |  SUCCESS |
+| test_bss_step.bin | ~100 bytes | BSS clear, stack, function call |  SUCCESS |
+| test_exact_kernel | 3088 bytes | Same first 32 bytes as kernel |  SUCCESS |
+| test_128.bin | 128 bytes | kernel first 128 bytes + test code |  SUCCESS |
+| **kernel** | **13040 bytes** | **Full 1K OS kernel** |  **FAIL** |
 
 #### Key Discovery
 
@@ -130,8 +130,8 @@ _start:
 ```
 
 **The Mystery**:
-- Test binaries with **identical boot bytes** (offset 0x00-0x21) → ✅ Work
-- kernel.bin with **identical boot bytes** → ❌ Fail
+- Test binaries with **identical boot bytes** (offset 0x00-0x21) →  Work
+- kernel with **identical boot bytes** →  Fail
 - The only difference is the `.text` section content (offset 0x40+)
 - **Content that hasn't been executed yet somehow causes the crash!**
 
@@ -268,13 +268,13 @@ KERNEL_LDFLAGS = -m elf_i386 -T kernel.ld \
 - Binary: 13K
 - ESP: 0x80017670
 - .text section: 0xff3 bytes
-- Status: ❌ SHUTDOWN (Double Fault #8)
+- Status:  SHUTDOWN (Double Fault #8)
 
 ### After Fix
 - Binary: 12K (more optimized!)
 - ESP: 0x800172b0
 - .text section: ~0xf63 bytes (similar to Fedora)
-- Status: ✅ BOOTS SUCCESSFULLY
+- Status:  BOOTS SUCCESSFULLY
 
 ### Output After Fix
 
@@ -337,7 +337,7 @@ Small test binaries (< 4KB):
 - No complex section layout
 - No risk of boundary crossing
 
-Full kernel.bin (13KB):
+Full kernel (13KB):
 - Multiple sections spanning different offsets
 - Complex memory layout with .text, .data, .bss
 - **i386 code generation created a layout that KVM's page table setup couldn't handle**
@@ -374,11 +374,11 @@ Full kernel.bin (13KB):
 
 These were our theories during investigation (now resolved):
 
-1. ✅ **Page Table Corruption** → Root cause was code size/layout
-2. ❌ Instruction Pre-fetch/Decode Issue → Not the issue
-3. ✅ **Memory Aliasing** → 4MB PSE pages + i386 layout caused problems
-4. ❌ KVM State Corruption → KVM was fine
-5. ❌ Linux Kernel 6.17 KVM Regression → Kernel was fine
+1.  **Page Table Corruption** → Root cause was code size/layout
+2.  Instruction Pre-fetch/Decode Issue → Not the issue
+3.  **Memory Aliasing** → 4MB PSE pages + i386 layout caused problems
+4.  KVM State Corruption → KVM was fine
+5.  Linux Kernel 6.17 KVM Regression → Kernel was fine
 
 ---
 
@@ -439,14 +439,14 @@ cd kvm-vmm-x86/os-1k
 sed -i 's/-march=i686//' Makefile
 
 make clean && make all
-printf '1\n0\n' | ../kvm-vmm --paging kernel.bin
+printf '1\n0\n' | ../kvm-vmm --paging kernel
 # Result: [kernel] SHUTDOWN at RIP=0xfff0 (Double Fault)
 
 # WITH the fix (restore -march=i686):
 git checkout Makefile  # Or re-add -march=i686
 make clean && make all
-printf '1\n0\n' | ../kvm-vmm --paging kernel.bin
-# Result: ✅ Shell menu appears, multiplication table outputs
+printf '1\n0\n' | ../kvm-vmm --paging kernel
+# Result:  Shell menu appears, multiplication table outputs
 ```
 
 ---
@@ -455,15 +455,15 @@ printf '1\n0\n' | ../kvm-vmm --paging kernel.bin
 
 For future reference or similar issues:
 
-- `os-1k/kernel.bin` - Working kernel (with fix)
+- `os-1k/kernel` - Working kernel (with fix)
 - `os-1k/test_exact_kernel.S` and `.bin` - Test binary with same boot code
 - `os-1k/test_bss_step.S` and `.bin` - Another working reference
-- `backups/working-fedora-build/kernel.bin.working` - Original Fedora build
+- `backups/working-fedora-build/kernel.working` - Original Fedora build
 
 ---
 
 **Investigation Period**: 2024-11-27 ~ 2025-11-27  
 **Final Resolution**: 2025-11-27 23:40 KST  
-**Status**: ✅ **RESOLVED**  
+**Status**:  **RESOLVED**  
 **Investigators**: seolcu (with AI assistance)
 

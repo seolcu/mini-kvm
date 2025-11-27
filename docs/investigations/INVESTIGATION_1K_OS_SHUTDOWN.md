@@ -5,7 +5,7 @@
 - **시스템**: AMD Ryzen 5 9600X (Zen 5), 데스크톱
 - **커널**: Linux 6.12.59-1-lts (linux-lts)
 - **이전 시스템**: AMD Ryzen 7 PRO 6850U (Zen 3+), 노트북에서는 정상 작동
-- **문제**: `./kvm-vmm --paging os-1k/kernel.bin` 실행 시 즉시 SHUTDOWN
+- **문제**: `./kvm-vmm --paging os-1k/kernel` 실행 시 즉시 SHUTDOWN
 
 ## 증상
 
@@ -37,16 +37,16 @@
 - **Nested virtualization 비활성화** (`nested=0`) → 실패
 
 ### 3. Real Mode 테스트
-- **Real Mode 게스트는 정상 작동** (`./kvm-vmm guest/hello.bin`)
+- **Real Mode 게스트는 정상 작동** (`./kvm-vmm guest/hello`)
 - 문제는 **Protected Mode with Paging**에만 국한됨
 
 ### 4. 바이너리 크기 조사
 - 작은 테스트 바이너리 (100-200바이트) → 성공
-- **kernel.bin (13KB)** → 실패
+- **kernel (13KB)** → 실패
 - 문제: 바이너리 **크기/내용**이 KVM 동작에 영향
 
 ### 5. 바이트 단위 Bisect
-- kernel.bin의 처음 **26바이트까지는 성공**
+- kernel의 처음 **26바이트까지는 성공**
 - **27바이트부터 실패** (바이트 26 = `0xe8`, call 명령어 시작)
 - 하지만 동일한 call 명령어를 가진 다른 바이너리는 성공
 - **특정 바이트 패턴 조합**이 문제
@@ -75,7 +75,7 @@
 ### 발견 4: 페이지 테이블 설정은 정상
 ```
 Page Dir @ 0x100000: PDE[0]=0x00000083 PDE[512]=0x00000083
-Entry @ 0x1000: bc 70 76 01 80 bd 00 00 (kernel.bin 첫 바이트)
+Entry @ 0x1000: bc 70 76 01 80 bd 00 00 (kernel 첫 바이트)
 GDT @ 0x500: 00 00 00 00 00 00 00 00 (Null descriptor)
 ```
 - GDT, IDT, 페이지 디렉토리 모두 올바르게 설정됨
@@ -118,7 +118,7 @@ GDT @ 0x500: 00 00 00 00 00 00 00 00 (Null descriptor)
 
 ## 다음 조사 방향 (추후)
 
-1. **QEMU TCG로 kernel.bin 실행 시도**
+1. **QEMU TCG로 kernel 실행 시도**
    - Pure 에뮬레이션 모드에서 동작 확인
 
 2. **AMD 포럼/Linux KVM 메일링 리스트**
