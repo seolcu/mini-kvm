@@ -389,19 +389,9 @@ static void *stdin_monitor_thread_func(void *arg)
                 // Store character in buffer
                 keyboard_buffer_push((char)ch);
 
-                // Inject keyboard interrupt (IRQ1) to vCPU 0
-                // Only vCPU 0 receives keyboard input (as per meeting notes)
-                if (num_vcpus > 0 && vcpus[0].running)
-                {
-                    struct kvm_interrupt irq;
-                    irq.irq = 0x21; // Vector 0x21 = keyboard interrupt
-
-                    if (ioctl(vcpus[0].vcpu_fd, KVM_INTERRUPT, &irq) < 0)
-                    {
-                        // Interrupt might fail if guest is in incompatible state
-                        // Just continue - guest will eventually receive it
-                    }
-                }
+                // Note: Interrupt injection disabled - guest uses polling via hypercall
+                // The GETCHAR hypercall will read from keyboard_buffer
+                // Injecting IRQ without proper IRQCHIP setup causes triple faults
             }
         }
     }
@@ -1760,18 +1750,19 @@ int main(int argc, char **argv)
         printf("\n");
     }
 
-    // Step 3: Start timer and stdin threads (only for Protected Mode with paging)
+    // Step 3: Start stdin thread (only for Protected Mode with paging)
     // Real Mode guests don't use interrupts, so skip these threads
-    // NOTE: Disabled for debugging - these threads inject interrupts that cause
-    // triple faults if guest IDT is not properly set up
-    if (enable_paging && 0)
-    { // DISABLED FOR DEBUGGING
-        timer_thread_running = true;
-        if (pthread_create(&timer_thread, NULL, timer_thread_func, NULL) != 0)
-        {
-            fprintf(stderr, "Warning: Failed to create timer thread. Timer interrupts disabled.\n");
-            timer_thread_running = false;
-        }
+    // NOTE: Timer thread is disabled - it injects IRQ0 that causes triple faults
+    // if guest IDT is not properly set up. stdin thread is safe (no interrupt injection).
+    if (enable_paging)
+    {
+        // Timer thread disabled - causes triple faults before IDT setup
+        // timer_thread_running = true;
+        // if (pthread_create(&timer_thread, NULL, timer_thread_func, NULL) != 0)
+        // {
+        //     fprintf(stderr, "Warning: Failed to create timer thread. Timer interrupts disabled.\n");
+        //     timer_thread_running = false;
+        // }
 
         stdin_thread_running = true;
         if (pthread_create(&stdin_thread, NULL, stdin_monitor_thread_func, NULL) != 0)
