@@ -143,8 +143,8 @@ static void vcpu_putchar(vcpu_context_t *ctx, char ch)
     // Use color only for multi-vCPU (num_vcpus > 1)
     if (num_vcpus > 1)
     {
-        // Magenta, Green, Yellow, Blue (Magenta distinguishes clearly from Green)
-        const char *colors[] = {"\033[35m", "\033[32m", "\033[33m", "\033[34m"};
+        // Cyan, Green, Yellow, Blue - natural color harmony
+        const char *colors[] = {"\033[36m", "\033[32m", "\033[33m", "\033[34m"};
         const char *reset = "\033[0m";
         printf("%s%c%s", colors[ctx->vcpu_id % 4], ch, reset);
     }
@@ -1779,7 +1779,8 @@ int main(int argc, char **argv)
     // Print color legend for multi-vCPU mode
     if (num_vcpus > 1)
     {
-        const char *colors[] = {"\033[35m", "\033[32m", "\033[33m", "\033[34m"};
+        // Cyan, Green, Yellow, Blue - natural color harmony
+        const char *colors[] = {"\033[36m", "\033[32m", "\033[33m", "\033[34m"};
         const char *reset = "\033[0m";
         printf("Legend: ");
         for (int i = 0; i < num_vcpus && i < 4; i++)
