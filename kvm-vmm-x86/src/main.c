@@ -560,45 +560,60 @@ static int setup_vcpu_memory(vcpu_context_t *ctx)
 
 /*
  * Setup page tables for Protected Mode with paging (for 1K OS)
- * Uses 2-level page tables with 4MB pages (PSE enabled)
+ * Uses 3-level page tables with 4KB pages (PSE disabled for Zen 5 compatibility)
  */
 static int setup_page_tables(vcpu_context_t *ctx)
 {
     // Page directory at GPA 0x00100000 (1MB offset)
     const uint32_t page_dir_offset = 0x00100000;
+    const uint32_t page_table_0_offset = 0x00101000;    // 1MB + 4KB
+    const uint32_t page_table_512_offset = 0x00102000;  // 1MB + 8KB
 
-    if (page_dir_offset >= ctx->mem_size)
+    if (page_table_512_offset + 4096 >= ctx->mem_size)
     {
-        vcpu_printf(ctx, "Error: Page directory offset exceeds memory size\n");
+        vcpu_printf(ctx, "Error: Page table offsets exceed memory size\n");
         return -1;
     }
 
+    // Get pointers to page directory and page tables
     uint32_t *page_dir = (uint32_t *)(ctx->guest_mem + page_dir_offset);
-    memset(page_dir, 0, 4096); // Clear page directory
+    uint32_t *page_table_0 = (uint32_t *)(ctx->guest_mem + page_table_0_offset);
+    uint32_t *page_table_512 = (uint32_t *)(ctx->guest_mem + page_table_512_offset);
 
-    // Identity map first 4MB using 4MB pages (PSE)
-    // This covers: 0x00000000 - 0x003FFFFF physical memory
-    page_dir[0] = 0x00000083; // Present, R/W, 4MB page at physical 0x0
+    // Clear all structures
+    memset(page_dir, 0, 4096);
+    memset(page_table_0, 0, 4096);
+    memset(page_table_512, 0, 4096);
 
-    // Map kernel space: 0x80000000 - 0x803FFFFF -> 0x00000000 - 0x003FFFFF
-    // PDE index for 0x80000000 is 512 (0x80000000 >> 22 = 512)
-    page_dir[512] = 0x00000083; // Present, R/W, 4MB page at physical 0x0
+    // Setup PDE[0] -> Page Table 0 (covers 0x0-0x3FFFFF, 4MB)
+    // Flags: 0x03 = Present | R/W (no PSE bit)
+    page_dir[0] = page_table_0_offset | 0x03;
 
-    // Map additional kernel space if available
-    // For 4MB memory, we also map PDE[513] to handle addresses at the boundary (0x80400000)
-    if (ctx->mem_size >= 4 * 1024 * 1024)
+    // Setup PDE[512] -> Page Table 512 (covers 0x80000000-0x803FFFFF, 4MB)
+    page_dir[512] = page_table_512_offset | 0x03;
+
+    // Fill Page Table 0: Identity map 0x0-0x3FF000 (4MB, 1024 x 4KB pages)
+    for (int i = 0; i < 1024; i++)
     {
-        // Map 0x80400000-0x807FFFFF, but it aliases to 0x0-0x3FFFFF (wrap around)
-        // This is fine for boundary addresses like __free_ram_end
-        page_dir[513] = 0x00000083; // Map to same physical memory (alias)
+        // Each PTE maps 4KB: physical address = i * 4096
+        page_table_0[i] = (i << 12) | 0x03;  // Present, R/W, 4KB pages
+    }
+
+    // Fill Page Table 512: Map 0x80000000+ to physical 0x0+ (4MB, 1024 x 4KB pages)
+    for (int i = 0; i < 1024; i++)
+    {
+        // Virtual 0x80000000 + (i * 4KB) -> Physical 0x0 + (i * 4KB)
+        page_table_512[i] = (i << 12) | 0x03;  // Present, R/W, 4KB pages
     }
 
     if (verbose)
     {
-        vcpu_printf(ctx, "Page directory at GPA 0x%x (identity + kernel mapping)\n",
+        vcpu_printf(ctx, "Page directory at GPA 0x%x (4KB paging, no PSE)\n",
                     page_dir_offset);
-        vcpu_printf(ctx, "  PDE[0]   = 0x%08x (physical 0x0 - 0x3FFFFF)\n", page_dir[0]);
-        vcpu_printf(ctx, "  PDE[512] = 0x%08x (virtual 0x80000000 -> physical 0x0)\n", page_dir[512]);
+        vcpu_printf(ctx, "  PDE[0]   = 0x%08x -> Page Table 0 at 0x%x\n", page_dir[0], page_table_0_offset);
+        vcpu_printf(ctx, "  PDE[512] = 0x%08x -> Page Table 512 at 0x%x\n", page_dir[512], page_table_512_offset);
+        vcpu_printf(ctx, "  Identity map: 0x0-0x3FFFFF (1024 x 4KB pages)\n");
+        vcpu_printf(ctx, "  Kernel map: 0x80000000-0x803FFFFF -> 0x0-0x3FFFFF\n");
     }
 
     return page_dir_offset; // Return offset for CR3
@@ -1078,8 +1093,8 @@ static int configure_protected_mode(vcpu_context_t *ctx)
     // Note: KVM initial CR0 may have CD=1, NW=1 which can cause issues with paging
     sregs.cr0 = 0x80000011; // PG + ET + PE
 
-    // Set CR4: PSE (Page Size Extension) for 4MB pages
-    sregs.cr4 = 0x00000010; // PSE only, clear PAE
+    // Set CR4: Clear PSE for 4KB paging (Zen 5 compatibility fix)
+    sregs.cr4 = 0x00000000; // No PSE, no PAE - standard 4KB pages
 
     // Setup flat segments
     setup_protectedmode_segments(&sregs);

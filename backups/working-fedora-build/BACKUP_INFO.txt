@@ -1,0 +1,4 @@
+2025. 11. 27. (목) 23:30:01 KST
+Fedora 43 build - Works on Zen 5 KVM
+CPU: AMD Ryzen 5 9600X (Zen 5)
+Arch build (GCC 15.2.1) fails with same setup

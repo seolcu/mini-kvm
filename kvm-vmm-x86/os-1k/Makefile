@@ -6,15 +6,27 @@ LD = ld
 OBJCOPY = objcopy
 
 # 32-bit x86 compilation flags
-CFLAGS = -m32 -std=c11 -O2 -Wall -Wextra -g \
+# -no-pie: Disable PIE at GCC driver level (Arch GCC has --enable-default-pie)
+# -march=i686: Match Fedora's --with-arch_32=i686 for consistent code generation
+CFLAGS = -m32 -march=i686 -std=c11 -O2 -Wall -Wextra -g \
          -ffreestanding -nostdlib -fno-builtin \
-         -fno-stack-protector -fno-pie -fno-pic \
+         -fno-stack-protector -fno-pie -fno-pic -no-pie \
          -mno-red-zone
 
 ASFLAGS = --32
 
-KERNEL_LDFLAGS = -m elf_i386 -T kernel.ld
-USER_LDFLAGS = -m elf_i386 -T user.ld
+# Linker flags to ensure deterministic binary layout
+# --no-pie: Disable PIE in linker
+# --build-id=none: Remove .note.gnu.build-id section
+# -z norelro: Disable RELRO (not needed for kernel)
+KERNEL_LDFLAGS = -m elf_i386 -T kernel.ld \
+                 --no-pie \
+                 --build-id=none \
+                 -z norelro
+USER_LDFLAGS = -m elf_i386 -T user.ld \
+               --no-pie \
+               --build-id=none \
+               -z norelro
 
 .PHONY: all clean test info disasm run
 
