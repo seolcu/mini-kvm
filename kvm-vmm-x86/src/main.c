@@ -143,8 +143,8 @@ static void vcpu_putchar(vcpu_context_t *ctx, char ch)
     // Use color only for multi-vCPU (num_vcpus > 1)
     if (num_vcpus > 1)
     {
-        // Cyan, Green, Yellow, Blue - natural color harmony
-        const char *colors[] = {"\033[36m", "\033[32m", "\033[33m", "\033[34m"};
+        // Bright colors for better distinction
+        const char *colors[] = {"\033[96m", "\033[92m", "\033[93m", "\033[95m"};
         const char *reset = "\033[0m";
         printf("%s%c%s", colors[ctx->vcpu_id % 4], ch, reset);
     }
@@ -257,7 +257,9 @@ static int keyboard_buffer_pop(void)
 /*
  * Timer thread - generates periodic timer interrupts
  * Injects IRQ0 every 10ms to all vCPUs
+ * Currently disabled - causes triple faults before guest IDT setup
  */
+__attribute__((unused))
 static void *timer_thread_func(void *arg)
 {
     (void)arg;
@@ -1779,8 +1781,8 @@ int main(int argc, char **argv)
     // Print color legend for multi-vCPU mode
     if (num_vcpus > 1)
     {
-        // Cyan, Green, Yellow, Blue - natural color harmony
-        const char *colors[] = {"\033[36m", "\033[32m", "\033[33m", "\033[34m"};
+        // Bright colors for better distinction
+        const char *colors[] = {"\033[96m", "\033[92m", "\033[93m", "\033[95m"};
         const char *reset = "\033[0m";
         printf("Legend: ");
         for (int i = 0; i < num_vcpus && i < 4; i++)
