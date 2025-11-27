@@ -3,29 +3,36 @@
 
 These concise notes orient an AI coding agent to the repository's architecture, developer workflows, and codebase conventions so you can be productive immediately.
 
-- **Big picture**: The primary VMM is a small C-based KVM userland program in `kvm-vmm-x86/` that creates a VM and spawns up to 4 vCPU threads. Experimental Rust hypervisor projects live under `experimental/` and target RISCV builds.
+- **Big picture**: The primary VMM is a small C-based KVM userland program in `kvm-vmm-x86/` (~1,700 lines) that creates a VM and spawns up to 4 vCPU threads. It supports both real-mode (16-bit) and protected-mode (32-bit with paging) x86 guests. Experimental Rust hypervisor projects live under `experimental/` targeting RISC-V H-extension.
 
 - **Key components (where to look first)**:
-  - `kvm-vmm-x86/Makefile` — top-level build orchestration for the C VMM and guests.
-  - `kvm-vmm-x86/src/main.c` — main VMM logic: KVM setup, vCPU threading, VM exit handling, hypercall and I/O emulation.
-  - `kvm-vmm-x86/guest/` — scripts and guest binaries (real-mode guests).
-  - `kvm-vmm-x86/os-1k/` — 1K OS protected-mode guest and its build system.
-  - `experimental/hypervisor/` — Rust experimental hypervisor (RISC-V) with `build.sh` / `run.sh` showing cross-compilation and QEMU invocation.
+  - `kvm-vmm-x86/Makefile` — top-level build orchestration for the C VMM and guests; run `make help` for all targets.
+  - `kvm-vmm-x86/src/main.c` — main VMM logic: KVM setup, vCPU threading, VM exit handling, hypercall/I/O emulation, interrupt injection, paging setup.
+  - `kvm-vmm-x86/src/protected_mode.h` — GDT/IDT structures and constants for protected mode.
+  - `kvm-vmm-x86/guest/` — 6 real-mode guest programs (`.S` assembly files), built with `as` and `ld` into flat binaries.
+  - `kvm-vmm-x86/os-1k/` — 1K OS: protected-mode kernel with 9 user programs, separate kernel/user linking via `kernel.ld`/`user.ld`.
+  - `experimental/hypervisor/` — Rust experimental hypervisor (RISC-V) with `build.sh`/`run.sh` for cross-compilation and QEMU invocation.
 
 - **Essential runtime commands** (copyable):
   - Build everything (VMM, guests, 1K OS): `cd kvm-vmm-x86 && make all`
   - Build only the VMM: `make vmm`
+  - Build only guests or 1K OS: `make guests` or `make 1k-os`
   - Run real-mode guest: `./kvm-vmm guest/hello.bin`
   - Run protected-mode 1K OS: `./kvm-vmm --paging os-1k/kernel.bin`
-  - Verbose debugging: add `--verbose` to print VM-exit/hypercall traces.
+  - Multi-vCPU execution (2-4 guests): `./kvm-vmm guest/counter.bin guest/hello.bin guest/multiplication.bin`
+  - Verbose debugging: add `--verbose` to print VM-exit/hypercall traces (except HC_GETCHAR IN to avoid spam).
+  - Piped input for automated tests: `printf '1\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin` (runs program 1, then exits).
 
 - **Project-specific conventions & patterns** (important to preserve):
   - Hypercalls are implemented via port I/O to port `0x500`. Hypercall numbers and behavior are in `src/main.c` (e.g. `HC_PUTCHAR`, `HC_GETCHAR`, `HC_EXIT`).
   - UART output uses COM1 port `0x3f8` and is forwarded to host `stdout` (see `handle_io`).
   - Multi-vCPU mapping: each vCPU gets a separate guest-physical region and is mapped at `vcpu_id * mem_size`. Real-mode uses 256KB per vCPU; protected mode uses 4MB.
   - Protected-mode defaults: entry `0x80001000`, load offset `0x1000`. Command-line flags `--entry` and `--load` override them.
-  - IRQCHIP is created only when `--paging` (protected mode) is enabled — real-mode guests avoid interrupts for simplicity.
+  - **IRQCHIP is created only when `--paging` (protected mode) is enabled** — real-mode guests avoid interrupts for simplicity. This prevents real-mode guests from hanging on HLT due to unwanted timer interrupts (IRQ0).
   - Terminal raw-mode changes (for interactive 1K OS) are enabled only in paging mode; piping input will not require raw mode.
+  - **vCPU output formatting**: Single vCPU shows clean `[guest_name]` prefix without colors; multi-vCPU uses color codes (Cyan/Green/Yellow/Blue) for visual distinction. Character-by-character output (no line buffering) to maximize visible parallelism in multi-vCPU demos.
+  - **Protected-mode GDT**: Set up at `0x500` with 5 descriptors (Null, kernel code, kernel data, user code, user data). See `setup_gdt()` and `protected_mode.h`.
+  - **Paging setup**: Uses 2-level paging with 4MB PSE pages. Page directory at `0x2000`, identity-mapped kernel space (`0x80000000+`). See `setup_page_tables()`.
 
 - **Debugging and checks an agent should run or suggest**:
   - Confirm KVM availability: check `/dev/kvm` and `lsmod | grep kvm` before running the VMM.
@@ -44,6 +51,12 @@ These concise notes orient an AI coding agent to the repository's architecture, 
 
 - **Where to add tests or instrumentation**:
   - Small, deterministic unit-like tests can be created by running `./kvm-vmm guest/<small>.bin` and asserting stdout content (used by CI-style scripts).
-  - Add verbose logs guarded by the existing `--verbose` flag; avoid printing in hot paths unless gated.
+  - Add verbose logs guarded by the existing `--verbose` flag; avoid printing in hot paths unless gated. Note: `HC_GETCHAR` IN operations are specifically suppressed even in verbose mode to prevent log spam.
+  - 1K OS tests: Use piped input to automate program selection and input, e.g., `printf '3\ntest\nquit\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin`.
+
+- **Build system details**:
+  - `kvm-vmm-x86/guest/Makefile`: Assembles `.S` files with `as --32`, links with `ld -m elf_i386 --oformat=binary` to produce flat binaries starting at address `0x0`.
+  - `kvm-vmm-x86/os-1k/Makefile`: Builds shell.bin (user programs) first, embeds it into kernel via `objcopy -I binary`, then links kernel with custom linker scripts. The result is a single `kernel.bin` with embedded user programs.
+  - 1K OS uses separate compilation: `boot.S` (assembly entry), `kernel.c` (kernel logic), `shell.c` and `user.c` (user programs), `common.c` (shared utilities). All compiled with `-m32 -ffreestanding -nostdlib`.
 
 If anything is missing or you want certain conventions expanded (for example, more details from `os-1k/` or `guest/build.sh`), tell me which area to expand and I will iterate.
