@@ -1486,6 +1486,23 @@ static void *vcpu_thread(void *arg)
         {
             vcpu_printf(ctx, "Pre-run state: RIP=0x%llx CR0=0x%llx CR3=0x%llx CS=0x%x\n",
                         regs.rip, sregs.cr0, sregs.cr3, sregs.cs.selector);
+
+            // Debug: dump page directory and entry point memory
+            uint32_t *page_dir = (uint32_t *)(ctx->guest_mem + 0x100000);
+            vcpu_printf(ctx, "Page Dir @ 0x100000: PDE[0]=0x%08x PDE[512]=0x%08x\n",
+                        page_dir[0], page_dir[512]);
+
+            // Verify entry point memory
+            uint8_t *entry = (uint8_t *)(ctx->guest_mem + 0x1000);
+            vcpu_printf(ctx, "Entry @ 0x1000: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                        entry[0], entry[1], entry[2], entry[3],
+                        entry[4], entry[5], entry[6], entry[7]);
+
+            // Verify GDT
+            uint8_t *gdt = (uint8_t *)(ctx->guest_mem + 0x500);
+            vcpu_printf(ctx, "GDT @ 0x500: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                        gdt[0], gdt[1], gdt[2], gdt[3],
+                        gdt[4], gdt[5], gdt[6], gdt[7]);
         }
     }
 
