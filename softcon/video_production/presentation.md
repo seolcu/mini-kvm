@@ -110,66 +110,37 @@ style: |
 
 ---
 
-## 핵심 설계 혁신
+## Real Mode 데모
 
-### 1. **Conditional IRQCHIP**
-- Real Mode: IRQCHIP 없음 → 깔끔한 종료
-- Protected Mode: IRQCHIP 활성화 → 인터럽트 지원
+![width:100%](screenshot_multi_vcpu.png)
 
-### 2. **Per-vCPU Memory Isolation**
-- 각 vCPU는 독립적인 물리 메모리 영역
-- Real Mode: 256KB/vCPU
-- Protected Mode: 4MB
-
-### 3. **Hypercall Interface**
-- Port `0x500`을 통한 효율적인 통신
-- `HC_PUTCHAR`, `HC_GETCHAR`, `HC_EXIT` 등
+### 멀티 vCPU 병렬 실행
+- 곱셈표 계산 + 카운팅 동시 실행
+- 출력이 문자 단위로 인터리빙 됨
+- 진정한 병렬 처리의 증거
+- 4 vCPU에서 90%+ 확장성
 
 ---
 
-## 성능 비교
+## Protected Mode - 1K OS 데모
 
-![bg right:60% 90%](chart_radar.png)
+![width:100%](screenshot_1k_os_menu.png)
 
-### 6가지 지표에서 우위
-- 초기화 시간 (10배)
-- 실행 속도 (50-100배)
-- 메모리 사용량 (1/30)
-- 코드 크기 (1/70)
-- 확장성 (90%+)
-- 교육적 가치 (압도적)
+### 1K OS 메뉴 화면
+- 9개 사용자 프로그램 선택 가능
+- GDT/IDT 설정으로 안정적 인터럽트 처리
+- 4MB PSE 페이징 활성화
 
 ---
 
-## 코드 스니펫: Conditional IRQCHIP
+![width:100%](screenshot_1k_os_running.png)
 
-```c
-int init_kvm(bool need_irqchip) {
-    kvm_fd = open("/dev/kvm", O_RDWR);
-    vm_fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
-    
-    // Protected Mode에서만 IRQCHIP 생성
-    if (need_irqchip) {
-        ioctl(vm_fd, KVM_CREATE_IRQCHIP, 0);
-    }
-    
-    return vm_fd;
-}
-```
-
-**핵심**: 모드에 따라 불필요한 오버헤드 제거
+### 실행 중인 사용자 프로그램
+- 곱셈표, 피보나치, 에코 프로그램
+- 사용자 모드와 커널 모드 분리
+- 타이머/키보드 인터럽트 정상 동작
 
 ---
-
-## 성능 수치 요약
-
-| 지표 | Mini-KVM | QEMU | 비율 |
-|------|----------|------|------|
-| **코드 크기** | 1,500 LOC | 100,000+ LOC | **1/70** |
-| **초기화 시간** | <5ms | ~50ms | **10배 빠름** |
-| **실행 속도** | Native-like | TCG | **50-100배 빠름** |
-| **메모리** | 1.5MB | 50MB | **1/30** |
-| **멀티 vCPU** | 90% @ 4 vCPUs | N/A | **우수한 확장성** |
 
 ---
 
