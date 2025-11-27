@@ -1,60 +1,143 @@
-/* Fibonacci sequence calculation (performance test) */
+/* Fibonacci sequence calculation */
+/* Print first 15 Fibonacci numbers: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377 */
 .code16
 .section .text
 .global _start
 
+.equ HC_PUTCHAR, 0x01
+.equ HYPERCALL_PORT, 0x500
+
 _start:
-    /* Calculate Fibonacci sequence up to N=30 */
-    /* EAX = 0, EBX = 1, ECX = counter */
-
-    xor %eax, %eax      /* F(0) = 0 */
-    mov $1, %ebx        /* F(1) = 1 */
-    xor %ecx, %ecx      /* counter = 0 */
-
-    /* Output first number */
-    mov %eax, %ebx      /* eax has result to output */
-    call putchar_hypercall
-
-loop:
-    cmp $30, %ecx       /* Stop at 30 iterations */
-    je done
-
-    /* Calculate next Fibonacci number */
-    add %ebx, %eax      /* temp = eax + ebx */
-    xchg %eax, %ebx     /* swap: eax = ebx, ebx = temp */
-
-    /* Output the number using hypercall */
-    mov %ebx, %edx      /* edx = number to output */
-    mov $10, %al        /* Output newline first */
-    mov $0x500, %dx
+    /* Print header */
+    lea header, %si
+print_header:
+    lodsb
+    test %al, %al
+    jz fib_start
+    mov %al, %bl
+    mov $HC_PUTCHAR, %al
+    mov $HYPERCALL_PORT, %dx
     out %al, (%dx)
+    jmp print_header
 
-    mov %edx, %eax      /* eax = number */
-    mov $0x500, %dx
-    out %al, (%dx)      /* Output low byte */
+fib_start:
+    /* F(n-2) in BP, F(n-1) in DI */
+    mov $0, %bp             /* BP = F(n-2) = 0 */
+    mov $1, %di             /* DI = F(n-1) = 1 */
+    mov $0, %cx             /* CX = counter (which F we just printed) */
 
-    mov %eax, %ecx
-    shr $8, %ecx
-    mov %cl, %al
-    out %al, (%dx)      /* Output high byte */
+    /* Print F(0) = 0 */
+    push %cx
+    push %di
+    push %bp
+    mov %bp, %ax
+    call print_number
+    pop %bp
+    pop %di
+    pop %cx
 
-    /* Increment counter */
-    inc %ecx
-    jmp loop
+    /* Print separator and F(1) = 1 */
+    call print_sep
+    inc %cx
+    push %cx
+    push %di
+    push %bp
+    mov %di, %ax
+    call print_number
+    pop %bp
+    pop %di
+    pop %cx
+
+fib_loop:
+    inc %cx
+    cmp $15, %cx            /* Print 15 numbers (F0-F14) */
+    jge done
+
+    /* Print separator */
+    call print_sep
+
+    /* Calculate F(n) = F(n-1) + F(n-2) */
+    mov %di, %ax            /* AX = F(n-1) */
+    add %bp, %ax            /* AX = F(n-1) + F(n-2) = F(n) */
+    mov %di, %bp            /* F(n-2) = old F(n-1) */
+    mov %ax, %di            /* F(n-1) = F(n) */
+
+    /* Print F(n) */
+    push %cx
+    push %di
+    push %bp
+    call print_number
+    pop %bp
+    pop %di
+    pop %cx
+
+    jmp fib_loop
 
 done:
-    /* Exit */
-    mov $0, %eax        /* HC_EXIT */
-    mov $0x500, %dx
+    /* Print newline */
+    mov $'\n', %bl
+    mov $HC_PUTCHAR, %al
+    mov $HYPERCALL_PORT, %dx
     out %al, (%dx)
 
     hlt
 
-putchar_hypercall:
-    /* Output character in EAX */
-    mov $1, %al         /* HC_PUTCHAR */
-    mov %ebx, %ecx      /* value to output in ecx */
-    mov $0x500, %dx
-    mov %cl, %bl        /* bl = char to output */
+/* Print ", " separator */
+print_sep:
+    mov $',', %bl
+    mov $HC_PUTCHAR, %al
+    mov $HYPERCALL_PORT, %dx
+    out %al, (%dx)
+    mov $' ', %bl
+    mov $HC_PUTCHAR, %al
     out %al, (%dx)
     ret
+
+/* Print number in AX as decimal */
+/* Destroys: AX, BX, DX, SI */
+print_number:
+    mov %ax, %si            /* Save original number */
+    mov $0, %bh             /* Digit count */
+
+    /* Special case: 0 */
+    test %ax, %ax
+    jnz extract_digits
+    mov $'0', %bl
+    mov $HC_PUTCHAR, %al
+    mov $HYPERCALL_PORT, %dx
+    out %al, (%dx)
+    ret
+
+extract_digits:
+    /* Extract digits by repeated division by 10 */
+    /* Push digits onto stack (reverse order) */
+    mov %si, %ax
+
+divide_loop:
+    test %ax, %ax
+    jz print_digits
+    mov $0, %dx             /* Clear high word for div */
+    mov $10, %cx
+    div %cx                 /* AX = quotient, DX = remainder */
+    push %dx                /* Push digit */
+    inc %bh                 /* Count digits */
+    jmp divide_loop
+
+print_digits:
+    test %bh, %bh
+    jz print_done
+    pop %ax                 /* Get digit */
+    add $'0', %al           /* Convert to ASCII */
+    mov %al, %bl
+    mov $HC_PUTCHAR, %al
+    mov $HYPERCALL_PORT, %dx
+    out %al, (%dx)
+    dec %bh
+    jmp print_digits
+
+print_done:
+    ret
+
+.section .rodata
+header:
+    .asciz "Fibonacci: "
