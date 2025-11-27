@@ -97,6 +97,50 @@ static pthread_mutex_t stdout_mutex = PTHREAD_MUTEX_INITIALIZER;
 // Verbose logging control
 static bool verbose = false;
 
+// Dynamic color codes for vCPUs (ANSI 256-color)
+static int vcpu_colors[MAX_VCPUS];
+
+/*
+ * Get ANSI 256-color code from hue (0-360)
+ * Uses the 6x6x6 color cube (codes 16-231)
+ */
+static int hue_to_ansi256(int hue)
+{
+    hue = hue % 360;
+    if (hue < 0) hue += 360;
+
+    int r, g, b;
+    int sector = hue / 60;
+    int offset = hue % 60;
+
+    switch (sector) {
+        case 0: r = 5; g = offset * 5 / 60; b = 0; break;
+        case 1: r = 5 - offset * 5 / 60; g = 5; b = 0; break;
+        case 2: r = 0; g = 5; b = offset * 5 / 60; break;
+        case 3: r = 0; g = 5 - offset * 5 / 60; b = 5; break;
+        case 4: r = offset * 5 / 60; g = 0; b = 5; break;
+        default: r = 5; g = 0; b = 5 - offset * 5 / 60; break;
+    }
+
+    return 16 + 36 * r + 6 * g + b;
+}
+
+/*
+ * Initialize colors for N vCPUs with maximum contrast
+ * Distributes colors evenly around color wheel, avoiding red
+ */
+static void init_vcpu_colors(int n)
+{
+    // Start at green (120), span 300 degrees to avoid red zone (0-60)
+    int start_hue = 120;
+    int span = 300;
+
+    for (int i = 0; i < n && i < MAX_VCPUS; i++) {
+        int hue = start_hue + (i * span) / n;
+        vcpu_colors[i] = hue_to_ansi256(hue);
+    }
+}
+
 /*
  * Thread-safe output functions with vCPU identification
  */
@@ -107,15 +151,11 @@ static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...)
     // Use color only for multi-vCPU (num_vcpus > 1)
     if (num_vcpus > 1)
     {
-        // Magenta, Green, Yellow, Blue (Magenta distinguishes clearly from Green)
-        const char *colors[] = {"\033[35m", "\033[32m", "\033[33m", "\033[34m"};
-        const char *reset = "\033[0m";
-
-        printf("%s[vCPU %d:%s]%s ",
-               colors[ctx->vcpu_id % 4],
+        // Dynamic colors based on vCPU count for maximum contrast
+        printf("\033[38;5;%dm[vCPU %d:%s]\033[0m ",
+               vcpu_colors[ctx->vcpu_id],
                ctx->vcpu_id,
-               ctx->name,
-               reset);
+               ctx->name);
     }
     else
     {
@@ -143,10 +183,8 @@ static void vcpu_putchar(vcpu_context_t *ctx, char ch)
     // Use color only for multi-vCPU (num_vcpus > 1)
     if (num_vcpus > 1)
     {
-        // Bright colors for better distinction
-        const char *colors[] = {"\033[96m", "\033[92m", "\033[93m", "\033[95m"};
-        const char *reset = "\033[0m";
-        printf("%s%c%s", colors[ctx->vcpu_id % 4], ch, reset);
+        // Dynamic colors based on vCPU count for maximum contrast
+        printf("\033[38;5;%dm%c\033[0m", vcpu_colors[ctx->vcpu_id], ch);
     }
     else
     {
@@ -1753,6 +1791,9 @@ int main(int argc, char **argv)
         printf("\n");
     }
 
+    // Initialize dynamic colors for vCPUs (maximum contrast based on count)
+    init_vcpu_colors(num_vcpus);
+
     // Step 3: Start stdin thread (only for Protected Mode with paging)
     // Real Mode guests don't use interrupts, so skip these threads
     // NOTE: Timer thread is disabled - it injects IRQ0 that causes triple faults
@@ -1781,13 +1822,10 @@ int main(int argc, char **argv)
     // Print color legend for multi-vCPU mode
     if (num_vcpus > 1)
     {
-        // Bright colors for better distinction
-        const char *colors[] = {"\033[96m", "\033[92m", "\033[93m", "\033[95m"};
-        const char *reset = "\033[0m";
         printf("Legend: ");
-        for (int i = 0; i < num_vcpus && i < 4; i++)
+        for (int i = 0; i < num_vcpus && i < MAX_VCPUS; i++)
         {
-            printf("%s[%s]%s ", colors[i], vcpus[i].name, reset);
+            printf("\033[38;5;%dm[%s]\033[0m ", vcpu_colors[i], vcpus[i].name);
         }
         printf("\n");
     }
