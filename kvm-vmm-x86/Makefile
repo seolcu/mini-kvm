@@ -20,8 +20,8 @@ all: vmm guests 1k-os
 	@echo
 	@echo "--- All components built successfully! ---"
 	@echo "Run binaries directly:"
-	@echo "  ./kvm-vmm guest/<name>.bin"
-	@echo "  ./kvm-vmm --paging os-1k/kernel.bin"
+	@echo "  ./kvm-vmm guest/<name>"
+	@echo "  ./kvm-vmm --paging os-1k/kernel"
 
 # Build the VMM
 vmm: $(VMM)
@@ -63,19 +63,19 @@ help:
 	@echo
 	@echo "--- Running Programs ---"
 	@echo "Real Mode Guests:"
-	@echo "  ./kvm-vmm guest/minimal.bin"
-	@echo "  ./kvm-vmm guest/hello.bin"
-	@echo "  ./kvm-vmm guest/counter.bin"
-	@echo "  ./kvm-vmm guest/multiplication.bin"
-	@echo "  ./kvm-vmm guest/fibonacci.bin"
-	@echo "  ./kvm-vmm guest/hctest.bin"
+	@echo "  ./kvm-vmm guest/minimal"
+	@echo "  ./kvm-vmm guest/hello"
+	@echo "  ./kvm-vmm guest/counter"
+	@echo "  ./kvm-vmm guest/multiplication"
+	@echo "  ./kvm-vmm guest/fibonacci"
+	@echo "  ./kvm-vmm guest/hctest"
 	@echo
 	@echo "Multi-vCPU (2-4 guests):"
-	@echo "  ./kvm-vmm guest/multiplication.bin guest/counter.bin"
-	@echo "  ./kvm-vmm guest/counter.bin guest/hello.bin guest/multiplication.bin guest/minimal.bin"
+	@echo "  ./kvm-vmm guest/multiplication guest/counter"
+	@echo "  ./kvm-vmm guest/counter guest/hello guest/multiplication guest/minimal"
 	@echo
 	@echo "1K OS (Protected Mode):"
-	@echo "  ./kvm-vmm --paging os-1k/kernel.bin"
-	@echo "  printf '1\\n0\\n' | ./kvm-vmm --paging os-1k/kernel.bin  # Run multiplication"
-	@echo "  printf '3\\nHello\\nquit\\n0\\n' | ./kvm-vmm --paging os-1k/kernel.bin  # Run echo"
+	@echo "  ./kvm-vmm --paging os-1k/kernel"
+	@echo "  printf '1\\n0\\n' | ./kvm-vmm --paging os-1k/kernel  # Run multiplication"
+	@echo "  printf '3\\nHello\\nquit\\n0\\n' | ./kvm-vmm --paging os-1k/kernel  # Run echo"
 	@echo

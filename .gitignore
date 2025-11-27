@@ -20,6 +20,19 @@ build/
 kvm-vmm-x86/kvm-vmm
 kvm-vmm/kvm-vmm
 
+# Guest binaries (no extension)
+kvm-vmm-x86/guest/minimal
+kvm-vmm-x86/guest/hello
+kvm-vmm-x86/guest/counter
+kvm-vmm-x86/guest/multiplication
+kvm-vmm-x86/guest/multiplication_short
+kvm-vmm-x86/guest/fibonacci
+kvm-vmm-x86/guest/hctest
+kvm-vmm-x86/guest/matrix
+
+# 1K OS kernel binary
+kvm-vmm-x86/os-1k/kernel
+
 # IDE/Editor
 .vscode/
 .idea/

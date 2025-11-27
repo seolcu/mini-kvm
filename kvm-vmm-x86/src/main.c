@@ -992,8 +992,9 @@ static void setup_realmode_segments(struct kvm_sregs *sregs, vcpu_context_t *ctx
     sregs->cs.g = 0;
     sregs->cs.avl = 0;
 
-    sregs->ds.base = 0;
-    sregs->ds.selector = 0;
+    // DS must also point to the vCPU's memory region for data access
+    sregs->ds.base = cs_value * 16;
+    sregs->ds.selector = cs_value;
     sregs->ds.limit = 0xFFFF;
     sregs->ds.type = 0x93;
     sregs->ds.present = 1;
@@ -1773,7 +1774,21 @@ int main(int argc, char **argv)
     }
 
     // Step 4: Spawn vCPU threads
-    printf("=== Starting VM execution (%d vCPUs) ===\n\n", num_vcpus);
+    printf("=== Starting VM execution (%d vCPUs) ===\n", num_vcpus);
+
+    // Print color legend for multi-vCPU mode
+    if (num_vcpus > 1)
+    {
+        const char *colors[] = {"\033[35m", "\033[32m", "\033[33m", "\033[34m"};
+        const char *reset = "\033[0m";
+        printf("Legend: ");
+        for (int i = 0; i < num_vcpus && i < 4; i++)
+        {
+            printf("%s[%s]%s ", colors[i], vcpus[i].name, reset);
+        }
+        printf("\n");
+    }
+    printf("\n");
 
     for (int i = 0; i < num_vcpus; i++)
     {

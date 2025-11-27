@@ -30,7 +30,7 @@ USER_LDFLAGS = -m elf_i386 -T user.ld \
 
 .PHONY: all clean test info disasm run
 
-all: kernel.bin
+all: kernel
 
 #
 # Shell binary (user program)
@@ -60,15 +60,15 @@ shell.bin.o: shell.bin
 		--redefine-sym _binary_shell_bin_size=_binary_shell_bin_size \
 		shell.bin shell.bin.o
 
-kernel.bin: boot.o kernel.o common.o shell.bin.o
+kernel: boot.o kernel.o common.o shell.bin.o
 	@echo "=== Linking kernel.elf ==="
 	$(LD) $(KERNEL_LDFLAGS) -o kernel.elf boot.o kernel.o common.o shell.bin.o
 	@echo ""
 	@echo "=== Creating binary ==="
-	$(OBJCOPY) -O binary kernel.elf kernel.bin
+	$(OBJCOPY) -O binary kernel.elf kernel
 	@echo ""
 	@echo "=== Build complete ==="
-	@ls -lh kernel.bin kernel.elf
+	@ls -lh kernel kernel.elf
 	@echo ""
 
 boot.o: boot.S
@@ -84,7 +84,7 @@ common.o: common.c common.h
 	$(CC) $(CFLAGS) -c -o common.o common.c
 
 clean:
-	rm -f *.o *.elf *.bin *.map *.asm
+	rm -f *.o *.elf *.bin *.map *.asm kernel
 
 # Show kernel info
 info: kernel.elf
@@ -101,11 +101,11 @@ disasm: kernel.elf
 	@echo "Disassembly written to kernel.asm"
 
 # Run kernel in VMM
-run: kernel.bin
+run: kernel
 	@echo "=== Running kernel in VMM ==="
-	cd .. && ./kvm-vmm --paging --entry=0x80001000 --load=0x1000 os-1k/kernel.bin
+	cd .. && ./kvm-vmm --paging --entry=0x80001000 --load=0x1000 os-1k/kernel
 
 # Test with simple kernel
-test: test_kernel.bin
+test: test_kernel
 	@echo "=== Running test kernel in VMM ==="
-	cd .. && ./kvm-vmm --paging --entry=0x80001000 --load=0x1000 os-1k/test_kernel.bin
+	cd .. && ./kvm-vmm --paging --entry=0x80001000 --load=0x1000 os-1k/test_kernel
