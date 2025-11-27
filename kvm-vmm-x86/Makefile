@@ -33,7 +33,7 @@ $(VMM): src/main.c src/protected_mode.h
 # Build all real-mode guest binaries
 guests:
 	@echo "=> Building all real-mode guests..."
-	@cd guest && ./build.sh > /dev/null
+	@$(MAKE) -C guest > /dev/null
 
 # Build the 1K OS
 1k-os:

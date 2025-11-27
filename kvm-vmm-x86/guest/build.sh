@@ -18,8 +18,9 @@ for guest in $GUESTS; do
     # Assemble
     as --32 ${guest}.S -o ${guest}.o
     
-    # Link directly to binary format (no linker script needed)
-    ld -m elf_i386 -Ttext 0x0 --oformat=binary -o ${guest}.bin ${guest}.o
+    # Link with linker script to ensure code starts at address 0
+    # (Required for newer binutils which ignore -Ttext without -T)
+    ld -m elf_i386 -T guest.ld --oformat=binary -o ${guest}.bin ${guest}.o
     
     # Show size
     SIZE=$(stat -c%s ${guest}.bin)

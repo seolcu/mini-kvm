@@ -20,35 +20,35 @@
 #include "protected_mode.h"
 
 // Guest memory configuration
-#define GUEST_MEM_SIZE (4 << 20)  // 4MB (expandable for Protected Mode)
-#define GUEST_LOAD_ADDR 0x0       // Load guest at address 0
+#define GUEST_MEM_SIZE (4 << 20) // 4MB (expandable for Protected Mode)
+#define GUEST_LOAD_ADDR 0x0      // Load guest at address 0
 
 // Mode selection
 // Hypercall interface
-#define HYPERCALL_PORT 0x500      // Port for hypercalls
+#define HYPERCALL_PORT 0x500 // Port for hypercalls
 
 // Hypercall numbers (must match 1K OS syscall numbers)
-#define HC_EXIT       0x00        // Exit guest
-#define HC_PUTCHAR    0x01        // Output character (BL = char)
-#define HC_GETCHAR    0x02        // Input character (returns in AL)
+#define HC_EXIT 0x00    // Exit guest
+#define HC_PUTCHAR 0x01 // Output character (BL = char)
+#define HC_GETCHAR 0x02 // Input character (returns in AL)
 
 // Multi-vCPU configuration
-#define MAX_VCPUS 4               // Maximum number of vCPUs
+#define MAX_VCPUS 4 // Maximum number of vCPUs
 
 // Keyboard buffer for interrupt-based input
 #define KEYBOARD_BUFFER_SIZE 256
-typedef struct {
+typedef struct
+{
     char buffer[KEYBOARD_BUFFER_SIZE];
-    int head;  // Write position
-    int tail;  // Read position
+    int head; // Write position
+    int tail; // Read position
     pthread_mutex_t lock;
 } keyboard_buffer_t;
 
 static keyboard_buffer_t keyboard_buffer = {
     .head = 0,
     .tail = 0,
-    .lock = PTHREAD_MUTEX_INITIALIZER
-};
+    .lock = PTHREAD_MUTEX_INITIALIZER};
 
 // Stdin monitoring thread
 static pthread_t stdin_thread;
@@ -64,27 +64,28 @@ static bool timer_thread_running = false;
 static volatile int timer_ticks = 0;
 
 // Per-vCPU context structure
-typedef struct {
-    int vcpu_id;                  // vCPU index (0, 1, 2, 3)
-    int vcpu_fd;                  // KVM vCPU file descriptor
-    struct kvm_run *kvm_run;      // Per-vCPU run structure
-    void *guest_mem;              // Per-guest memory region
-    size_t mem_size;              // Memory size (4MB default)
-    size_t kvm_run_mmap_size;     // Size of kvm_run mmap region
-    const char *guest_binary;     // Binary filename
-    char name[256];               // Display name (e.g., "multiplication")
-    int exit_count;               // VM exit counter
-    bool running;                 // Execution state
-    bool use_paging;              // Enable Protected Mode with paging (for 1K OS)
-    uint32_t entry_point;         // Entry point address (EIP)
-    uint32_t load_offset;         // Offset to load binary in guest memory
-    int pending_getchar;          // GETCHAR request pending (0=no, 1=yes)
-    int getchar_result;           // Cached GETCHAR result for IN instruction
+typedef struct
+{
+    int vcpu_id;              // vCPU index (0, 1, 2, 3)
+    int vcpu_fd;              // KVM vCPU file descriptor
+    struct kvm_run *kvm_run;  // Per-vCPU run structure
+    void *guest_mem;          // Per-guest memory region
+    size_t mem_size;          // Memory size (4MB default)
+    size_t kvm_run_mmap_size; // Size of kvm_run mmap region
+    const char *guest_binary; // Binary filename
+    char name[256];           // Display name (e.g., "multiplication")
+    int exit_count;           // VM exit counter
+    bool running;             // Execution state
+    bool use_paging;          // Enable Protected Mode with paging (for 1K OS)
+    uint32_t entry_point;     // Entry point address (EIP)
+    uint32_t load_offset;     // Offset to load binary in guest memory
+    int pending_getchar;      // GETCHAR request pending (0=no, 1=yes)
+    int getchar_result;       // Cached GETCHAR result for IN instruction
 } vcpu_context_t;
 
 // Global KVM state (shared across vCPUs)
-static int kvm_fd = -1;           // /dev/kvm file descriptor
-static int vm_fd = -1;            // VM instance (one VM, multiple vCPUs)
+static int kvm_fd = -1; // /dev/kvm file descriptor
+static int vm_fd = -1;  // VM instance (one VM, multiple vCPUs)
 
 // vCPU array
 static vcpu_context_t vcpus[MAX_VCPUS];
@@ -99,11 +100,13 @@ static bool verbose = false;
 /*
  * Thread-safe output functions with vCPU identification
  */
-static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
+static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...)
+{
     pthread_mutex_lock(&stdout_mutex);
 
     // Use color only for multi-vCPU (num_vcpus > 1)
-    if (num_vcpus > 1) {
+    if (num_vcpus > 1)
+    {
         // Magenta, Green, Yellow, Blue (Magenta distinguishes clearly from Green)
         const char *colors[] = {"\033[35m", "\033[32m", "\033[33m", "\033[34m"};
         const char *reset = "\033[0m";
@@ -113,7 +116,9 @@ static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
                ctx->vcpu_id,
                ctx->name,
                reset);
-    } else {
+    }
+    else
+    {
         // Single vCPU: no color, simple prefix
         printf("[%s] ", ctx->name);
     }
@@ -131,16 +136,20 @@ static void vcpu_printf(vcpu_context_t *ctx, const char *fmt, ...) {
 /*
  * Output single character with color for vCPU identification
  */
-static void vcpu_putchar(vcpu_context_t *ctx, char ch) {
+static void vcpu_putchar(vcpu_context_t *ctx, char ch)
+{
     pthread_mutex_lock(&stdout_mutex);
 
     // Use color only for multi-vCPU (num_vcpus > 1)
-    if (num_vcpus > 1) {
+    if (num_vcpus > 1)
+    {
         // Magenta, Green, Yellow, Blue (Magenta distinguishes clearly from Green)
         const char *colors[] = {"\033[35m", "\033[32m", "\033[33m", "\033[34m"};
         const char *reset = "\033[0m";
         printf("%s%c%s", colors[ctx->vcpu_id % 4], ch, reset);
-    } else {
+    }
+    else
+    {
         // Single vCPU: no color
         putchar(ch);
     }
@@ -152,9 +161,11 @@ static void vcpu_putchar(vcpu_context_t *ctx, char ch) {
 /*
  * Load guest binary into guest memory
  */
-static int load_guest_binary(const char *filename, void *mem, size_t mem_size, uint32_t load_offset) {
+static int load_guest_binary(const char *filename, void *mem, size_t mem_size, uint32_t load_offset)
+{
     FILE *f = fopen(filename, "rb");
-    if (!f) {
+    if (!f)
+    {
         perror("fopen");
         return -1;
     }
@@ -164,7 +175,8 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size, u
     long fsize_long = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    if (fsize_long < 0) {
+    if (fsize_long < 0)
+    {
         perror("ftell");
         fclose(f);
         return -1;
@@ -172,11 +184,13 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size, u
 
     size_t fsize = (size_t)fsize_long;
 
-    if (verbose) {
+    if (verbose)
+    {
         printf("Guest binary size: %zu bytes\n", fsize);
     }
 
-    if (fsize + load_offset > mem_size) {
+    if (fsize + load_offset > mem_size)
+    {
         fprintf(stderr, "Guest binary too large (%zu bytes at offset 0x%x > %zu bytes)\n",
                 fsize, load_offset, mem_size);
         fclose(f);
@@ -185,7 +199,8 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size, u
 
     // Load binary at specified offset
     size_t nread = fread(mem + load_offset, 1, fsize, f);
-    if (nread != fsize) {
+    if (nread != fsize)
+    {
         perror("fread");
         fclose(f);
         return -1;
@@ -193,14 +208,16 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size, u
 
     fclose(f);
 
-    if (verbose) {
+    if (verbose)
+    {
         printf("Loaded guest binary: %zu bytes at offset 0x%x\n", nread, load_offset);
 
         // Show first few bytes
         printf("First bytes: ");
         size_t bytes_to_show = (fsize < 16 ? fsize : 16);
-        for (size_t i = 0; i < bytes_to_show; i++) {
-            printf("%02x ", ((unsigned char*)(mem + load_offset))[i]);
+        for (size_t i = 0; i < bytes_to_show; i++)
+        {
+            printf("%02x ", ((unsigned char *)(mem + load_offset))[i]);
         }
         printf("\n");
     }
@@ -211,21 +228,25 @@ static int load_guest_binary(const char *filename, void *mem, size_t mem_size, u
 /*
  * Keyboard buffer helper functions
  */
-static void keyboard_buffer_push(char ch) {
+static void keyboard_buffer_push(char ch)
+{
     pthread_mutex_lock(&keyboard_buffer.lock);
     int next_head = (keyboard_buffer.head + 1) % KEYBOARD_BUFFER_SIZE;
-    if (next_head != keyboard_buffer.tail) {
+    if (next_head != keyboard_buffer.tail)
+    {
         keyboard_buffer.buffer[keyboard_buffer.head] = ch;
         keyboard_buffer.head = next_head;
     }
     pthread_mutex_unlock(&keyboard_buffer.lock);
 }
 
-static int keyboard_buffer_pop(void) {
+static int keyboard_buffer_pop(void)
+{
     pthread_mutex_lock(&keyboard_buffer.lock);
-    if (keyboard_buffer.head == keyboard_buffer.tail) {
+    if (keyboard_buffer.head == keyboard_buffer.tail)
+    {
         pthread_mutex_unlock(&keyboard_buffer.lock);
-        return -1;  // Empty
+        return -1; // Empty
     }
     char ch = keyboard_buffer.buffer[keyboard_buffer.tail];
     keyboard_buffer.tail = (keyboard_buffer.tail + 1) % KEYBOARD_BUFFER_SIZE;
@@ -237,7 +258,8 @@ static int keyboard_buffer_pop(void) {
  * Timer thread - generates periodic timer interrupts
  * Injects IRQ0 every 10ms to all vCPUs
  */
-static void *timer_thread_func(void *arg) {
+static void *timer_thread_func(void *arg)
+{
     (void)arg;
 
     printf("[Timer] Timer thread started (10ms period)\n");
@@ -245,19 +267,23 @@ static void *timer_thread_func(void *arg) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
 
-    while (timer_thread_running) {
+    while (timer_thread_running)
+    {
         // Sleep for 100ms (reduced frequency to allow more interactive use)
         usleep(100000);
 
         timer_ticks++;
 
         // Inject timer interrupt (IRQ0) to all vCPUs
-        for (int i = 0; i < num_vcpus; i++) {
-            if (vcpus[i].running) {
+        for (int i = 0; i < num_vcpus; i++)
+        {
+            if (vcpus[i].running)
+            {
                 struct kvm_interrupt irq;
-                irq.irq = 0x20;  // Vector 0x20 = timer interrupt (IRQ0)
+                irq.irq = 0x20; // Vector 0x20 = timer interrupt (IRQ0)
 
-                if (ioctl(vcpus[i].vcpu_fd, KVM_INTERRUPT, &irq) < 0) {
+                if (ioctl(vcpus[i].vcpu_fd, KVM_INTERRUPT, &irq) < 0)
+                {
                     // Interrupt might fail - just continue
                 }
             }
@@ -272,43 +298,47 @@ static void *timer_thread_func(void *arg) {
  * Set terminal to raw mode for character-by-character input
  * Disables local echo and line buffering
  */
-static void set_raw_mode(void) {
-    if (!isatty(STDIN_FILENO)) {
+static void set_raw_mode(void)
+{
+    if (!isatty(STDIN_FILENO))
+    {
         // Not a terminal (piped input), skip raw mode
         return;
     }
-    
+
     // Save original terminal settings
-    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1)
+    {
         perror("tcgetattr");
         return;
     }
     termios_saved = true;
-    
+
     struct termios raw = orig_termios;
-    
+
     // Disable echo (ECHO) and canonical mode (ICANON)
     // ICANON: line buffering
     // ECHO: local echo
     // ISIG: signal generation (Ctrl+C, Ctrl+Z)
     raw.c_lflag &= ~(ECHO | ICANON | ISIG);
-    
+
     // Disable input processing
     // IXON: Ctrl+S/Ctrl+Q flow control
     // ICRNL: translate CR to NL
     raw.c_iflag &= ~(IXON | ICRNL);
-    
+
     // Keep output processing enabled for proper newline handling
     // OPOST enables automatic \n to \r\n translation (ONLCR flag)
     // This is essential for correct line breaks in terminal output
     // Without OPOST, each \n only moves cursor down, not to start of line
     // raw.c_oflag &= ~(OPOST);  // DO NOT disable OPOST!
-    
+
     // Set read to return immediately with at least 1 character
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
-    
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
+    {
         perror("tcsetattr");
         termios_saved = false;
     }
@@ -317,8 +347,10 @@ static void set_raw_mode(void) {
 /*
  * Restore terminal to original settings
  */
-static void restore_terminal(void) {
-    if (termios_saved) {
+static void restore_terminal(void)
+{
+    if (termios_saved)
+    {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
         termios_saved = false;
     }
@@ -328,7 +360,8 @@ static void restore_terminal(void) {
  * Stdin monitoring thread - reads from stdin and injects keyboard interrupts
  * This thread runs continuously and injects IRQ1 when a key is pressed
  */
-static void *stdin_monitor_thread_func(void *arg) {
+static void *stdin_monitor_thread_func(void *arg)
+{
     (void)arg;
 
     printf("[Keyboard] Stdin monitoring thread started\n");
@@ -337,29 +370,34 @@ static void *stdin_monitor_thread_func(void *arg) {
     int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
     fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
-    while (stdin_thread_running) {
+    while (stdin_thread_running)
+    {
         fd_set readfds;
         struct timeval tv;
 
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
         tv.tv_sec = 0;
-        tv.tv_usec = 100000;  // 100ms timeout
+        tv.tv_usec = 100000; // 100ms timeout
 
         int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
-        if (ret > 0 && FD_ISSET(STDIN_FILENO, &readfds)) {
+        if (ret > 0 && FD_ISSET(STDIN_FILENO, &readfds))
+        {
             int ch = getchar();
-            if (ch != EOF) {
+            if (ch != EOF)
+            {
                 // Store character in buffer
                 keyboard_buffer_push((char)ch);
 
                 // Inject keyboard interrupt (IRQ1) to vCPU 0
                 // Only vCPU 0 receives keyboard input (as per meeting notes)
-                if (num_vcpus > 0 && vcpus[0].running) {
+                if (num_vcpus > 0 && vcpus[0].running)
+                {
                     struct kvm_interrupt irq;
-                    irq.irq = 0x21;  // Vector 0x21 = keyboard interrupt
+                    irq.irq = 0x21; // Vector 0x21 = keyboard interrupt
 
-                    if (ioctl(vcpus[0].vcpu_fd, KVM_INTERRUPT, &irq) < 0) {
+                    if (ioctl(vcpus[0].vcpu_fd, KVM_INTERRUPT, &irq) < 0)
+                    {
                         // Interrupt might fail if guest is in incompatible state
                         // Just continue - guest will eventually receive it
                     }
@@ -379,12 +417,14 @@ static void *stdin_monitor_thread_func(void *arg) {
  * Initialize KVM and create VM
  * need_irqchip: true for Protected Mode (needs interrupts), false for Real Mode
  */
-static int init_kvm(bool need_irqchip) {
+static int init_kvm(bool need_irqchip)
+{
     int api_version;
 
     // 1. Open /dev/kvm
     kvm_fd = open("/dev/kvm", O_RDWR | O_CLOEXEC);
-    if (kvm_fd < 0) {
+    if (kvm_fd < 0)
+    {
         perror("open /dev/kvm");
         fprintf(stderr, "Make sure KVM is enabled (CONFIG_KVM=y/m)\n");
         return -1;
@@ -392,12 +432,14 @@ static int init_kvm(bool need_irqchip) {
 
     // 2. Check KVM API version
     api_version = ioctl(kvm_fd, KVM_GET_API_VERSION, 0);
-    if (api_version < 0) {
+    if (api_version < 0)
+    {
         perror("KVM_GET_API_VERSION");
         return -1;
     }
 
-    if (api_version != KVM_API_VERSION) {
+    if (api_version != KVM_API_VERSION)
+    {
         fprintf(stderr, "KVM API version mismatch: expected %d, got %d\n",
                 KVM_API_VERSION, api_version);
         return -1;
@@ -407,21 +449,50 @@ static int init_kvm(bool need_irqchip) {
 
     // 3. Create VM
     vm_fd = ioctl(kvm_fd, KVM_CREATE_VM, 0);
-    if (vm_fd < 0) {
+    if (vm_fd < 0)
+    {
         perror("KVM_CREATE_VM");
         return -1;
     }
 
     printf("Created VM (fd=%d)\n", vm_fd);
 
+    // 3.5. Set TSS address (required on Intel platforms for Protected Mode)
+    // This must be called before creating vCPUs
+    // Use an address in guest memory that won't conflict with kernel/page tables
+    if (need_irqchip || 1)
+    { // Always set TSS for protected mode
+        // TSS at 0x200000 (2MB) - well above kernel and page directory
+        if (ioctl(vm_fd, KVM_SET_TSS_ADDR, (unsigned long)0x200000) < 0)
+        {
+            // May fail on AMD - that is OK, only strictly required on Intel
+            if (verbose)
+            {
+                perror("KVM_SET_TSS_ADDR (may be OK on AMD)");
+            }
+        }
+        else
+        {
+            printf("Set TSS address to 0x200000\n");
+        }
+    }
+
     // 4. Create interrupt controller (IRQCHIP) only if needed
     // Real Mode guests don't need interrupts, Protected Mode does
-    if (need_irqchip) {
-        if (ioctl(vm_fd, KVM_CREATE_IRQCHIP) < 0) {
+    // NOTE: When IRQCHIP is created, KVM also emulates the PIT (timer).
+    // The PIT will generate IRQ0 interrupts which can cause triple faults
+    // if the guest IDT is not properly set up. For now, we skip IRQCHIP
+    // creation to avoid this issue - the guest uses hypercalls for I/O anyway.
+    if (need_irqchip && 0)
+    { // DISABLED: causes triple fault before IDT setup
+        if (ioctl(vm_fd, KVM_CREATE_IRQCHIP) < 0)
+        {
             perror("KVM_CREATE_IRQCHIP");
             fprintf(stderr, "Warning: Interrupt controller creation failed. Interrupts disabled.\n");
             // Continue anyway - hypercall-based I/O will still work
-        } else {
+        }
+        else
+        {
             printf("Created interrupt controller (IRQCHIP)\n");
         }
     }
@@ -434,44 +505,52 @@ static int init_kvm(bool need_irqchip) {
  * Real Mode limitation: Each vCPU gets 256KB at offset vcpu_id * 256KB
  * This allows 4 vCPUs within the 1MB Real Mode address space
  */
-static int setup_vcpu_memory(vcpu_context_t *ctx) {
+static int setup_vcpu_memory(vcpu_context_t *ctx)
+{
     struct kvm_userspace_memory_region mem_region;
 
     // Use 4MB per vCPU for 1K OS (with paging), 256KB for Real Mode guests
-    if (ctx->use_paging) {
-        ctx->mem_size = 4 * 1024 * 1024;  // 4MB for Protected Mode
-    } else {
-        ctx->mem_size = 256 * 1024;       // 256KB for Real Mode (fits in 64K segment)
+    if (ctx->use_paging)
+    {
+        ctx->mem_size = 4 * 1024 * 1024; // 4MB for Protected Mode
+    }
+    else
+    {
+        ctx->mem_size = 256 * 1024; // 256KB for Real Mode (fits in 64K segment)
     }
 
     // Allocate memory for this vCPU's guest
     ctx->guest_mem = mmap(NULL, ctx->mem_size,
                           PROT_READ | PROT_WRITE,
                           MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    if (ctx->guest_mem == MAP_FAILED) {
+    if (ctx->guest_mem == MAP_FAILED)
+    {
         perror("mmap vcpu guest_mem");
         return -1;
     }
 
-    if (verbose) {
+    if (verbose)
+    {
         vcpu_printf(ctx, "Allocated guest memory: %zu KB at %p\n",
                     ctx->mem_size / 1024, ctx->guest_mem);
     }
 
     // Tell KVM about this memory region
     // Each vCPU uses different GPA range: vCPU 0 at 0x0, vCPU 1 at 0x400000 (4MB), etc.
-    mem_region.slot = ctx->vcpu_id;  // Use vCPU ID as slot number
+    mem_region.slot = ctx->vcpu_id; // Use vCPU ID as slot number
     mem_region.flags = 0;
-    mem_region.guest_phys_addr = ctx->vcpu_id * ctx->mem_size;  // Offset by 4MB
+    mem_region.guest_phys_addr = ctx->vcpu_id * ctx->mem_size; // Offset by 4MB
     mem_region.memory_size = ctx->mem_size;
     mem_region.userspace_addr = (unsigned long)ctx->guest_mem;
 
-    if (ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION, &mem_region) < 0) {
+    if (ioctl(vm_fd, KVM_SET_USER_MEMORY_REGION, &mem_region) < 0)
+    {
         perror("KVM_SET_USER_MEMORY_REGION");
         return -1;
     }
 
-    if (verbose) {
+    if (verbose)
+    {
         vcpu_printf(ctx, "Mapped to slot %d: GPA 0x%lx -> HVA %p (%zu bytes)\n",
                     ctx->vcpu_id, mem_region.guest_phys_addr, ctx->guest_mem, ctx->mem_size);
     }
@@ -483,47 +562,54 @@ static int setup_vcpu_memory(vcpu_context_t *ctx) {
  * Setup page tables for Protected Mode with paging (for 1K OS)
  * Uses 2-level page tables with 4MB pages (PSE enabled)
  */
-static int setup_page_tables(vcpu_context_t *ctx) {
+static int setup_page_tables(vcpu_context_t *ctx)
+{
     // Page directory at GPA 0x00100000 (1MB offset)
     const uint32_t page_dir_offset = 0x00100000;
 
-    if (page_dir_offset >= ctx->mem_size) {
+    if (page_dir_offset >= ctx->mem_size)
+    {
         vcpu_printf(ctx, "Error: Page directory offset exceeds memory size\n");
         return -1;
     }
 
     uint32_t *page_dir = (uint32_t *)(ctx->guest_mem + page_dir_offset);
-    memset(page_dir, 0, 4096);  // Clear page directory
+    memset(page_dir, 0, 4096); // Clear page directory
 
     // Identity map first 4MB using 4MB pages (PSE)
     // This covers: 0x00000000 - 0x003FFFFF physical memory
-    page_dir[0] = 0x00000083;  // Present, R/W, 4MB page at physical 0x0
+    page_dir[0] = 0x00000083; // Present, R/W, 4MB page at physical 0x0
 
     // Map kernel space: 0x80000000 - 0x803FFFFF -> 0x00000000 - 0x003FFFFF
     // PDE index for 0x80000000 is 512 (0x80000000 >> 22 = 512)
-    page_dir[512] = 0x00000083;  // Present, R/W, 4MB page at physical 0x0
+    page_dir[512] = 0x00000083; // Present, R/W, 4MB page at physical 0x0
 
     // Map additional kernel space if available
     // For 4MB memory, we also map PDE[513] to handle addresses at the boundary (0x80400000)
-    if (ctx->mem_size >= 4 * 1024 * 1024) {
+    if (ctx->mem_size >= 4 * 1024 * 1024)
+    {
         // Map 0x80400000-0x807FFFFF, but it aliases to 0x0-0x3FFFFF (wrap around)
         // This is fine for boundary addresses like __free_ram_end
-        page_dir[513] = 0x00000083;  // Map to same physical memory (alias)
+        page_dir[513] = 0x00000083; // Map to same physical memory (alias)
     }
 
-    vcpu_printf(ctx, "Page directory at GPA 0x%x (identity + kernel mapping)\n",
-                page_dir_offset);
-    vcpu_printf(ctx, "  PDE[0]   = 0x%08x (physical 0x0 - 0x3FFFFF)\n", page_dir[0]);
-    vcpu_printf(ctx, "  PDE[512] = 0x%08x (virtual 0x80000000 -> physical 0x0)\n", page_dir[512]);
+    if (verbose)
+    {
+        vcpu_printf(ctx, "Page directory at GPA 0x%x (identity + kernel mapping)\n",
+                    page_dir_offset);
+        vcpu_printf(ctx, "  PDE[0]   = 0x%08x (physical 0x0 - 0x3FFFFF)\n", page_dir[0]);
+        vcpu_printf(ctx, "  PDE[512] = 0x%08x (virtual 0x80000000 -> physical 0x0)\n", page_dir[512]);
+    }
 
-    return page_dir_offset;  // Return offset for CR3
+    return page_dir_offset; // Return offset for CR3
 }
 
 /*
  * Create a GDT entry
  */
 static void create_gdt_entry(gdt_entry_t *entry, uint32_t base, uint32_t limit,
-                             uint8_t access, uint8_t flags) {
+                             uint8_t access, uint8_t flags)
+{
     entry->base_low = base & 0xFFFF;
     entry->base_mid = (base >> 16) & 0xFF;
     entry->base_high = (base >> 24) & 0xFF;
@@ -536,7 +622,8 @@ static void create_gdt_entry(gdt_entry_t *entry, uint32_t base, uint32_t limit,
  * Setup GDT in guest memory for Protected Mode
  * Called when paging is enabled
  */
-static int setup_gdt(void *guest_mem_ptr) {
+static int setup_gdt(void *guest_mem_ptr)
+{
     gdt_entry_t *gdt = (gdt_entry_t *)(guest_mem_ptr + GDT_ADDR);
 
     // Entry 0: Null descriptor (required)
@@ -549,10 +636,10 @@ static int setup_gdt(void *guest_mem_ptr) {
     create_gdt_entry(&gdt[2], 0, 0xFFFFF, ACCESS_DATA_W, LIMIT_GRAN);
 
     // Entry 3: User code segment (32-bit, ring 3)
-    create_gdt_entry(&gdt[3], 0, 0xFFFFF, 0xFA, LIMIT_GRAN);  // Ring 3 code
+    create_gdt_entry(&gdt[3], 0, 0xFFFFF, 0xFA, LIMIT_GRAN); // Ring 3 code
 
     // Entry 4: User data segment (32-bit, ring 3)
-    create_gdt_entry(&gdt[4], 0, 0xFFFFF, 0xF2, LIMIT_GRAN);  // Ring 3 data
+    create_gdt_entry(&gdt[4], 0, 0xFFFFF, 0xF2, LIMIT_GRAN); // Ring 3 data
 
     printf("GDT setup: %d entries at 0x%x\n", GDT_SIZE, GDT_ADDR);
     return 0;
@@ -562,7 +649,8 @@ static int setup_gdt(void *guest_mem_ptr) {
  * Setup IDT in guest memory for Protected Mode
  * Called when paging is enabled
  */
-static int setup_idt(void *guest_mem_ptr) {
+static int setup_idt(void *guest_mem_ptr)
+{
     // Place IDT right after GDT
     uint32_t idt_addr = GDT_ADDR + GDT_TOTAL_SIZE;
     idt_entry_t *idt = (idt_entry_t *)(guest_mem_ptr + idt_addr);
@@ -872,12 +960,13 @@ static int run_vm(void) {
 
     return 0;
 }
-#endif  // OLD SINGLE-VCPU CODE
+#endif // OLD SINGLE-VCPU CODE
 
 /*
  * Setup segment registers for Real Mode
  */
-static void setup_realmode_segments(struct kvm_sregs *sregs, vcpu_context_t *ctx) {
+static void setup_realmode_segments(struct kvm_sregs *sregs, vcpu_context_t *ctx)
+{
     // CS:IP must point to the vCPU's memory region
     // Physical address = CS * 16 + IP
     // For vCPU 0: GPA 0x00000 (CS = 0x0000, IP = 0x0)
@@ -916,12 +1005,14 @@ static void setup_realmode_segments(struct kvm_sregs *sregs, vcpu_context_t *ctx
 /*
  * Setup segment registers for Protected Mode with paging
  */
-static void setup_protectedmode_segments(struct kvm_sregs *sregs) {
+static void setup_protectedmode_segments(struct kvm_sregs *sregs)
+{
     // Code segment (flat, base=0, limit=4GB)
+    // Type 0x0a = Execute/Read code segment (matches GDT entry with access 0x9a)
     sregs->cs.base = 0;
     sregs->cs.limit = 0xFFFFFFFF;
     sregs->cs.selector = 0x08;
-    sregs->cs.type = 0x0B;
+    sregs->cs.type = 0x0a; // Execute/Read
     sregs->cs.present = 1;
     sregs->cs.dpl = 0;
     sregs->cs.db = 1;
@@ -931,10 +1022,11 @@ static void setup_protectedmode_segments(struct kvm_sregs *sregs) {
     sregs->cs.avl = 0;
 
     // Data segment (flat, base=0, limit=4GB)
+    // Type 0x02 = Read/Write data segment (matches GDT entry with access 0x92)
     sregs->ds.base = 0;
     sregs->ds.limit = 0xFFFFFFFF;
     sregs->ds.selector = 0x10;
-    sregs->ds.type = 0x03;
+    sregs->ds.type = 0x02; // Read/Write
     sregs->ds.present = 1;
     sregs->ds.dpl = 0;
     sregs->ds.db = 1;
@@ -949,7 +1041,8 @@ static void setup_protectedmode_segments(struct kvm_sregs *sregs) {
 /*
  * Configure vCPU for Protected Mode with paging
  */
-static int configure_protected_mode(vcpu_context_t *ctx) {
+static int configure_protected_mode(vcpu_context_t *ctx)
+{
     struct kvm_sregs sregs;
     struct kvm_regs regs;
 
@@ -959,12 +1052,14 @@ static int configure_protected_mode(vcpu_context_t *ctx) {
 
     // Setup page tables
     int page_dir_offset = setup_page_tables(ctx);
-    if (page_dir_offset < 0) {
+    if (page_dir_offset < 0)
+    {
         return -1;
     }
 
     // Get current segment registers
-    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
+    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0)
+    {
         perror("KVM_GET_SREGS (paging)");
         return -1;
     }
@@ -978,44 +1073,52 @@ static int configure_protected_mode(vcpu_context_t *ctx) {
     // Set CR3 to page directory
     sregs.cr3 = page_dir_offset;
 
-    // Enable Protected Mode and Paging
-    sregs.cr0 |= 0x00000001;  // PE bit
-    sregs.cr0 |= 0x80000000;  // PG bit
-    sregs.cr4 |= 0x00000010;  // PSE bit
-    sregs.cr4 &= ~0x00000020; // Clear PAE bit
+    // Set CR0: PE (Protected Mode) + PG (Paging) + ET (Extension Type)
+    // Clear CD (Cache Disable) and NW (Not Write-through) for proper caching
+    // Note: KVM initial CR0 may have CD=1, NW=1 which can cause issues with paging
+    sregs.cr0 = 0x80000011; // PG + ET + PE
+
+    // Set CR4: PSE (Page Size Extension) for 4MB pages
+    sregs.cr4 = 0x00000010; // PSE only, clear PAE
 
     // Setup flat segments
     setup_protectedmode_segments(&sregs);
 
     vcpu_printf(ctx, "About to set sregs: CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
-               sregs.cr0, sregs.cr3, sregs.cr4);
+                sregs.cr0, sregs.cr3, sregs.cr4);
 
-    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
+    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0)
+    {
         perror("KVM_SET_SREGS (paging)");
         return -1;
     }
-
-    vcpu_printf(ctx, "Successfully set sregs for paging\n");
 
     // Update RIP to entry point
     memset(&regs, 0, sizeof(regs));
     regs.rip = ctx->entry_point;
     regs.rflags = 0x2;
 
-    vcpu_printf(ctx, "About to set regs: RIP=0x%x\n", ctx->entry_point);
-
-    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
+    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
+    {
         perror("KVM_SET_REGS (paging)");
         return -1;
     }
 
-    vcpu_printf(ctx, "Successfully set regs, verifying...\n");
-
-    // Verify the settings
-    struct kvm_sregs verify_sregs;
-    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &verify_sregs) == 0) {
-        vcpu_printf(ctx, "Verified: CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
-                   verify_sregs.cr0, verify_sregs.cr3, verify_sregs.cr4);
+    if (verbose)
+    {
+        // Verify the settings
+        struct kvm_sregs verify_sregs;
+        struct kvm_regs verify_regs;
+        if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &verify_sregs) == 0)
+        {
+            vcpu_printf(ctx, "Verified: CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
+                        verify_sregs.cr0, verify_sregs.cr3, verify_sregs.cr4);
+        }
+        if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &verify_regs) == 0)
+        {
+            vcpu_printf(ctx, "Verified: RIP=0x%llx RFLAGS=0x%llx\n",
+                        verify_regs.rip, verify_regs.rflags);
+        }
     }
 
     vcpu_printf(ctx, "Enabled paging: CR3=0x%llx, EIP=0x%x (Protected Mode)\n",
@@ -1027,25 +1130,29 @@ static int configure_protected_mode(vcpu_context_t *ctx) {
 /*
  * Setup vCPU context (multi-vCPU version)
  */
-static int setup_vcpu_context(vcpu_context_t *ctx) {
+static int setup_vcpu_context(vcpu_context_t *ctx)
+{
     struct kvm_sregs sregs;
     struct kvm_regs regs;
     int mmap_size_ret;
 
     // Create vCPU
     ctx->vcpu_fd = ioctl(vm_fd, KVM_CREATE_VCPU, ctx->vcpu_id);
-    if (ctx->vcpu_fd < 0) {
+    if (ctx->vcpu_fd < 0)
+    {
         perror("KVM_CREATE_VCPU");
         return -1;
     }
 
-    if (verbose) {
+    if (verbose)
+    {
         vcpu_printf(ctx, "Created vCPU (fd=%d)\n", ctx->vcpu_fd);
     }
 
     // Get kvm_run structure size and mmap it
     mmap_size_ret = ioctl(kvm_fd, KVM_GET_VCPU_MMAP_SIZE, 0);
-    if (mmap_size_ret < 0) {
+    if (mmap_size_ret < 0)
+    {
         perror("KVM_GET_VCPU_MMAP_SIZE");
         return -1;
     }
@@ -1053,17 +1160,20 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
 
     ctx->kvm_run = mmap(NULL, ctx->kvm_run_mmap_size, PROT_READ | PROT_WRITE,
                         MAP_SHARED, ctx->vcpu_fd, 0);
-    if (ctx->kvm_run == MAP_FAILED) {
+    if (ctx->kvm_run == MAP_FAILED)
+    {
         perror("mmap kvm_run");
         return -1;
     }
 
-    if (verbose) {
+    if (verbose)
+    {
         vcpu_printf(ctx, "Mapped kvm_run structure: %zu bytes\n", ctx->kvm_run_mmap_size);
     }
 
     // Get current segment registers
-    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
+    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0)
+    {
         perror("KVM_GET_SREGS");
         return -1;
     }
@@ -1071,7 +1181,8 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
     // Setup Real Mode segments
     setup_realmode_segments(&sregs, ctx);
 
-    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
+    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0)
+    {
         perror("KVM_SET_SREGS");
         return -1;
     }
@@ -1081,26 +1192,31 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
     regs.rip = GUEST_LOAD_ADDR;
     regs.rflags = 0x2;
 
-    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
+    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
+    {
         perror("KVM_SET_REGS");
         return -1;
     }
 
-    if (verbose) {
+    if (verbose)
+    {
         vcpu_printf(ctx, "Set registers: RIP=0x%llx (Real Mode)\n", regs.rip);
     }
 
     // Set MP state to runnable
     struct kvm_mp_state mp_state;
     mp_state.mp_state = KVM_MP_STATE_RUNNABLE;
-    if (ioctl(ctx->vcpu_fd, KVM_SET_MP_STATE, &mp_state) < 0) {
+    if (ioctl(ctx->vcpu_fd, KVM_SET_MP_STATE, &mp_state) < 0)
+    {
         perror("KVM_SET_MP_STATE");
         return -1;
     }
 
     // If paging is enabled, switch to Protected Mode
-    if (ctx->use_paging) {
-        if (configure_protected_mode(ctx) < 0) {
+    if (ctx->use_paging)
+    {
+        if (configure_protected_mode(ctx) < 0)
+        {
             return -1;
         }
     }
@@ -1114,68 +1230,84 @@ static int setup_vcpu_context(vcpu_context_t *ctx) {
 /*
  * Handle hypercall OUT request
  */
-static int handle_hypercall_out(vcpu_context_t *ctx, struct kvm_regs *regs) {
+static int handle_hypercall_out(vcpu_context_t *ctx, struct kvm_regs *regs)
+{
     unsigned char hc_num = regs->rax & 0xFF;
 
     // Log hypercalls if verbose mode is enabled
-    if (verbose) {
+    if (verbose)
+    {
         static int hc_count = 0;
-        if (hc_count++ < 100) {
+        if (hc_count++ < 100)
+        {
             vcpu_printf(ctx, "HC[%d] type=0x%02x RAX=0x%llx RBX=0x%llx\n",
-                       hc_count, hc_num, regs->rax, regs->rbx);
+                        hc_count, hc_num, regs->rax, regs->rbx);
         }
     }
-    
-    switch (hc_num) {
-        case HC_EXIT:
-            if (verbose) {
-                vcpu_printf(ctx, "Exit request\n");
-            }
-            ctx->running = false;
-            return 0;
 
-        case HC_PUTCHAR: {
-            char ch = regs->rbx & 0xFF;
-            vcpu_putchar(ctx, ch);
-            break;
+    switch (hc_num)
+    {
+    case HC_EXIT:
+        if (verbose)
+        {
+            vcpu_printf(ctx, "Exit request\n");
         }
+        ctx->running = false;
+        return 0;
 
-        case HC_GETCHAR: {
-            int ch = keyboard_buffer_pop();
-            ctx->getchar_result = ch;
-            ctx->pending_getchar = 1;
-            break;
-        }
-
-        default:
-            if (verbose) {
-                vcpu_printf(ctx, "Unknown hypercall: 0x%02x\n", hc_num);
-            }
-            return -1;
+    case HC_PUTCHAR:
+    {
+        char ch = regs->rbx & 0xFF;
+        vcpu_putchar(ctx, ch);
+        break;
     }
-    
+
+    case HC_GETCHAR:
+    {
+        int ch = keyboard_buffer_pop();
+        ctx->getchar_result = ch;
+        ctx->pending_getchar = 1;
+        break;
+    }
+
+    default:
+        if (verbose)
+        {
+            vcpu_printf(ctx, "Unknown hypercall: 0x%02x\n", hc_num);
+        }
+        return -1;
+    }
+
     return 0;
 }
 
 /*
  * Handle hypercall IN response
  */
-static void handle_hypercall_in(vcpu_context_t *ctx, char *data) {
-    if (ctx->pending_getchar) {
+static void handle_hypercall_in(vcpu_context_t *ctx, char *data)
+{
+    if (ctx->pending_getchar)
+    {
         data[0] = (ctx->getchar_result == -1) ? 0xFF : (unsigned char)ctx->getchar_result;
-        
-        if (verbose) {
+
+        if (verbose)
+        {
             static int in_count = 0;
-            if (in_count++ < 50) {
-                vcpu_printf(ctx, "IN[%d] from 0x500: returning ch=%d (0x%02x)\n", 
-                           in_count, ctx->getchar_result, data[0]);
+            if (in_count++ < 50)
+            {
+                vcpu_printf(ctx, "IN[%d] from 0x500: returning ch=%d (0x%02x)\n",
+                            in_count, ctx->getchar_result, data[0]);
             }
         }
         ctx->pending_getchar = 0;
-    } else {
-        if (verbose) {
+    }
+    else
+    {
+        if (verbose)
+        {
             static int unexpected_in = 0;
-            if (unexpected_in++ < 20) {
+            if (unexpected_in++ < 20)
+            {
                 vcpu_printf(ctx, "WARN[%d]: IN from 0x500 without pending_getchar!\n", unexpected_in);
             }
         }
@@ -1186,106 +1318,144 @@ static void handle_hypercall_in(vcpu_context_t *ctx, char *data) {
 /*
  * Handle I/O port operations
  */
-static int handle_io(vcpu_context_t *ctx) {
+static int handle_io(vcpu_context_t *ctx)
+{
     char *data = (char *)ctx->kvm_run + ctx->kvm_run->io.data_offset;
 
     // Log I/O operations if verbose mode is enabled
-    if (verbose) {
+    if (verbose)
+    {
         static int io_count = 0;
-        if (io_count++ < 100) {
+        if (io_count++ < 100)
+        {
             vcpu_printf(ctx, "IO[%d]: dir=%s port=0x%x size=%d\n",
-                       io_count,
-                       (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) ? "OUT" : "IN",
-                       ctx->kvm_run->io.port,
-                       ctx->kvm_run->io.size);
+                        io_count,
+                        (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) ? "OUT" : "IN",
+                        ctx->kvm_run->io.port,
+                        ctx->kvm_run->io.size);
         }
     }
 
-    if (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT) {
-        if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
+    if (ctx->kvm_run->io.direction == KVM_EXIT_IO_OUT)
+    {
+        if (ctx->kvm_run->io.port == HYPERCALL_PORT)
+        {
             struct kvm_regs regs;
-            if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0) {
+            if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0)
+            {
                 perror("KVM_GET_REGS");
                 return -1;
             }
             return handle_hypercall_out(ctx, &regs);
-        } else if (ctx->kvm_run->io.port == 0x3f8) {
+        }
+        else if (ctx->kvm_run->io.port == 0x3f8)
+        {
             // UART output
-            for (int i = 0; i < ctx->kvm_run->io.size; i++) {
+            for (int i = 0; i < ctx->kvm_run->io.size; i++)
+            {
                 vcpu_putchar(ctx, data[i]);
             }
         }
-    } else {
+    }
+    else
+    {
         // IN instruction
-        if (ctx->kvm_run->io.port == HYPERCALL_PORT) {
+        if (ctx->kvm_run->io.port == HYPERCALL_PORT)
+        {
             handle_hypercall_in(ctx, data);
         }
     }
-    
+
     return 0;
 }
 
 /*
  * Handle VM exit for a specific vCPU context
  */
-static int handle_vm_exit(vcpu_context_t *ctx) {
+static int handle_vm_exit(vcpu_context_t *ctx)
+{
     ctx->exit_count++;
 
     // Log exit reasons if verbose mode is enabled
-    if (verbose) {
+    if (verbose)
+    {
         static int debug_exit_count = 0;
-        if (debug_exit_count++ < 110) {
-            if (ctx->kvm_run->exit_reason != KVM_EXIT_IO || debug_exit_count > 100) {
+        if (debug_exit_count++ < 110)
+        {
+            if (ctx->kvm_run->exit_reason != KVM_EXIT_IO || debug_exit_count > 100)
+            {
                 vcpu_printf(ctx, "EXIT[%d]: reason=%d\n", debug_exit_count, ctx->kvm_run->exit_reason);
             }
         }
     }
 
-    switch (ctx->kvm_run->exit_reason) {
-        case KVM_EXIT_HLT:
-            if (verbose) {
-                vcpu_printf(ctx, "Guest halted after %d exits\n", ctx->exit_count);
-            }
-            ctx->running = false;
-            return 0;
-
-        case KVM_EXIT_IO:
-            return handle_io(ctx);
-
-        case KVM_EXIT_FAIL_ENTRY:
-            vcpu_printf(ctx, "FAIL_ENTRY: reason 0x%llx\n",
-                       ctx->kvm_run->fail_entry.hardware_entry_failure_reason);
-            return -1;
-
-        case KVM_EXIT_INTERNAL_ERROR:
-            vcpu_printf(ctx, "INTERNAL_ERROR: suberror 0x%x\n",
-                       ctx->kvm_run->internal.suberror);
-            return -1;
-
-        case KVM_EXIT_SHUTDOWN: {
-            struct kvm_regs regs;
-            struct kvm_sregs sregs;
-            if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) == 0) {
-                vcpu_printf(ctx, "SHUTDOWN at RIP=0x%llx, RSP=0x%llx\n", regs.rip, regs.rsp);
-                vcpu_printf(ctx, "  RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
-                           regs.rax, regs.rbx, regs.rcx, regs.rdx);
-            }
-            if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) == 0) {
-                vcpu_printf(ctx, "  CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
-                           sregs.cr0, sregs.cr3, sregs.cr4);
-                vcpu_printf(ctx, "  CS=0x%x DS=0x%x\n", sregs.cs.selector, sregs.ds.selector);
-            }
-            ctx->running = false;
-            return 0;
+    switch (ctx->kvm_run->exit_reason)
+    {
+    case KVM_EXIT_HLT:
+        if (verbose)
+        {
+            vcpu_printf(ctx, "Guest halted after %d exits\n", ctx->exit_count);
         }
+        ctx->running = false;
+        return 0;
 
-        default:
-            vcpu_printf(ctx, "Unknown exit reason: %d\n", ctx->kvm_run->exit_reason);
-            return -1;
+    case KVM_EXIT_IO:
+        return handle_io(ctx);
+
+    case KVM_EXIT_FAIL_ENTRY:
+        vcpu_printf(ctx, "FAIL_ENTRY: reason 0x%llx\n",
+                    ctx->kvm_run->fail_entry.hardware_entry_failure_reason);
+        return -1;
+
+    case KVM_EXIT_INTERNAL_ERROR:
+        vcpu_printf(ctx, "INTERNAL_ERROR: suberror 0x%x\n",
+                    ctx->kvm_run->internal.suberror);
+        return -1;
+
+    case KVM_EXIT_SHUTDOWN:
+    {
+        struct kvm_regs regs;
+        struct kvm_sregs sregs;
+        struct kvm_vcpu_events events;
+
+        vcpu_printf(ctx, "SHUTDOWN - Attempting to get exception info...\n");
+
+        if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) == 0)
+        {
+            vcpu_printf(ctx, "SHUTDOWN at RIP=0x%llx, RSP=0x%llx\n", regs.rip, regs.rsp);
+            vcpu_printf(ctx, "  RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
+                        regs.rax, regs.rbx, regs.rcx, regs.rdx);
+        }
+        if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) == 0)
+        {
+            vcpu_printf(ctx, "  CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
+                        sregs.cr0, sregs.cr3, sregs.cr4);
+            vcpu_printf(ctx, "  CS=0x%x DS=0x%x SS=0x%x\n",
+                        sregs.cs.selector, sregs.ds.selector, sregs.ss.selector);
+        }
+        // Try to get exception info
+        if (ioctl(ctx->vcpu_fd, KVM_GET_VCPU_EVENTS, &events) == 0)
+        {
+            vcpu_printf(ctx, "  Exception: injected=%d nr=%d has_error=%d error=0x%x\n",
+                        events.exception.injected, events.exception.nr,
+                        events.exception.has_error_code, events.exception.error_code);
+            vcpu_printf(ctx, "  Interrupt: injected=%d nr=%d soft=%d\n",
+                        events.interrupt.injected, events.interrupt.nr, events.interrupt.soft);
+            vcpu_printf(ctx, "  NMI: injected=%d pending=%d masked=%d\n",
+                        events.nmi.injected, events.nmi.pending, events.nmi.masked);
+        }
+        ctx->running = false;
+        return 0;
+    }
+
+    default:
+        vcpu_printf(ctx, "Unknown exit reason: %d\n", ctx->kvm_run->exit_reason);
+        return -1;
     }
 
     // Safety limit (disabled for Protected Mode to allow indefinite interactive use with 1K OS)
-    if (!ctx->use_paging && ctx->exit_count > 100000) {
+    if (!ctx->use_paging && ctx->exit_count > 100000)
+    {
         vcpu_printf(ctx, "Too many exits (%d), stopping\n", ctx->exit_count);
         return -1;
     }
@@ -1296,27 +1466,46 @@ static int handle_vm_exit(vcpu_context_t *ctx) {
 /*
  * vCPU thread entry point
  */
-static void *vcpu_thread(void *arg) {
+static void *vcpu_thread(void *arg)
+{
     vcpu_context_t *ctx = (vcpu_context_t *)arg;
     int ret;
 
-    if (verbose) {
+    if (verbose)
+    {
         vcpu_printf(ctx, "Thread started\n");
     }
 
-    while (ctx->running) {
+    // Debug: check vCPU state before first run
+    if (verbose && ctx->use_paging)
+    {
+        struct kvm_sregs sregs;
+        struct kvm_regs regs;
+        if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) == 0 &&
+            ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) == 0)
+        {
+            vcpu_printf(ctx, "Pre-run state: RIP=0x%llx CR0=0x%llx CR3=0x%llx CS=0x%x\n",
+                        regs.rip, sregs.cr0, sregs.cr3, sregs.cs.selector);
+        }
+    }
+
+    while (ctx->running)
+    {
         ret = ioctl(ctx->vcpu_fd, KVM_RUN, 0);
-        if (ret < 0) {
+        if (ret < 0)
+        {
             vcpu_printf(ctx, "KVM_RUN failed: %s\n", strerror(errno));
             break;
         }
 
-        if (handle_vm_exit(ctx) < 0) {
+        if (handle_vm_exit(ctx) < 0)
+        {
             break;
         }
     }
 
-    if (verbose) {
+    if (verbose)
+    {
         vcpu_printf(ctx, "Thread exiting (total exits: %d)\n", ctx->exit_count);
     }
     return NULL;
@@ -1325,14 +1514,18 @@ static void *vcpu_thread(void *arg) {
 /*
  * Cleanup vCPU resources
  */
-static void cleanup_vcpu(vcpu_context_t *ctx) {
-    if (ctx->kvm_run != NULL && ctx->kvm_run != MAP_FAILED) {
+static void cleanup_vcpu(vcpu_context_t *ctx)
+{
+    if (ctx->kvm_run != NULL && ctx->kvm_run != MAP_FAILED)
+    {
         munmap(ctx->kvm_run, ctx->kvm_run_mmap_size);
     }
-    if (ctx->guest_mem != NULL && ctx->guest_mem != MAP_FAILED) {
+    if (ctx->guest_mem != NULL && ctx->guest_mem != MAP_FAILED)
+    {
         munmap(ctx->guest_mem, ctx->mem_size);
     }
-    if (ctx->vcpu_fd >= 0) {
+    if (ctx->vcpu_fd >= 0)
+    {
         close(ctx->vcpu_fd);
     }
 }
@@ -1352,16 +1545,20 @@ static void cleanup(void) {
     if (vm_fd >= 0) close(vm_fd);
     if (kvm_fd >= 0) close(kvm_fd);
 }
-#endif  // OLD SINGLE-VCPU CLEANUP
+#endif // OLD SINGLE-VCPU CLEANUP
 
 /*
  * Extract guest name from binary filename
  */
-static const char *extract_guest_name(const char *filename) {
+static const char *extract_guest_name(const char *filename)
+{
     const char *name = strrchr(filename, '/');
-    if (name) {
-        name++;  // Skip '/'
-    } else {
+    if (name)
+    {
+        name++; // Skip '/'
+    }
+    else
+    {
         name = filename;
     }
 
@@ -1370,23 +1567,26 @@ static const char *extract_guest_name(const char *filename) {
     snprintf(name_buf, sizeof(name_buf), "%s", name);
 
     char *dot = strrchr(name_buf, '.');
-    if (dot && strcmp(dot, ".bin") == 0) {
+    if (dot && strcmp(dot, ".bin") == 0)
+    {
         *dot = '\0';
     }
 
     return name_buf;
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     int ret = 0;
     pthread_t threads[MAX_VCPUS];
     bool enable_paging = false;
-    uint32_t entry_point = 0x80001000;  // Default entry point for paging mode
-    uint32_t load_offset = 0x1000;      // Default load offset for paging mode
+    uint32_t entry_point = 0x80001000; // Default entry point for paging mode
+    uint32_t load_offset = 0x1000;     // Default load offset for paging mode
     int guest_arg_start = 1;
 
     // Parse command line arguments
-    if (argc < 2) {
+    if (argc < 2)
+    {
         fprintf(stderr, "Usage: %s [--paging [--entry ADDR] [--load OFFSET]] [--verbose] <guest1.bin> [guest2.bin] [guest3.bin] [guest4.bin]\n", argv[0]);
         fprintf(stderr, "  Run 1-4 guests simultaneously in separate vCPUs\n");
         fprintf(stderr, "\nOptions:\n");
@@ -1401,30 +1601,42 @@ int main(int argc, char **argv) {
     }
 
     // Parse flags
-    for (int i = 1; i < argc && argv[i][0] == '-'; i++) {
-        if (strcmp(argv[i], "--paging") == 0) {
+    for (int i = 1; i < argc && argv[i][0] == '-'; i++)
+    {
+        if (strcmp(argv[i], "--paging") == 0)
+        {
             enable_paging = true;
             guest_arg_start++;
-        } else if (strcmp(argv[i], "--entry") == 0) {
-            if (i + 1 >= argc) {
+        }
+        else if (strcmp(argv[i], "--entry") == 0)
+        {
+            if (i + 1 >= argc)
+            {
                 fprintf(stderr, "Error: --entry requires an argument\n");
                 return 1;
             }
             entry_point = strtoul(argv[i + 1], NULL, 0);
             i++;
             guest_arg_start += 2;
-        } else if (strcmp(argv[i], "--load") == 0) {
-            if (i + 1 >= argc) {
+        }
+        else if (strcmp(argv[i], "--load") == 0)
+        {
+            if (i + 1 >= argc)
+            {
                 fprintf(stderr, "Error: --load requires an argument\n");
                 return 1;
             }
             load_offset = strtoul(argv[i + 1], NULL, 0);
             i++;
             guest_arg_start += 2;
-        } else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
+        }
+        else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0)
+        {
             verbose = true;
             guest_arg_start++;
-        } else {
+        }
+        else
+        {
             fprintf(stderr, "Error: Unknown option %s\n", argv[i]);
             return 1;
         }
@@ -1432,39 +1644,47 @@ int main(int argc, char **argv) {
 
     // Determine number of guests
     num_vcpus = argc - guest_arg_start;
-    if (num_vcpus == 0) {
+    if (num_vcpus == 0)
+    {
         fprintf(stderr, "Error: No guest binaries specified\n");
         return 1;
     }
-    if (num_vcpus > MAX_VCPUS) {
+    if (num_vcpus > MAX_VCPUS)
+    {
         fprintf(stderr, "Error: Too many guests (max %d)\n", MAX_VCPUS);
         return 1;
     }
 
     printf("=== Multi-vCPU KVM VMM (x86) ===\n");
-    if (enable_paging) {
+    if (enable_paging)
+    {
         printf("Mode: Protected Mode with Paging\n");
         printf("Entry point: 0x%x\n", entry_point);
         printf("Load offset: 0x%x\n", load_offset);
-    } else {
+    }
+    else
+    {
         printf("Mode: Real Mode\n");
     }
     printf("Starting %d vCPU(s)\n\n", num_vcpus);
 
     // Set terminal to raw mode for character-by-character input (Protected Mode only)
-    if (enable_paging) {
+    if (enable_paging)
+    {
         set_raw_mode();
     }
 
     // Step 1: Initialize KVM and create VM
     // Only create IRQCHIP for Protected Mode (paging enabled)
-    if (init_kvm(enable_paging) < 0) {
+    if (init_kvm(enable_paging) < 0)
+    {
         ret = 1;
         goto cleanup_early;
     }
 
     // Step 2: Setup each vCPU
-    for (int i = 0; i < num_vcpus; i++) {
+    for (int i = 0; i < num_vcpus; i++)
+    {
         vcpu_context_t *ctx = &vcpus[i];
 
         // Initialize context
@@ -1479,24 +1699,28 @@ int main(int argc, char **argv) {
         ctx->entry_point = entry_point;
         ctx->load_offset = enable_paging ? load_offset : 0;
 
-        if (verbose) {
+        if (verbose)
+        {
             printf("[Setup vCPU %d: %s]\n", i, ctx->name);
         }
 
         // Allocate and map memory for this vCPU
-        if (setup_vcpu_memory(ctx) < 0) {
+        if (setup_vcpu_memory(ctx) < 0)
+        {
             ret = 1;
             goto cleanup_vcpus;
         }
 
         // Load guest binary into this vCPU's memory
-        if (load_guest_binary(ctx->guest_binary, ctx->guest_mem, ctx->mem_size, ctx->load_offset) < 0) {
+        if (load_guest_binary(ctx->guest_binary, ctx->guest_mem, ctx->mem_size, ctx->load_offset) < 0)
+        {
             ret = 1;
             goto cleanup_vcpus;
         }
 
         // Create and initialize vCPU
-        if (setup_vcpu_context(ctx) < 0) {
+        if (setup_vcpu_context(ctx) < 0)
+        {
             ret = 1;
             goto cleanup_vcpus;
         }
@@ -1506,15 +1730,20 @@ int main(int argc, char **argv) {
 
     // Step 3: Start timer and stdin threads (only for Protected Mode with paging)
     // Real Mode guests don't use interrupts, so skip these threads
-    if (enable_paging) {
+    // NOTE: Disabled for debugging - these threads inject interrupts that cause
+    // triple faults if guest IDT is not properly set up
+    if (enable_paging && 0)
+    { // DISABLED FOR DEBUGGING
         timer_thread_running = true;
-        if (pthread_create(&timer_thread, NULL, timer_thread_func, NULL) != 0) {
+        if (pthread_create(&timer_thread, NULL, timer_thread_func, NULL) != 0)
+        {
             fprintf(stderr, "Warning: Failed to create timer thread. Timer interrupts disabled.\n");
             timer_thread_running = false;
         }
 
         stdin_thread_running = true;
-        if (pthread_create(&stdin_thread, NULL, stdin_monitor_thread_func, NULL) != 0) {
+        if (pthread_create(&stdin_thread, NULL, stdin_monitor_thread_func, NULL) != 0)
+        {
             fprintf(stderr, "Warning: Failed to create stdin monitoring thread. Keyboard input disabled.\n");
             stdin_thread_running = false;
         }
@@ -1523,8 +1752,10 @@ int main(int argc, char **argv) {
     // Step 4: Spawn vCPU threads
     printf("=== Starting VM execution (%d vCPUs) ===\n\n", num_vcpus);
 
-    for (int i = 0; i < num_vcpus; i++) {
-        if (pthread_create(&threads[i], NULL, vcpu_thread, &vcpus[i]) != 0) {
+    for (int i = 0; i < num_vcpus; i++)
+    {
+        if (pthread_create(&threads[i], NULL, vcpu_thread, &vcpus[i]) != 0)
+        {
             fprintf(stderr, "Failed to create thread for vCPU %d\n", i);
             ret = 1;
             goto cleanup_stdin;
@@ -1532,7 +1763,8 @@ int main(int argc, char **argv) {
     }
 
     // Step 5: Wait for all vCPUs to finish
-    for (int i = 0; i < num_vcpus; i++) {
+    for (int i = 0; i < num_vcpus; i++)
+    {
         pthread_join(threads[i], NULL);
     }
 
@@ -1540,29 +1772,34 @@ int main(int argc, char **argv) {
 
 cleanup_stdin:
     // Stop monitoring threads immediately after vCPUs complete
-    if (timer_thread_running) {
+    if (timer_thread_running)
+    {
         timer_thread_running = false;
         pthread_join(timer_thread, NULL);
     }
 
-    if (stdin_thread_running) {
+    if (stdin_thread_running)
+    {
         stdin_thread_running = false;
         pthread_join(stdin_thread, NULL);
     }
 
 cleanup_vcpus:
     // Cleanup all vCPUs
-    for (int i = 0; i < num_vcpus; i++) {
+    for (int i = 0; i < num_vcpus; i++)
+    {
         cleanup_vcpu(&vcpus[i]);
     }
 
 cleanup_early:
     // Restore terminal settings
     restore_terminal();
-    
+
     // Cleanup global resources
-    if (vm_fd >= 0) close(vm_fd);
-    if (kvm_fd >= 0) close(kvm_fd);
+    if (vm_fd >= 0)
+        close(vm_fd);
+    if (kvm_fd >= 0)
+        close(kvm_fd);
 
     return ret;
 }
