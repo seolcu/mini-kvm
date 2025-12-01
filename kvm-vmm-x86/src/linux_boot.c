@@ -180,6 +180,9 @@ int load_linux_kernel(const char *bzimage_path, void *guest_mem, size_t mem_size
         DEBUG_PRINT(DEBUG_BASIC, "Kernel is 32-bit (Protected Mode)");
     }
     
+    // Copy setup header to boot_params before freeing setup_buf
+    memcpy(&boot_params->hdr, hdr, sizeof(struct linux_setup_header));
+    
     // Rewind and read full setup
     lseek(fd, 0, SEEK_SET);
     free(setup_buf);
@@ -242,9 +245,6 @@ int load_linux_kernel(const char *bzimage_path, void *guest_mem, size_t mem_size
     memcpy((char *)guest_mem + KERNEL_LOAD_ADDR, kernel_buf, kernel_size);
     DEBUG_PRINT(DEBUG_DETAILED, "Kernel code copied to 0x%x (%zu bytes)",
                 KERNEL_LOAD_ADDR, kernel_size);
-    
-    // Setup boot_params with kernel header
-    memcpy(&boot_params->hdr, hdr, sizeof(struct linux_setup_header));
     
     // Update entry point
     if (boot_params->hdr.code32_start == 0) {

@@ -1953,19 +1953,41 @@ int main(int argc, char **argv)
 
     // Determine number of guests
     num_vcpus = argc - guest_arg_start;
-    if (num_vcpus == 0)
+    
+    // Linux boot mode requires exactly one guest (the bzImage)
+    if (linux_boot)
     {
-        fprintf(stderr, "Error: No guest binaries specified\n");
-        return 1;
+        if (num_vcpus != 1)
+        {
+            fprintf(stderr, "Error: --linux mode requires exactly one bzImage argument\n");
+            return 1;
+        }
     }
-    if (num_vcpus > MAX_VCPUS)
+    else
     {
-        fprintf(stderr, "Error: Too many guests (max %d)\n", MAX_VCPUS);
-        return 1;
+        if (num_vcpus == 0)
+        {
+            fprintf(stderr, "Error: No guest binaries specified\n");
+            return 1;
+        }
+        if (num_vcpus > MAX_VCPUS)
+        {
+            fprintf(stderr, "Error: Too many guests (max %d)\n", MAX_VCPUS);
+            return 1;
+        }
     }
 
     printf("=== Multi-vCPU KVM VMM (x86) ===\n");
-    if (enable_paging)
+    if (linux_boot)
+    {
+        printf("Mode: Linux Boot Protocol\n");
+        printf("bzImage: %s\n", argv[guest_arg_start]);
+        if (linux_cmdline)
+        {
+            printf("Command line: %s\n", linux_cmdline);
+        }
+    }
+    else if (enable_paging)
     {
         printf("Mode: Protected Mode with Paging\n");
         printf("Entry point: 0x%x\n", entry_point);
@@ -1975,7 +1997,10 @@ int main(int argc, char **argv)
     {
         printf("Mode: Real Mode\n");
     }
-    printf("Starting %d vCPU(s)\n\n", num_vcpus);
+    if (!linux_boot)
+    {
+        printf("Starting %d vCPU(s)\n\n", num_vcpus);
+    }
 
     // Set terminal to raw mode for character-by-character input (Protected Mode only)
     if (enable_paging)
@@ -1991,51 +2016,162 @@ int main(int argc, char **argv)
         goto cleanup_early;
     }
 
-    // Step 2: Setup each vCPU
-    for (int i = 0; i < num_vcpus; i++)
+    // Step 1.5: Linux Boot Protocol Setup
+    struct boot_params *boot_params = NULL;
+    if (linux_boot)
     {
-        vcpu_context_t *ctx = &vcpus[i];
-
-        // Initialize context
-        memset(ctx, 0, sizeof(*ctx));
-        ctx->vcpu_id = i;
-        ctx->guest_binary = argv[guest_arg_start + i];
-        snprintf(ctx->name, sizeof(ctx->name), "%s", extract_guest_name(ctx->guest_binary));
-        ctx->vcpu_fd = -1;
-
-        // Set paging mode settings
-        ctx->use_paging = enable_paging;
-        ctx->long_mode = enable_long_mode;
-        ctx->entry_point = entry_point;
-        ctx->load_offset = enable_paging ? load_offset : 0;
-
-        if (verbose)
+        printf("\n=== Linux Boot Protocol Setup ===\n");
+        
+        // Allocate boot parameters structure (zero page)
+        boot_params = calloc(1, sizeof(struct boot_params));
+        if (!boot_params)
         {
-            printf("[Setup vCPU %d: %s]\n", i, ctx->name);
+            fprintf(stderr, "Error: Failed to allocate boot_params\n");
+            ret = 1;
+            goto cleanup_early;
         }
 
-        // Allocate and map memory for this vCPU
+        // Setup single vCPU context for Linux kernel
+        vcpu_context_t *ctx = &vcpus[0];
+        memset(ctx, 0, sizeof(*ctx));
+        ctx->vcpu_id = 0;
+        ctx->guest_binary = argv[guest_arg_start];
+        snprintf(ctx->name, sizeof(ctx->name), "Linux");
+        ctx->vcpu_fd = -1;
+        ctx->use_paging = true;   // Linux always needs paging
+        ctx->long_mode = false;   // Will be set based on kernel detection
+        ctx->entry_point = 0;     // Will be set from boot_params
+        ctx->load_offset = 0;
+
+        // Allocate guest memory
         if (setup_vcpu_memory(ctx) < 0)
         {
             ret = 1;
-            goto cleanup_vcpus;
+            goto cleanup_linux;
         }
 
-        // Load guest binary into this vCPU's memory
-        if (load_guest_binary(ctx->guest_binary, ctx->guest_mem, ctx->mem_size, ctx->load_offset) < 0)
+        // Load Linux kernel bzImage
+        printf("Loading bzImage...\n");
+        if (load_linux_kernel(ctx->guest_binary, ctx->guest_mem, ctx->mem_size, boot_params) < 0)
         {
+            fprintf(stderr, "Error: Failed to load Linux kernel\n");
             ret = 1;
-            goto cleanup_vcpus;
+            goto cleanup_linux;
+        }
+
+        // Setup boot parameters (E820 memory map, etc.)
+        printf("Setting up boot parameters...\n");
+        setup_linux_boot_params(boot_params, ctx->mem_size, linux_cmdline);
+
+        // Detect 64-bit kernel
+        if (boot_params->hdr.xloadflags & XLF_KERNEL_64)
+        {
+            printf("Detected 64-bit Linux kernel\n");
+            ctx->long_mode = true;
+            enable_long_mode = true;
+        }
+        else
+        {
+            printf("Detected 32-bit Linux kernel\n");
+        }
+
+        // Get kernel entry point
+        ctx->entry_point = boot_params->hdr.code32_start;
+        printf("Kernel entry point: 0x%x\n", ctx->entry_point);
+
+        // Copy boot_params to guest memory (zero page at 0x0)
+        printf("Copying boot parameters to guest memory (zero page)...\n");
+        memcpy(ctx->guest_mem, boot_params, sizeof(struct boot_params));
+
+        // Copy command line to guest memory if provided
+        if (linux_cmdline)
+        {
+            size_t cmdline_len = strlen(linux_cmdline) + 1;
+            if (cmdline_len > 256)
+            {
+                fprintf(stderr, "Warning: Command line truncated to 255 characters\n");
+                cmdline_len = 256;
+            }
+            memcpy(ctx->guest_mem + COMMAND_LINE_ADDR, linux_cmdline, cmdline_len);
+            printf("Command line copied to 0x%x\n", COMMAND_LINE_ADDR);
         }
 
         // Create and initialize vCPU
+        printf("Initializing vCPU for Linux kernel...\n");
         if (setup_vcpu_context(ctx) < 0)
         {
             ret = 1;
-            goto cleanup_vcpus;
+            goto cleanup_linux;
         }
 
-        printf("\n");
+        // Set ESI to point to boot_params (required by Linux boot protocol)
+        struct kvm_regs regs;
+        if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0)
+        {
+            perror("KVM_GET_REGS");
+            ret = 1;
+            goto cleanup_linux;
+        }
+        regs.rsi = 0;  // ESI points to zero page
+        if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
+        {
+            perror("KVM_SET_REGS");
+            ret = 1;
+            goto cleanup_linux;
+        }
+
+        printf("Linux boot setup complete!\n\n");
+        num_vcpus = 1;  // Linux boot uses single vCPU
+    }
+
+    // Step 2: Setup each vCPU (skip if Linux boot mode - already set up)
+    if (!linux_boot)
+    {
+        for (int i = 0; i < num_vcpus; i++)
+        {
+            vcpu_context_t *ctx = &vcpus[i];
+
+            // Initialize context
+            memset(ctx, 0, sizeof(*ctx));
+            ctx->vcpu_id = i;
+            ctx->guest_binary = argv[guest_arg_start + i];
+            snprintf(ctx->name, sizeof(ctx->name), "%s", extract_guest_name(ctx->guest_binary));
+            ctx->vcpu_fd = -1;
+
+            // Set paging mode settings
+            ctx->use_paging = enable_paging;
+            ctx->long_mode = enable_long_mode;
+            ctx->entry_point = entry_point;
+            ctx->load_offset = enable_paging ? load_offset : 0;
+
+            if (verbose)
+            {
+                printf("[Setup vCPU %d: %s]\n", i, ctx->name);
+            }
+
+            // Allocate and map memory for this vCPU
+            if (setup_vcpu_memory(ctx) < 0)
+            {
+                ret = 1;
+                goto cleanup_vcpus;
+            }
+
+            // Load guest binary into this vCPU's memory
+            if (load_guest_binary(ctx->guest_binary, ctx->guest_mem, ctx->mem_size, ctx->load_offset) < 0)
+            {
+                ret = 1;
+                goto cleanup_vcpus;
+            }
+
+            // Create and initialize vCPU
+            if (setup_vcpu_context(ctx) < 0)
+            {
+                ret = 1;
+                goto cleanup_vcpus;
+            }
+
+            printf("\n");
+        }
     }
 
     // Initialize dynamic colors for vCPUs (maximum contrast based on count)
@@ -2115,6 +2251,13 @@ cleanup_vcpus:
     for (int i = 0; i < num_vcpus; i++)
     {
         cleanup_vcpu(&vcpus[i]);
+    }
+
+cleanup_linux:
+    // Cleanup Linux boot parameters
+    if (boot_params)
+    {
+        free(boot_params);
     }
 
 cleanup_early:
