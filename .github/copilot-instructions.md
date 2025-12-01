@@ -59,4 +59,13 @@ These concise notes orient an AI coding agent to the repository's architecture, 
   - `kvm-vmm-x86/os-1k/Makefile`: Builds shell.bin (user programs) first, embeds it into kernel via `objcopy -I binary`, then links kernel with custom linker scripts. The result is a single `kernel.bin` with embedded user programs.
   - 1K OS uses separate compilation: `boot.S` (assembly entry), `kernel.c` (kernel logic), `shell.c` and `user.c` (user programs), `common.c` (shared utilities). All compiled with `-m32 -ffreestanding -nostdlib`.
 
+- **Educational approach & decision-making guidance**:
+  - **The developer is learning**: When faced with architectural decisions or trade-offs, act as a teacher, not just a tool. Explain the reasoning behind recommendations, including pros/cons and industry best practices.
+  - **"Problem space minimization" principle**: Always advocate for building minimal test cases before complex integrations. Example: a 20-line hypercall guest to validate 64-bit paging before attempting Linux kernel boot.
+  - **Incremental validation strategy**: Each new feature should be testable in isolation with a simple guest program. Create progression: minimal → functional → integrated → complete.
+  - **Reference implementation usage**: When suggesting use of existing projects (kvmtool, Firecracker, etc.), emphasize studying them as "textbooks" rather than copy-pasting. The goal is understanding and reimplementation in mini-kvm style.
+  - **Debugging infrastructure first**: Advocate strongly for building comprehensive debugging tools (verbose logging, register dumps, GDB stub, memory dumps) before implementing complex features. Good debugging tools multiply development speed by 10x.
+  - **Code structure for learning**: Preserve educational value of existing Real/Protected mode code. When adding Linux boot support, recommend `--linux` flag to separate concerns rather than replacing simple examples with complexity.
+  - **When explaining decisions**: Use concrete examples, show "bad approach ❌" vs "good approach ✅", explain the "why" behind best practices. Include time estimates and complexity warnings where relevant.
+
 If anything is missing or you want certain conventions expanded (for example, more details from `os-1k/` or `guest/build.sh`), tell me which area to expand and I will iterate.

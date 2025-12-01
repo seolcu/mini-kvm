@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <termios.h>
 #include "protected_mode.h"
+#include "debug.h"
 
 // Guest memory configuration
 #define GUEST_MEM_SIZE (4 << 20) // 4MB (expandable for Protected Mode)
@@ -1656,7 +1657,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "  --paging            Enable Protected Mode with paging\n");
         fprintf(stderr, "  --entry ADDR        Set entry point (default: 0x80001000)\n");
         fprintf(stderr, "  --load OFFSET       Set load offset (default: 0x1000)\n");
-        fprintf(stderr, "  --verbose           Enable debug logging (VM exits, I/O, hypercalls)\n");
+        fprintf(stderr, "  --verbose, -v       Enable basic debug logging (VM exits, hypercalls)\n");
+        fprintf(stderr, "  --debug LEVEL       Set debug verbosity (0=none, 1=basic, 2=detailed, 3=all)\n");
+        fprintf(stderr, "  --dump-regs         Dump all registers on each VM exit\n");
+        fprintf(stderr, "  --dump-mem FILE     Dump guest memory to file on exit\n");
         fprintf(stderr, "\nExample:\n");
         fprintf(stderr, "  %s guest/multiplication.bin guest/counter.bin\n", argv[0]);
         fprintf(stderr, "  %s --paging --verbose os-1k/test_kernel.bin\n", argv[0]);
@@ -1696,7 +1700,42 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0)
         {
             verbose = true;
+            debug_level = DEBUG_BASIC;
             guest_arg_start++;
+        }
+        else if (strcmp(argv[i], "--debug") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                fprintf(stderr, "Error: --debug requires a level (0-3)\n");
+                return 1;
+            }
+            int level = atoi(argv[i + 1]);
+            if (level < 0 || level > 3)
+            {
+                fprintf(stderr, "Error: debug level must be 0-3\n");
+                return 1;
+            }
+            debug_level = (debug_level_t)level;
+            verbose = (level > 0);
+            i++;
+            guest_arg_start += 2;
+        }
+        else if (strcmp(argv[i], "--dump-regs") == 0)
+        {
+            // Flag will be checked in VM exit handler
+            guest_arg_start++;
+        }
+        else if (strcmp(argv[i], "--dump-mem") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                fprintf(stderr, "Error: --dump-mem requires a filename\n");
+                return 1;
+            }
+            // Store filename for later use
+            i++;
+            guest_arg_start += 2;
         }
         else
         {

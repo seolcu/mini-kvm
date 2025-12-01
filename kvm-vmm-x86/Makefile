@@ -26,9 +26,9 @@ all: vmm guests 1k-os
 # Build the VMM
 vmm: $(VMM)
 
-$(VMM): src/main.c src/protected_mode.h
+$(VMM): src/main.c src/debug.c src/protected_mode.h src/debug.h
 	@echo "=> Building VMM..."
-	$(CC) $(CFLAGS) -o $(VMM) src/main.c $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(VMM) src/main.c src/debug.c $(LDFLAGS)
 
 # Build all real-mode guest binaries
 guests:
