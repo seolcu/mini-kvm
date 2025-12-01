@@ -784,14 +784,15 @@ static int setup_vcpu_longmode(int kvm_fd, vcpu_context_t *ctx)
     sregs.idt.limit = 0;
     
     // Setup control registers for Long Mode
-    // Order matters: CR4.PAE → CR3 → EFER.LME → CR0.PG
+    // Order matters: CR4.PAE → CR3 → EFER.LME+LMA → CR0.PG
     sregs.cr3 = cr3;
     sregs.cr4 = (1 << 5); // CR4.PAE = 1 (Physical Address Extension, required for Long Mode)
     sregs.cr0 = (1ULL << 0)   // PE: Protected mode enable
               | (1ULL << 4)   // ET: Extension type
               | (1ULL << 5)   // NE: Native FPU error reporting
               | (1ULL << 31); // PG: Paging enable
-    sregs.efer = EFER_LME; // Long Mode Enable only (LMA will be set by hardware when we start)
+    // KVM requires BOTH LME and LMA to be set explicitly (unlike real hardware)
+    sregs.efer = EFER_LME | EFER_LMA;
     
     // Setup code segment for Long Mode
     // Critical: CS.L=1 (64-bit), CS.DB=0 (not 32-bit), CS.G=1 (granular)
