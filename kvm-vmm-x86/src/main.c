@@ -23,6 +23,7 @@
 #include "cpuid.h"
 #include "msr.h"
 #include "paging_64.h"
+#include "linux_boot.h"
 
 // Guest memory configuration
 #define GUEST_MEM_SIZE (4 << 20) // 4MB (expandable for Protected Mode)
@@ -1814,6 +1815,8 @@ int main(int argc, char **argv)
     pthread_t threads[MAX_VCPUS];
     bool enable_paging = false;
     bool enable_long_mode = false;
+    bool linux_boot = false;
+    const char *linux_cmdline = NULL;
     uint32_t entry_point = 0x80001000; // Default entry point for paging mode
     uint32_t load_offset = 0x1000;     // Default load offset for paging mode
     int guest_arg_start = 1;
@@ -1821,20 +1824,23 @@ int main(int argc, char **argv)
     // Parse command line arguments
     if (argc < 2)
     {
-        fprintf(stderr, "Usage: %s [--paging [--entry ADDR] [--load OFFSET]] [--verbose] <guest1.bin> [guest2.bin] [guest3.bin] [guest4.bin]\n", argv[0]);
-        fprintf(stderr, "  Run 1-4 guests simultaneously in separate vCPUs\n");
+        fprintf(stderr, "Usage: %s [OPTIONS] <guest_binary> | --linux <bzImage> [--cmdline \"...\"]\n", argv[0]);
+        fprintf(stderr, "  Run 1-4 guests simultaneously in separate vCPUs or boot Linux kernel\n");
         fprintf(stderr, "\nOptions:\n");
         fprintf(stderr, "  --paging            Enable Protected Mode with paging\n");
         fprintf(stderr, "  --long-mode         Enable 64-bit Long Mode\n");
+        fprintf(stderr, "  --linux <bzImage>   Boot Linux kernel (bzImage format)\n");
+        fprintf(stderr, "  --cmdline \"...\"     Kernel command line (for --linux)\n");
         fprintf(stderr, "  --entry ADDR        Set entry point (default: 0x80001000)\n");
         fprintf(stderr, "  --load OFFSET       Set load offset (default: 0x1000)\n");
         fprintf(stderr, "  --verbose, -v       Enable basic debug logging (VM exits, hypercalls)\n");
         fprintf(stderr, "  --debug LEVEL       Set debug verbosity (0=none, 1=basic, 2=detailed, 3=all)\n");
         fprintf(stderr, "  --dump-regs         Dump all registers on each VM exit\n");
         fprintf(stderr, "  --dump-mem FILE     Dump guest memory to file on exit\n");
-        fprintf(stderr, "\nExample:\n");
+        fprintf(stderr, "\nExamples:\n");
         fprintf(stderr, "  %s guest/multiplication.bin guest/counter.bin\n", argv[0]);
-        fprintf(stderr, "  %s --paging --verbose os-1k/test_kernel.bin\n", argv[0]);
+        fprintf(stderr, "  %s --paging --verbose os-1k/kernel.bin\n", argv[0]);
+        fprintf(stderr, "  %s --linux bzImage --cmdline \"console=ttyS0\"\n", argv[0]);
         return 1;
     }
 
@@ -1851,6 +1857,30 @@ int main(int argc, char **argv)
             enable_long_mode = true;
             enable_paging = true; // Long mode requires paging
             guest_arg_start++;
+        }
+        else if (strcmp(argv[i], "--linux") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                fprintf(stderr, "Error: --linux requires a bzImage path\n");
+                return 1;
+            }
+            linux_boot = true;
+            enable_paging = true; // Linux requires paging
+            // Guest binary path will be used as bzImage path
+            i++;
+            guest_arg_start += 2;
+        }
+        else if (strcmp(argv[i], "--cmdline") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                fprintf(stderr, "Error: --cmdline requires an argument\n");
+                return 1;
+            }
+            linux_cmdline = argv[i + 1];
+            i++;
+            guest_arg_start += 2;
         }
         else if (strcmp(argv[i], "--entry") == 0)
         {
