@@ -15,8 +15,10 @@
 #include <sys/ioctl.h>
 
 // Setup CPUID entries for a vCPU
+// kvm_fd: /dev/kvm file descriptor for KVM_GET_SUPPORTED_CPUID
+// vcpu_fd: vCPU file descriptor for KVM_SET_CPUID2
 // Returns number of entries set, or -1 on error
-int setup_cpuid(int vcpu_fd) {
+int setup_cpuid(int kvm_fd, int vcpu_fd) {
     struct kvm_cpuid2 *cpuid;
     int nent = 100; // Maximum number of CPUID entries
     
@@ -30,8 +32,8 @@ int setup_cpuid(int vcpu_fd) {
     
     cpuid->nent = nent;
     
-    // Get supported CPUID entries from KVM
-    if (ioctl(vcpu_fd, KVM_GET_SUPPORTED_CPUID, cpuid) < 0) {
+    // Get supported CPUID entries from KVM (uses /dev/kvm fd)
+    if (ioctl(kvm_fd, KVM_GET_SUPPORTED_CPUID, cpuid) < 0) {
         perror("KVM_GET_SUPPORTED_CPUID failed");
         free(cpuid);
         return -1;

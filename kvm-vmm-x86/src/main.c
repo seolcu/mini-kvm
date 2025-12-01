@@ -18,7 +18,11 @@
 #include <pthread.h>
 #include <termios.h>
 #include "protected_mode.h"
+#include "long_mode.h"
 #include "debug.h"
+#include "cpuid.h"
+#include "msr.h"
+#include "paging_64.h"
 
 // Guest memory configuration
 #define GUEST_MEM_SIZE (4 << 20) // 4MB (expandable for Protected Mode)
@@ -78,6 +82,7 @@ typedef struct
     int exit_count;           // VM exit counter
     bool running;             // Execution state
     bool use_paging;          // Enable Protected Mode with paging (for 1K OS)
+    bool long_mode;           // Enable 64-bit Long Mode
     uint32_t entry_point;     // Entry point address (EIP)
     uint32_t load_offset;     // Offset to load binary in guest memory
     int pending_getchar;      // GETCHAR request pending (0=no, 1=yes)
@@ -709,6 +714,160 @@ static int setup_idt(void *guest_mem_ptr)
     return 0;
 }
 
+/*
+ * Setup 64-bit GDT for Long Mode
+ */
+static void setup_gdt_64bit(void *guest_mem, uint64_t gdt_base)
+{
+    gdt_entry_64_t *gdt = (gdt_entry_64_t *)((char *)guest_mem + gdt_base);
+    
+    // Clear GDT region
+    memset(gdt, 0, 5 * sizeof(gdt_entry_64_t));
+    
+    // Entry 0: Null descriptor (required)
+    memset(&gdt[GDT_NULL_ENTRY], 0, sizeof(gdt_entry_64_t));
+    
+    // Entry 1: 64-bit kernel code segment
+    gdt[GDT_KERNEL_CODE_64].limit_low = 0;
+    gdt[GDT_KERNEL_CODE_64].base_low = 0;
+    gdt[GDT_KERNEL_CODE_64].base_mid = 0;
+    gdt[GDT_KERNEL_CODE_64].access = GDT_PRESENT | GDT_CODE_DATA | GDT_EXECUTABLE | GDT_RW;
+    gdt[GDT_KERNEL_CODE_64].granularity = GDT_LONG_MODE; // L bit set for 64-bit
+    gdt[GDT_KERNEL_CODE_64].base_high = 0;
+    
+    // Entry 2: 64-bit kernel data segment
+    gdt[GDT_KERNEL_DATA_64].limit_low = 0;
+    gdt[GDT_KERNEL_DATA_64].base_low = 0;
+    gdt[GDT_KERNEL_DATA_64].base_mid = 0;
+    gdt[GDT_KERNEL_DATA_64].access = GDT_PRESENT | GDT_CODE_DATA | GDT_RW;
+    gdt[GDT_KERNEL_DATA_64].granularity = 0;
+    gdt[GDT_KERNEL_DATA_64].base_high = 0;
+    
+    DEBUG_PRINT(DEBUG_DETAILED, "64-bit GDT setup at 0x%llx", (unsigned long long)gdt_base);
+}
+
+/*
+ * Setup vCPU for 64-bit Long Mode
+ */
+static int setup_vcpu_longmode(int kvm_fd, vcpu_context_t *ctx)
+{
+    struct kvm_sregs sregs;
+    struct kvm_regs regs;
+    
+    DEBUG_PRINT(DEBUG_BASIC, "[vCPU %d] Setting up 64-bit Long Mode", ctx->vcpu_id);
+    
+    // Setup 64-bit page tables (PML4 at 0x2000, PDPT at 0x3000, PD at 0x4000)
+    uint64_t cr3 = setup_page_tables_64bit(ctx->guest_mem, ctx->mem_size);
+    
+    // Setup 64-bit GDT (place at 0x5000 to avoid page table conflict)
+    uint64_t gdt_base = 0x5000; // Place GDT at 20KB
+    setup_gdt_64bit(ctx->guest_mem, gdt_base);
+    
+    // Setup CPUID
+    if (setup_cpuid(kvm_fd, ctx->vcpu_fd) < 0) {
+        fprintf(stderr, "[vCPU %d] Failed to setup CPUID\n", ctx->vcpu_id);
+        return -1;
+    }
+    
+    // Get current sregs
+    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
+        perror("KVM_GET_SREGS");
+        return -1;
+    }
+    
+    // Setup GDT descriptor
+    sregs.gdt.base = gdt_base;
+    sregs.gdt.limit = 5 * sizeof(gdt_entry_64_t) - 1;
+    
+    // Setup IDT (empty for now, place after GDT)
+    sregs.idt.base = 0x6000;
+    sregs.idt.limit = 0;
+    
+    // Setup control registers for Long Mode
+    // Order matters: CR4.PAE → CR3 → EFER.LME → CR0.PG
+    sregs.cr3 = cr3;
+    sregs.cr4 = (1 << 5); // CR4.PAE = 1 (Physical Address Extension, required for Long Mode)
+    sregs.cr0 = (1ULL << 0)   // PE: Protected mode enable
+              | (1ULL << 4)   // ET: Extension type
+              | (1ULL << 5)   // NE: Native FPU error reporting
+              | (1ULL << 31); // PG: Paging enable
+    sregs.efer = EFER_LME; // Long Mode Enable only (LMA will be set by hardware when we start)
+    
+    // Setup code segment for Long Mode
+    // Critical: CS.L=1 (64-bit), CS.DB=0 (not 32-bit), CS.G=1 (granular)
+    sregs.cs.selector = SELECTOR_KERNEL_CODE_64;
+    sregs.cs.base = 0;
+    sregs.cs.limit = 0xFFFFFFFF;
+    sregs.cs.type = 0xb; // 1011 = Execute/Read/Accessed
+    sregs.cs.present = 1;
+    sregs.cs.dpl = 0;
+    sregs.cs.db = 0;  // Must be 0 for Long Mode
+    sregs.cs.s = 1;
+    sregs.cs.l = 1;   // Long mode
+    sregs.cs.g = 1;
+    sregs.cs.avl = 0;
+    
+    // Setup data segments
+    sregs.ds.selector = SELECTOR_KERNEL_DATA_64;
+    sregs.ds.base = 0;
+    sregs.ds.limit = 0xFFFFFFFF;
+    sregs.ds.type = 0x3; // Read/Write/Accessed
+    sregs.ds.present = 1;
+    sregs.ds.dpl = 0;
+    sregs.ds.db = 1;
+    sregs.ds.s = 1;
+    sregs.ds.l = 0;
+    sregs.ds.g = 1;
+    sregs.ds.avl = 0;
+    
+    sregs.es = sregs.ss = sregs.ds;
+    sregs.fs = sregs.gs = sregs.ds;
+    
+    DEBUG_PRINT(DEBUG_DETAILED, "Setting CR0=0x%llx CR3=0x%llx CR4=0x%llx EFER=0x%llx",
+               (unsigned long long)sregs.cr0, (unsigned long long)sregs.cr3,
+               (unsigned long long)sregs.cr4, (unsigned long long)sregs.efer);
+    
+    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
+        perror("KVM_SET_SREGS (long mode)");
+        DEBUG_PRINT(DEBUG_BASIC, "Failed to set special registers");
+        DEBUG_PRINT(DEBUG_DETAILED, "CR0=0x%llx CR3=0x%llx CR4=0x%llx EFER=0x%llx",
+                   (unsigned long long)sregs.cr0, (unsigned long long)sregs.cr3,
+                   (unsigned long long)sregs.cr4, (unsigned long long)sregs.efer);
+        return -1;
+    }
+    
+    // Setup general purpose registers
+    memset(&regs, 0, sizeof(regs));
+    regs.rip = ctx->load_offset; // Entry point
+    regs.rflags = 0x2; // Bit 1 is always 1
+    regs.rsp = 0x8000; // Set up stack
+    
+    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
+        perror("KVM_SET_REGS (long mode)");
+        return -1;
+    }
+    
+    // Setup MSRs (SYSCALL/SYSRET, FS/GS base)
+    // Note: EFER is already set via sregs, MSRs are for other features
+    if (setup_msrs_64bit(ctx->vcpu_fd) < 0) {
+        fprintf(stderr, "[vCPU %d] Warning: Failed to setup MSRs (non-critical)\n", ctx->vcpu_id);
+        // Don't fail - MSRs are not critical for basic Long Mode
+    }
+    
+    DEBUG_PRINT(DEBUG_BASIC, "[vCPU %d] 64-bit Long Mode initialized", ctx->vcpu_id);
+    DEBUG_PRINT(DEBUG_DETAILED, "  CR0=0x%llx CR3=0x%llx CR4=0x%llx EFER=0x%llx",
+               (unsigned long long)sregs.cr0, (unsigned long long)sregs.cr3,
+               (unsigned long long)sregs.cr4, (unsigned long long)sregs.efer);
+    DEBUG_PRINT(DEBUG_DETAILED, "  RIP=0x%llx RSP=0x%llx",
+               (unsigned long long)regs.rip, (unsigned long long)regs.rsp);
+    
+    if (debug_level >= DEBUG_DETAILED) {
+        verify_page_tables_64bit(ctx->guest_mem, regs.rip);
+    }
+    
+    return 0;
+}
+
 #if 0  // OLD SINGLE-VCPU CODE (disabled)
 
 /*
@@ -1259,8 +1418,17 @@ static int setup_vcpu_context(vcpu_context_t *ctx)
         return -1;
     }
 
-    // If paging is enabled, switch to Protected Mode
-    if (ctx->use_paging)
+    // If long mode is enabled, use 64-bit setup
+    if (ctx->long_mode)
+    {
+        extern int kvm_fd; // Access global KVM fd
+        if (setup_vcpu_longmode(kvm_fd, ctx) < 0)
+        {
+            return -1;
+        }
+    }
+    // Otherwise, if paging is enabled, switch to Protected Mode (32-bit)
+    else if (ctx->use_paging)
     {
         if (configure_protected_mode(ctx) < 0)
         {
@@ -1644,6 +1812,7 @@ int main(int argc, char **argv)
     int ret = 0;
     pthread_t threads[MAX_VCPUS];
     bool enable_paging = false;
+    bool enable_long_mode = false;
     uint32_t entry_point = 0x80001000; // Default entry point for paging mode
     uint32_t load_offset = 0x1000;     // Default load offset for paging mode
     int guest_arg_start = 1;
@@ -1655,6 +1824,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "  Run 1-4 guests simultaneously in separate vCPUs\n");
         fprintf(stderr, "\nOptions:\n");
         fprintf(stderr, "  --paging            Enable Protected Mode with paging\n");
+        fprintf(stderr, "  --long-mode         Enable 64-bit Long Mode\n");
         fprintf(stderr, "  --entry ADDR        Set entry point (default: 0x80001000)\n");
         fprintf(stderr, "  --load OFFSET       Set load offset (default: 0x1000)\n");
         fprintf(stderr, "  --verbose, -v       Enable basic debug logging (VM exits, hypercalls)\n");
@@ -1673,6 +1843,12 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "--paging") == 0)
         {
             enable_paging = true;
+            guest_arg_start++;
+        }
+        else if (strcmp(argv[i], "--long-mode") == 0)
+        {
+            enable_long_mode = true;
+            enable_paging = true; // Long mode requires paging
             guest_arg_start++;
         }
         else if (strcmp(argv[i], "--entry") == 0)
@@ -1798,6 +1974,7 @@ int main(int argc, char **argv)
 
         // Set paging mode settings
         ctx->use_paging = enable_paging;
+        ctx->long_mode = enable_long_mode;
         ctx->entry_point = entry_point;
         ctx->load_offset = enable_paging ? load_offset : 0;
 
