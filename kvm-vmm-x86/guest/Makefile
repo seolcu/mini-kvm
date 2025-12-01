@@ -8,15 +8,16 @@ LDFLAGS = -m elf_i386 -T guest.ld --oformat=binary
 
 # List of guest programs (no extension - directly executable names)
 GUESTS = minimal hello counter multiplication multiplication_short fibonacci hctest matrix
+GUESTS_64 = hello_64
 
 # --- Phony Targets ---
 .PHONY: all clean $(GUESTS)
 
 # --- Default Target ---
-all: $(GUESTS)
+all: $(GUESTS) $(GUESTS_64)
 	@echo
 	@echo "=== Guest binaries built ==="
-	@for guest in $(GUESTS); do \
+	@for guest in $(GUESTS) $(GUESTS_64); do \
 		printf "  %-25s %6d bytes\n" "$$guest" $$(stat -c%s $$guest); \
 	done
 
@@ -55,6 +56,11 @@ matrix: matrix.S guest.ld
 	$(AS) $(ASFLAGS) matrix.S -o matrix.o
 	$(LD) $(LDFLAGS) -o $@ matrix.o
 
+# --- 64-bit Guests ---
+hello_64: hello_64.S guest_64.ld
+	$(AS) --64 hello_64.S -o hello_64.o
+	$(LD) -m elf_x86_64 -T guest_64.ld --oformat=binary -o $@ hello_64.o
+
 # --- Cleanup ---
 clean:
-	@rm -f *.o *.elf $(GUESTS)
+	@rm -f *.o *.elf $(GUESTS) $(GUESTS_64)

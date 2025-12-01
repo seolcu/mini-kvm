@@ -26,9 +26,10 @@ all: vmm guests 1k-os
 # Build the VMM
 vmm: $(VMM)
 
-$(VMM): src/main.c src/debug.c src/protected_mode.h src/debug.h
+$(VMM): src/main.c src/debug.c src/cpuid.c src/msr.c src/paging_64.c \
+        src/protected_mode.h src/long_mode.h src/debug.h src/cpuid.h src/msr.h src/paging_64.h
 	@echo "=> Building VMM..."
-	$(CC) $(CFLAGS) -o $(VMM) src/main.c src/debug.c $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $(VMM) src/main.c src/debug.c src/cpuid.c src/msr.c src/paging_64.c $(LDFLAGS)
 
 # Build all real-mode guest binaries
 guests:
