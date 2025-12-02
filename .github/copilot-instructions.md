@@ -3,13 +3,16 @@
 
 These concise notes orient an AI coding agent to the repository's architecture, developer workflows, and codebase conventions so you can be productive immediately.
 
-- **Big picture**: The primary VMM is a small C-based KVM userland program in `kvm-vmm-x86/` (~1,700 lines) that creates a VM and spawns up to 4 vCPU threads. It supports both real-mode (16-bit) and protected-mode (32-bit with paging) x86 guests. Experimental Rust hypervisor projects live under `experimental/` targeting RISC-V H-extension.
+- **Big picture**: The primary VMM is a small C-based KVM userland program in `kvm-vmm-x86/` (~2,300 lines) that creates a VM and spawns up to 4 vCPU threads. It supports **Real Mode (16-bit)**, **Protected Mode (32-bit with paging)**, and experimental **Long Mode (64-bit)**. Linux boot support is under development. Experimental Rust hypervisor projects live under `experimental/` targeting RISC-V H-extension.
 
 - **Key components (where to look first)**:
   - `kvm-vmm-x86/Makefile` — top-level build orchestration for the C VMM and guests; run `make help` for all targets.
   - `kvm-vmm-x86/src/main.c` — main VMM logic: KVM setup, vCPU threading, VM exit handling, hypercall/I/O emulation, interrupt injection, paging setup.
-  - `kvm-vmm-x86/src/protected_mode.h` — GDT/IDT structures and constants for protected mode.
-  - `kvm-vmm-x86/guest/` — 6 real-mode guest programs (`.S` assembly files), built with `as` and `ld` into flat binaries.
+  - `kvm-vmm-x86/src/protected_mode.h` — GDT/IDT structures and constants for 32-bit protected mode.
+  - `kvm-vmm-x86/src/long_mode.h` — 64-bit GDT, 4-level paging structures (PML4/PDPT/PD/PT).
+  - `kvm-vmm-x86/src/debug.h` — debug verbosity levels (`DEBUG_NONE/BASIC/DETAILED/ALL`) and dump utilities.
+  - `kvm-vmm-x86/src/paging_64.c` — 64-bit page table setup with identity mapping.
+  - `kvm-vmm-x86/guest/` — 8 real-mode guest programs (`.S` assembly files) + 1 64-bit guest (`hello_64`), built as flat binaries.
   - `kvm-vmm-x86/os-1k/` — 1K OS: protected-mode kernel with 9 user programs, separate kernel/user linking via `kernel.ld`/`user.ld`.
   - `experimental/hypervisor/` — Rust experimental hypervisor (RISC-V) with `build.sh`/`run.sh` for cross-compilation and QEMU invocation.
 
@@ -17,11 +20,16 @@ These concise notes orient an AI coding agent to the repository's architecture, 
   - Build everything (VMM, guests, 1K OS): `cd kvm-vmm-x86 && make all`
   - Build only the VMM: `make vmm`
   - Build only guests or 1K OS: `make guests` or `make 1k-os`
-  - Run real-mode guest: `./kvm-vmm guest/hello.bin`
-  - Run protected-mode 1K OS: `./kvm-vmm --paging os-1k/kernel.bin`
-  - Multi-vCPU execution (2-4 guests): `./kvm-vmm guest/counter.bin guest/hello.bin guest/multiplication.bin`
-  - Verbose debugging: add `--verbose` to print VM-exit/hypercall traces (except HC_GETCHAR IN to avoid spam).
-  - Piped input for automated tests: `printf '1\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin` (runs program 1, then exits).
+  - Run real-mode guest: `./kvm-vmm guest/hello` (no `.bin` extension needed)
+  - Run protected-mode 1K OS: `./kvm-vmm --paging os-1k/kernel`
+  - Run 64-bit guest: `./kvm-vmm --long-mode guest/hello_64`
+  - Multi-vCPU execution (2-4 guests): `./kvm-vmm guest/counter guest/hello guest/multiplication`
+  - Verbose debugging: add `--verbose` or `-v` for basic VM-exit/hypercall traces.
+  - Debug levels: `--debug 0|1|2|3` (none/basic/detailed/all).
+  - Register dump: `--dump-regs` to dump all registers on each VM exit.
+  - Memory dump: `--dump-mem FILE` to dump guest memory to file on exit.
+  - Piped input for automated tests: `printf '1\n0\n' | ./kvm-vmm --paging os-1k/kernel` (runs program 1, then exits).
+  - **Linux boot (experimental)**: `./kvm-vmm --linux bzImage --cmdline "console=ttyS0"`
 
 - **Project-specific conventions & patterns** (important to preserve):
   - Hypercalls are implemented via port I/O to port `0x500`. Hypercall numbers and behavior are in `src/main.c` (e.g. `HC_PUTCHAR`, `HC_GETCHAR`, `HC_EXIT`).
@@ -58,6 +66,7 @@ These concise notes orient an AI coding agent to the repository's architecture, 
   - `kvm-vmm-x86/guest/Makefile`: Assembles `.S` files with `as --32`, links with `ld -m elf_i386 --oformat=binary` to produce flat binaries starting at address `0x0`.
   - `kvm-vmm-x86/os-1k/Makefile`: Builds shell.bin (user programs) first, embeds it into kernel via `objcopy -I binary`, then links kernel with custom linker scripts. The result is a single `kernel.bin` with embedded user programs.
   - 1K OS uses separate compilation: `boot.S` (assembly entry), `kernel.c` (kernel logic), `shell.c` and `user.c` (user programs), `common.c` (shared utilities). All compiled with `-m32 -ffreestanding -nostdlib`.
+  - **64-bit guest builds**: `hello_64.S` is assembled/linked with `guest_64.ld` linker script; produces flat 64-bit binary loaded at `0x1000`.
 
 - **Educational approach & decision-making guidance**:
   - **The developer is learning**: When faced with architectural decisions or trade-offs, act as a teacher, not just a tool. Explain the reasoning behind recommendations, including pros/cons and industry best practices.
