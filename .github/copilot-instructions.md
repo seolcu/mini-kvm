@@ -3,16 +3,19 @@
 
 These concise notes orient an AI coding agent to the repository's architecture, developer workflows, and codebase conventions so you can be productive immediately.
 
-- **Big picture**: The primary VMM is a small C-based KVM userland program in `kvm-vmm-x86/` (~2,300 lines) that creates a VM and spawns up to 4 vCPU threads. It supports **Real Mode (16-bit)**, **Protected Mode (32-bit with paging)**, and experimental **Long Mode (64-bit)**. Linux boot support is under development. Experimental Rust hypervisor projects live under `experimental/` targeting RISC-V H-extension.
+- **Big picture**: The primary VMM is a small C-based KVM userland program in `kvm-vmm-x86/` (~2,300 lines in main.c, ~4,000 lines total) that creates a VM and spawns up to 4 vCPU threads. It supports **Real Mode (16-bit)**, **Protected Mode (32-bit with paging)**, and experimental **Long Mode (64-bit)**. Linux boot support infrastructure is in place (Phase 2 initial work). Experimental Rust hypervisor projects live under `experimental/` targeting RISC-V H-extension.
 
 - **Key components (where to look first)**:
   - `kvm-vmm-x86/Makefile` — top-level build orchestration for the C VMM and guests; run `make help` for all targets.
-  - `kvm-vmm-x86/src/main.c` — main VMM logic: KVM setup, vCPU threading, VM exit handling, hypercall/I/O emulation, interrupt injection, paging setup.
+  - `kvm-vmm-x86/src/main.c` — main VMM logic: KVM setup, vCPU threading, VM exit handling, hypercall/I/O emulation, interrupt injection, paging setup (~2,300 lines).
   - `kvm-vmm-x86/src/protected_mode.h` — GDT/IDT structures and constants for 32-bit protected mode.
   - `kvm-vmm-x86/src/long_mode.h` — 64-bit GDT, 4-level paging structures (PML4/PDPT/PD/PT).
-  - `kvm-vmm-x86/src/debug.h` — debug verbosity levels (`DEBUG_NONE/BASIC/DETAILED/ALL`) and dump utilities.
   - `kvm-vmm-x86/src/paging_64.c` — 64-bit page table setup with identity mapping.
-  - `kvm-vmm-x86/guest/` — 8 real-mode guest programs (`.S` assembly files) + 1 64-bit guest (`hello_64`), built as flat binaries.
+  - `kvm-vmm-x86/src/debug.h` / `debug.c` — comprehensive debugging infrastructure with verbosity levels (`DEBUG_NONE/BASIC/DETAILED/ALL`), register/memory dumps.
+  - `kvm-vmm-x86/src/linux_boot.h` / `linux_boot.c` — Linux boot protocol structures and bzImage loading logic.
+  - `kvm-vmm-x86/src/cpuid.h` / `cpuid.c` — CPUID emulation for guest feature detection.
+  - `kvm-vmm-x86/src/msr.h` / `msr.c` — MSR (Model-Specific Register) handling for Long Mode.
+  - `kvm-vmm-x86/guest/` — 12 real-mode guest programs (`.S` assembly files) + 1 64-bit guest (`hello_64`), built as flat binaries.
   - `kvm-vmm-x86/os-1k/` — 1K OS: protected-mode kernel with 9 user programs, separate kernel/user linking via `kernel.ld`/`user.ld`.
   - `experimental/hypervisor/` — Rust experimental hypervisor (RISC-V) with `build.sh`/`run.sh` for cross-compilation and QEMU invocation.
 
@@ -20,7 +23,7 @@ These concise notes orient an AI coding agent to the repository's architecture, 
   - Build everything (VMM, guests, 1K OS): `cd kvm-vmm-x86 && make all`
   - Build only the VMM: `make vmm`
   - Build only guests or 1K OS: `make guests` or `make 1k-os`
-  - Run real-mode guest: `./kvm-vmm guest/hello` (no `.bin` extension needed)
+  - Run real-mode guest: `./kvm-vmm guest/hello` (no `.bin` extension needed, auto-adds .bin)
   - Run protected-mode 1K OS: `./kvm-vmm --paging os-1k/kernel`
   - Run 64-bit guest: `./kvm-vmm --long-mode guest/hello_64`
   - Multi-vCPU execution (2-4 guests): `./kvm-vmm guest/counter guest/hello guest/multiplication`
@@ -28,8 +31,9 @@ These concise notes orient an AI coding agent to the repository's architecture, 
   - Debug levels: `--debug 0|1|2|3` (none/basic/detailed/all).
   - Register dump: `--dump-regs` to dump all registers on each VM exit.
   - Memory dump: `--dump-mem FILE` to dump guest memory to file on exit.
+  - Entry/load address override: `--entry 0xABCD` and `--load 0x1000` for custom loading.
   - Piped input for automated tests: `printf '1\n0\n' | ./kvm-vmm --paging os-1k/kernel` (runs program 1, then exits).
-  - **Linux boot (experimental)**: `./kvm-vmm --linux bzImage --cmdline "console=ttyS0"`
+  - **Linux boot (experimental, Phase 2)**: `./kvm-vmm --linux bzImage --cmdline "console=ttyS0"` (infrastructure in place, integration ongoing)
 
 - **Project-specific conventions & patterns** (important to preserve):
   - Hypercalls are implemented via port I/O to port `0x500`. Hypercall numbers and behavior are in `src/main.c` (e.g. `HC_PUTCHAR`, `HC_GETCHAR`, `HC_EXIT`).
@@ -38,7 +42,7 @@ These concise notes orient an AI coding agent to the repository's architecture, 
   - Protected-mode defaults: entry `0x80001000`, load offset `0x1000`. Command-line flags `--entry` and `--load` override them.
   - **IRQCHIP is created only when `--paging` (protected mode) is enabled** — real-mode guests avoid interrupts for simplicity. This prevents real-mode guests from hanging on HLT due to unwanted timer interrupts (IRQ0).
   - Terminal raw-mode changes (for interactive 1K OS) are enabled only in paging mode; piping input will not require raw mode.
-  - **vCPU output formatting**: Single vCPU shows clean `[guest_name]` prefix without colors; multi-vCPU uses color codes (Cyan/Green/Yellow/Blue) for visual distinction. Character-by-character output (no line buffering) to maximize visible parallelism in multi-vCPU demos.
+  - **vCPU output formatting**: Single vCPU shows clean `[guest_name]` prefix without colors; multi-vCPU uses ANSI color codes (Cyan/Green/Yellow/Blue) for visual distinction. vCPU 0 uses Cyan (not Red) to avoid confusion with error messages. Character-by-character output (no line buffering) to maximize visible parallelism in multi-vCPU demos.
   - **Protected-mode GDT**: Set up at `0x500` with 5 descriptors (Null, kernel code, kernel data, user code, user data). See `setup_gdt()` and `protected_mode.h`.
   - **Paging setup**: Uses 2-level paging with 4MB PSE pages. Page directory at `0x2000`, identity-mapped kernel space (`0x80000000+`). See `setup_page_tables()`.
 
