@@ -11,7 +11,7 @@
 - Core build: `cd kvm-vmm-x86 && make all` (or `make vmm`, `make guests`, `make 1k-os`). Flags default to `gcc -Wall -Wextra -O2 -std=gnu11 -pthread`.
 - Run guests: `./kvm-vmm guest/hello.bin` (single) or `./kvm-vmm guest/multiplication.bin guest/counter.bin` (multi-vCPU). Use `--verbose` for VM-exit traces.
 - Run 1K OS: `./kvm-vmm --paging os-1k/kernel.bin`; pipe scripted input, e.g., `printf '1\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin`.
-- KVM-less smoke: `guest/run_qemu.sh guest/hello.bin` and `os-1k/qemu_test.sh` exercise images under QEMU/TCG.
+- KVM required: guests depend on Mini-KVM hypercalls; no TCG fallback. If `/dev/kvm` is missing, just note the limitation in your logs/PR.
 - Cleanup/help: `make clean`, `make help`. Keep build artifacts within `kvm-vmm-x86/`.
 
 ## Coding Style & Naming Conventions
@@ -21,7 +21,7 @@
 
 ## Testing Guidelines
 - Minimum check before submitting: `make all`, `./kvm-vmm guest/minimal.bin`, and `./kvm-vmm --paging os-1k/kernel.bin` with one menu interaction. Capture console output when touching paging, CPUID, or MSR paths.
-- When KVM is unavailable, run the QEMU scripts above and note the lack of hardware acceleration in your notes/PR.
+- If KVM is unavailable, note it explicitly (no QEMU/TCG helper remains because guests require the VMM’s hypercall handling).
 - No formal coverage target yet; document observed VM exits, guest behavior, and any deviations from expected menu flows.
 
 ## Commit & Pull Request Guidelines

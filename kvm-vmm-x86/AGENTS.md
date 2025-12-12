@@ -2,8 +2,8 @@
 
 ## Project Structure & Module Organization
 - `src/` — core VMM written in C (GNU11): KVM setup (`main.c`), CPUID/MSR helpers, paging (`paging_64.c`), and Linux boot path (`linux_boot.c`). The built binary is `kvm-vmm`.
-- `guest/` — 16/32-bit sample programs assembled with its own `Makefile`; run via `./kvm-vmm guest/<name>`. `run_qemu.sh` can emulate a guest with QEMU/TCG.
-- `os-1k/` — minimal protected-mode OS and shell; built as `os-1k/kernel` and booted with `./kvm-vmm --paging os-1k/kernel`. Includes `qemu_test.sh` to exercise the kernel without KVM.
+- `guest/` — 16/32-bit sample programs assembled with its own `Makefile`; run via `./kvm-vmm guest/<name>`.
+- `os-1k/` — minimal protected-mode OS and shell; built as `os-1k/kernel` and booted with `./kvm-vmm --paging os-1k/kernel`.
 - `test_long_mode.c` — standalone diagnostic for long-mode/KVM sregs setup.
 - `Makefile` — top-level entry that orchestrates VMM, guests, and the 1K OS builds.
 
@@ -22,7 +22,7 @@
 
 ## Testing Guidelines
 - No formal test suite; verify builds with `make all` and run at least one guest (`./kvm-vmm guest/minimal`) plus a protected-mode path (`./kvm-vmm --paging os-1k/kernel`).
-- For KVM-less validation, use `guest/run_qemu.sh guest/hello.bin` and `os-1k/qemu_test.sh` to exercise binaries under QEMU/TCG.
+- KVM required: guests rely on Mini-KVM hypercalls; no TCG fallback. If `/dev/kvm` is missing, just note the limitation in your logs/PR.
 - When changing paging, CPUID, or MSR handling, capture console output and note observed vCPU behavior/VM exits in your PR.
 
 ## Commit & Pull Request Guidelines
