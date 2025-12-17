@@ -7,26 +7,37 @@
 - **성공 기준**: `./kvm-vmm --linux <bzImage> --cmdline "...console=ttyS0..."` 실행 시,
   - 커널 부팅 로그가 **시리얼(COM1)** 로 출력되고
   - `init`(BusyBox 기반) 실행 → 쉘 프롬프트까지 진입(또는 `/init`에서 “BOOT OK” 출력 후 대기)
-- **범위에서 제외(의도적으로 안 함)**: 디스크(ATA), 파일시스템(ext4 등), ACPI 테이블, PCI/virtio, initramfs “로더” 구현(=VMM이 initrd를 외부에서 로드/배치하는 기능)
+- **범위에서 제외(의도적으로 안 함)**: 디스크(ATA), 파일시스템(ext4 등), ACPI 테이블, PCI/virtio
 - **타겟 하드웨어(고정)**: “QEMU-레거시와 유사한 최소 장치” 수준
   - 출력: 16550 UART(COM1, `0x3f8`)
   - 인터럽트/타이머: KVM in-kernel `IRQCHIP`(+ PIT 에뮬레이션) 사용
   - 나머지는 커널 커맨드라인으로 최대한 비활성화(ACPI/APIC/PCI 등)
 
+## 0.5) 업데이트(현재 상태 요약)
+
+- VMM 기능 추가 완료: `--initrd`, `--linux-entry setup|code32`, `--linux-rsi base|hdr`
+- 메모리 레이아웃: setup=`0x10000`, kernel=`0x100000`, boot_params(zero page)=`0x90000`, initrd=`0x04000000`
+- 최소 장치: COM1(0x3f8~0x3ff) UART 에뮬 + 레거시 포트 일부 + MMIO 기본 핸들러 + Linux 모드에서 `IRQCHIP` 강제
+- 현재 블로커:
+  - `--linux-entry code32 --linux-rsi base`: `0xbdfdf...` 대역 MMIO 폭주 후 `KVM_EXIT_INTERNAL_ERROR(suberror=0x3)`
+  - `--linux-entry code32 --linux-rsi hdr`: 단일 스텝에서는 더 진행하지만, `rep stosd` 구간에서 triple fault로 리셋
+
 ## 1) 현 상태에서 Linux 부팅이 막히는 포인트(정리)
 
-- `kvm-vmm-x86/src/main.c`의 `KVM_CREATE_IRQCHIP`가 비활성화되어 있어 **타이머/인터럽트가 사실상 없는 상태**.
-- 시리얼은 `OUT 0x3f8`만 처리하고, Linux가 사용하는 16550 레지스터 읽기(`0x3f8~0x3ff`, 특히 LSR `+5`)가 없어 **커널 earlycon/console이 진행 중 폴링에서 막힐 가능성**이 큼.
-- Linux boot path가 `code32_start`로 바로 점프 + (경로에 따라) paging/long-mode를 켜는 방식이라면, **Linux boot protocol 기대 CPU 상태**(real-mode setup 진입 또는 32-bit protected entry 조건)와 어긋날 수 있음.
-- Linux+init 환경은 **4MB 게스트 메모리로는 거의 불가능**(커널+압축해제+initramfs를 고려하면 수십~수백 MB 권장).
+- (기반은 갖춤) IRQCHIP/UART/메모리 확장까지는 정상 동작.
+- (남은 핵심) **Linux boot protocol의 “진입 CPU 상태/레지스터/zero page 전달”을 커널이 기대하는 형태로 맞추는 것**이 현재 병목.
+- 특히 `ESI`(= `RSI`)가 가리키는 구조(boot_params vs setup_header)와 커널이 초기 스택을 잡는 방식이 맞지 않으면,
+  - 잘못된 물리주소로 접근(→ MMIO 폭주)
+  - 예외 핸들러/IDT 설정 구간에서 triple fault(→ 리셋)
+  로 이어진다.
 
 ## 2) 1주 완주용 로드맵(구현 우선순위)
 
 ### A. Linux 부트 프로토콜을 “가장 단순한 형태”로 맞추기
 
-1. **진입점은 real-mode setup로 통일**
-   - bzImage의 setup 섹터를 `0x90000`에 로드하고, vCPU를 **real mode** 상태로 두고 `CS:IP = 0x9000:0x0200`(= `0x90200`)로 진입.
-   - boot params(“zero page”)는 setup가 올라간 영역 내(통상 `0x90000`)에 존재하므로, 필요한 필드를 **그 자리에서 채우는 방식**으로 단순화.
+1. **진입점 우선순위: code32 직접 진입**
+   - BIOS 의존성을 회피하기 위해 기본은 `code32_start` 직접 진입을 목표로 한다.
+   - 실모드 setup 경로는 “정확한 DS:SI/IVT/BIOS 가정”을 맞춰야 하므로 플랜 B로 둔다.
 2. 필수 boot params 최소 세팅
    - E820 메모리 맵(저메모리/예약영역/상메모리)
    - `hdr.cmd_line_ptr` + cmdline 문자열 복사
@@ -93,4 +104,3 @@ week14 조언대로 “드라이버/루트FS 동적 로딩”을 피하기 위�
   - `KVM_EXIT_IO`에서 `0x3f8~0x3ff` IN/OUT 처리 추가
 - `kvm-vmm-x86/src/linux_boot.c`
   - bzImage setup/커널 로드 이후 boot params를 “setup 영역(0x90000)”에 직접 채우는 형태로 정리
-
