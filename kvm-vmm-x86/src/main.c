@@ -45,6 +45,7 @@ typedef enum
 {
     LINUX_ENTRY_SETUP,
     LINUX_ENTRY_CODE32,
+    LINUX_ENTRY_BOOT64,
 } linux_entry_mode_t;
 
 typedef enum
@@ -52,6 +53,9 @@ typedef enum
     LINUX_RSI_BASE,
     LINUX_RSI_HDR,
 } linux_rsi_mode_t;
+
+#define LINUX_BOOT_CS 0x10
+#define LINUX_BOOT_DS 0x18
 
 // Keyboard buffer for interrupt-based input
 #define KEYBOARD_BUFFER_SIZE 256
@@ -67,6 +71,9 @@ static keyboard_buffer_t keyboard_buffer = {
     .head = 0,
     .tail = 0,
     .lock = PTHREAD_MUTEX_INITIALIZER};
+
+// Linux serial console input support (COM1 IRQ4 + RX buffer)
+static bool linux_serial_input_enabled = false;
 
 // Stdin monitoring thread
 static pthread_t stdin_thread;
@@ -348,6 +355,29 @@ static int keyboard_buffer_pop(void)
     return (unsigned char)ch;
 }
 
+static bool keyboard_buffer_has_data(void)
+{
+    pthread_mutex_lock(&keyboard_buffer.lock);
+    bool has = (keyboard_buffer.head != keyboard_buffer.tail);
+    pthread_mutex_unlock(&keyboard_buffer.lock);
+    return has;
+}
+
+static void pulse_irq_line(uint32_t irq)
+{
+    if (vm_fd < 0) {
+        return;
+    }
+
+    struct kvm_irq_level level = {
+        .irq = irq,
+        .level = 1,
+    };
+    (void)ioctl(vm_fd, KVM_IRQ_LINE, &level);
+    level.level = 0;
+    (void)ioctl(vm_fd, KVM_IRQ_LINE, &level);
+}
+
 /*
  * Timer thread - generates periodic timer interrupts
  * Injects IRQ0 every 10ms to all vCPUs
@@ -485,9 +515,11 @@ static void *stdin_monitor_thread_func(void *arg)
                 // Store character in buffer
                 keyboard_buffer_push((char)ch);
 
-                // Note: Interrupt injection disabled - guest uses polling via hypercall
-                // The GETCHAR hypercall will read from keyboard_buffer
-                // Injecting IRQ without proper IRQCHIP setup causes triple faults
+                // For Linux, wake the serial driver by pulsing COM1 IRQ4.
+                if (linux_serial_input_enabled)
+                {
+                    pulse_irq_line(4);
+                }
             }
         }
     }
@@ -744,6 +776,37 @@ static int setup_gdt(void *guest_mem_ptr)
     create_gdt_entry(&gdt[4], 0, 0xFFFFF, 0xF2, LIMIT_GRAN); // Ring 3 data
 
     printf("GDT setup: %d entries at 0x%x\n", GDT_SIZE, GDT_ADDR);
+    return 0;
+}
+
+/*
+ * Setup a minimal GDT for Linux 32-bit boot protocol.
+ *
+ * Linux expects __BOOT_CS=0x10 and __BOOT_DS=0x18 selectors.
+ */
+static int setup_linux_boot_gdt(void *guest_mem_ptr)
+{
+    gdt_entry_t *gdt = (gdt_entry_t *)(guest_mem_ptr + GDT_ADDR);
+
+    memset(gdt, 0, GDT_TOTAL_SIZE);
+
+    // Entry 0: Null descriptor (required)
+    create_gdt_entry(&gdt[0], 0, 0, 0, 0);
+
+    // Entry 1: Unused (keep null)
+    create_gdt_entry(&gdt[1], 0, 0, 0, 0);
+
+    // Entry 2: __BOOT_CS (0x10) - 32-bit code, base=0, limit=4GB
+    create_gdt_entry(&gdt[2], 0, 0xFFFFF, ACCESS_CODE_R, LIMIT_GRAN);
+
+    // Entry 3: __BOOT_DS (0x18) - 32-bit data, base=0, limit=4GB
+    create_gdt_entry(&gdt[3], 0, 0xFFFFF, ACCESS_DATA_W, LIMIT_GRAN);
+
+    // Entry 4: Unused (keep null)
+    create_gdt_entry(&gdt[4], 0, 0, 0, 0);
+
+    printf("Linux boot GDT setup: __BOOT_CS=0x%x __BOOT_DS=0x%x\n",
+           LINUX_BOOT_CS, LINUX_BOOT_DS);
     return 0;
 }
 
@@ -1327,6 +1390,37 @@ static void setup_protectedmode_segments(struct kvm_sregs *sregs)
     sregs->es = sregs->fs = sregs->gs = sregs->ss = sregs->ds;
 }
 
+static void setup_linux_boot_segments(struct kvm_sregs *sregs)
+{
+    // __BOOT_CS (0x10): flat 32-bit code segment
+    sregs->cs.base = 0;
+    sregs->cs.limit = 0xFFFFFFFF;
+    sregs->cs.selector = LINUX_BOOT_CS;
+    sregs->cs.type = 0x0a; // Execute/Read
+    sregs->cs.present = 1;
+    sregs->cs.dpl = 0;
+    sregs->cs.db = 1;
+    sregs->cs.s = 1;
+    sregs->cs.l = 0;
+    sregs->cs.g = 1;
+    sregs->cs.avl = 0;
+
+    // __BOOT_DS (0x18): flat 32-bit data segment
+    sregs->ds.base = 0;
+    sregs->ds.limit = 0xFFFFFFFF;
+    sregs->ds.selector = LINUX_BOOT_DS;
+    sregs->ds.type = 0x02; // Read/Write
+    sregs->ds.present = 1;
+    sregs->ds.dpl = 0;
+    sregs->ds.db = 1;
+    sregs->ds.s = 1;
+    sregs->ds.l = 0;
+    sregs->ds.g = 1;
+    sregs->ds.avl = 0;
+
+    sregs->es = sregs->fs = sregs->gs = sregs->ss = sregs->ds;
+}
+
 /*
  * Configure vCPU for Protected Mode with paging
  */
@@ -1429,8 +1523,8 @@ static int configure_linux_code32_entry(vcpu_context_t *ctx, uint32_t boot_param
     struct kvm_sregs sregs;
     struct kvm_regs regs;
 
-    // Setup a basic flat GDT (used to load CS/DS selectors)
-    setup_gdt(ctx->guest_mem);
+    // Setup Linux boot protocol GDT/IDT (selectors __BOOT_CS/__BOOT_DS)
+    setup_linux_boot_gdt(ctx->guest_mem);
     setup_linux_prot_idt(ctx->guest_mem);
 
     if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0)
@@ -1450,7 +1544,7 @@ static int configure_linux_code32_entry(vcpu_context_t *ctx, uint32_t boot_param
     sregs.cr4 = 0x00000000;
     sregs.efer = 0x0000000000000000;
 
-    setup_protectedmode_segments(&sregs);
+    setup_linux_boot_segments(&sregs);
 
     if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0)
     {
@@ -1471,9 +1565,8 @@ static int configure_linux_code32_entry(vcpu_context_t *ctx, uint32_t boot_param
         rsi += 0x1f1;
     }
     regs.rsi = rsi;
-    regs.rbx = ctx->entry_point; // Linux decompressor may use EBX as base
+    // Linux boot protocol requires %ebp, %edi and %ebx to be zero.
     regs.rsp = 0x9ff00;
-    regs.rbp = regs.rsp;
     regs.rflags = 0x2;
 
     if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
@@ -1487,6 +1580,118 @@ static int configure_linux_code32_entry(vcpu_context_t *ctx, uint32_t boot_param
     if (ioctl(ctx->vcpu_fd, KVM_SET_MP_STATE, &mp_state) < 0)
     {
         perror("KVM_SET_MP_STATE (linux code32)");
+        return -1;
+    }
+
+    return 0;
+}
+
+static void setup_linux_boot_gdt_64bit(void *guest_mem, uint64_t gdt_base)
+{
+    gdt_entry_64_t *gdt = (gdt_entry_64_t *)((char *)guest_mem + gdt_base);
+
+    memset(gdt, 0, 5 * sizeof(gdt_entry_64_t));
+
+    // Entry 2: __BOOT_CS (0x10) - 64-bit code segment
+    gdt[2].access = GDT_PRESENT | GDT_CODE_DATA | GDT_EXECUTABLE | GDT_RW;
+    gdt[2].granularity = GDT_LONG_MODE;
+
+    // Entry 3: __BOOT_DS (0x18) - data segment
+    gdt[3].access = GDT_PRESENT | GDT_CODE_DATA | GDT_RW;
+    gdt[3].granularity = 0;
+}
+
+static int configure_linux_boot64_entry(vcpu_context_t *ctx)
+{
+    struct kvm_sregs sregs;
+    struct kvm_regs regs;
+
+    uint64_t cr3 = setup_page_tables_64bit(ctx->guest_mem, ctx->mem_size);
+
+    const uint64_t gdt_base = 0x5000;
+    setup_linux_boot_gdt_64bit(ctx->guest_mem, gdt_base);
+
+    if (setup_cpuid(kvm_fd, ctx->vcpu_fd) < 0)
+    {
+        return -1;
+    }
+
+    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0)
+    {
+        perror("KVM_GET_SREGS (linux boot64)");
+        return -1;
+    }
+
+    sregs.gdt.base = gdt_base;
+    sregs.gdt.limit = 5 * sizeof(gdt_entry_64_t) - 1;
+    sregs.idt.base = 0;
+    sregs.idt.limit = 0;
+
+    sregs.cr3 = cr3;
+    sregs.cr4 = (1 << 5); // PAE
+    sregs.cr0 = (1ULL << 0)   // PE
+              | (1ULL << 4)   // ET
+              | (1ULL << 5)   // NE
+              | (1ULL << 31); // PG
+    sregs.efer = EFER_LME | EFER_LMA;
+
+    // __BOOT_CS/__BOOT_DS selectors
+    sregs.cs.selector = LINUX_BOOT_CS;
+    sregs.cs.base = 0;
+    sregs.cs.limit = 0xFFFFFFFF;
+    sregs.cs.type = 0xb;
+    sregs.cs.present = 1;
+    sregs.cs.dpl = 0;
+    sregs.cs.db = 0;
+    sregs.cs.s = 1;
+    sregs.cs.l = 1;
+    sregs.cs.g = 1;
+    sregs.cs.avl = 0;
+
+    sregs.ds.selector = LINUX_BOOT_DS;
+    sregs.ds.base = 0;
+    sregs.ds.limit = 0xFFFFFFFF;
+    sregs.ds.type = 0x3;
+    sregs.ds.present = 1;
+    sregs.ds.dpl = 0;
+    sregs.ds.db = 1;
+    sregs.ds.s = 1;
+    sregs.ds.l = 0;
+    sregs.ds.g = 1;
+    sregs.ds.avl = 0;
+
+    sregs.es = sregs.ss = sregs.ds;
+    sregs.fs = sregs.gs = sregs.ds;
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0)
+    {
+        perror("KVM_SET_SREGS (linux boot64)");
+        return -1;
+    }
+
+    memset(&regs, 0, sizeof(regs));
+    regs.rip = ctx->entry_point;
+    regs.rsi = LINUX_BOOT_PARAMS_ADDR;
+    regs.rsp = 0x9ff00;
+    regs.rflags = 0x2;
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
+    {
+        perror("KVM_SET_REGS (linux boot64)");
+        return -1;
+    }
+
+    // Optional: set common MSRs for long mode
+    if (setup_msrs_64bit(ctx->vcpu_fd) < 0)
+    {
+        // Non-fatal
+    }
+
+    struct kvm_mp_state mp_state;
+    mp_state.mp_state = KVM_MP_STATE_RUNNABLE;
+    if (ioctl(ctx->vcpu_fd, KVM_SET_MP_STATE, &mp_state) < 0)
+    {
+        perror("KVM_SET_MP_STATE (linux boot64)");
         return -1;
     }
 
@@ -1547,7 +1752,14 @@ static int setup_vcpu_context(vcpu_context_t *ctx)
     // Linux path: enter either real-mode setup or code32_start
     if (ctx->linux_guest)
     {
-        if (ctx->linux_entry == LINUX_ENTRY_CODE32)
+        if (ctx->linux_entry == LINUX_ENTRY_BOOT64)
+        {
+            if (configure_linux_boot64_entry(ctx) < 0)
+            {
+                return -1;
+            }
+        }
+        else if (ctx->linux_entry == LINUX_ENTRY_CODE32)
         {
             if (configure_linux_code32_entry(ctx, LINUX_BOOT_PARAMS_ADDR) < 0)
             {
@@ -1801,6 +2013,11 @@ static void uart_write(uint16_t port, const char *data)
         {
             putchar(data[0]);
             fflush(stdout);
+            if (linux_serial_input_enabled && (uart0.ier & 0x02))
+            {
+                // THR empty interrupt (TX) to drain kernel/userland buffers.
+                pulse_irq_line(4);
+            }
         }
         break;
     case 1: // IER or DLH
@@ -1811,6 +2028,11 @@ static void uart_write(uint16_t port, const char *data)
         else
         {
             uart0.ier = data[0];
+            if (linux_serial_input_enabled && (uart0.ier & 0x02))
+            {
+                // On real 16550, enabling THRE while THR is empty triggers an IRQ immediately.
+                pulse_irq_line(4);
+            }
         }
         break;
     case 3: // LCR
@@ -1832,13 +2054,32 @@ static void uart_read(uint16_t port, char *data)
     switch (offset)
     {
     case 0: // RBR or DLL
-        data[0] = dlab ? uart0.dll : 0x00;
+        if (dlab)
+        {
+            data[0] = uart0.dll;
+        }
+        else
+        {
+            int ch = keyboard_buffer_pop();
+            data[0] = (ch < 0) ? 0x00 : (char)ch;
+        }
         break;
     case 1: // IER or DLH
         data[0] = dlab ? uart0.dlh : uart0.ier;
         break;
     case 2: // IIR
-        data[0] = 0x01; // No pending interrupts
+        if (keyboard_buffer_has_data() && (uart0.ier & 0x01))
+        {
+            data[0] = 0x04; // Received Data Available
+        }
+        else if (uart0.ier & 0x02)
+        {
+            data[0] = 0x02; // THR Empty
+        }
+        else
+        {
+            data[0] = 0x01; // No pending interrupts
+        }
         break;
     case 3: // LCR
         data[0] = uart0.lcr;
@@ -1848,6 +2089,10 @@ static void uart_read(uint16_t port, char *data)
         break;
     case 5: // LSR
         data[0] = 0x60; // THR empty | TEMT
+        if (keyboard_buffer_has_data())
+        {
+            data[0] |= 0x01; // Data Ready
+        }
         break;
     case 6: // MSR
         data[0] = 0x00;
@@ -1942,7 +2187,7 @@ static void setup_linux_prot_idt(void *guest_mem)
     {
         uint32_t off = handler_addr;
         idt[vec].offset_low = (uint16_t)(off & 0xFFFF);
-        idt[vec].selector = SEL_KCODE;
+        idt[vec].selector = LINUX_BOOT_CS;
         idt[vec].reserved = 0;
         idt[vec].flags = 0x8E; // present, ring0, 32-bit interrupt gate
         idt[vec].offset_high = (uint16_t)((off >> 16) & 0xFFFF);
@@ -2267,6 +2512,22 @@ static int handle_vm_exit(vcpu_context_t *ctx)
                         (unsigned long long)ctx->last_rdi,
                         (unsigned long long)ctx->last_rsp,
                         ctx->last_bytes[0], ctx->last_bytes[1], ctx->last_bytes[2], ctx->last_bytes[3]);
+
+            // If the guest installed an IDT in RAM, dump a few key exception vectors.
+            const uint8_t vectors[] = {0, 6, 8, 13, 14};
+            uint8_t *mem = (uint8_t *)ctx->guest_mem;
+            for (size_t vi = 0; vi < sizeof(vectors); vi++)
+            {
+                uint8_t vec = vectors[vi];
+                uint64_t entry_addr = ctx->last_idt_base + (uint64_t)vec * sizeof(idt_entry_t);
+                if (entry_addr + sizeof(idt_entry_t) <= ctx->mem_size)
+                {
+                    idt_entry_t *e = (idt_entry_t *)(mem + entry_addr);
+                    uint32_t off = (uint32_t)e->offset_low | ((uint32_t)e->offset_high << 16);
+                    vcpu_printf(ctx, "  IDT[%u]: sel=0x%x off=0x%x flags=0x%x\n",
+                                (unsigned)vec, (unsigned)e->selector, off, (unsigned)e->flags);
+                }
+            }
         }
 
         if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) == 0)
@@ -2460,13 +2721,13 @@ int main(int argc, char **argv)
     // Parse command line arguments
     if (argc < 2)
     {
-        fprintf(stderr, "Usage: %s [OPTIONS] <guest_binary> | --linux <bzImage> [--linux-entry setup|code32] [--linux-rsi base|hdr] [--cmdline \"...\"] [--initrd <file>]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [OPTIONS] <guest_binary> | --linux <bzImage> [--linux-entry setup|code32|boot64] [--linux-rsi base|hdr] [--cmdline \"...\"] [--initrd <file>]\n", argv[0]);
         fprintf(stderr, "  Run 1-4 guests simultaneously in separate vCPUs or boot Linux kernel\n");
         fprintf(stderr, "\nOptions:\n");
         fprintf(stderr, "  --paging            Enable Protected Mode with paging\n");
         fprintf(stderr, "  --long-mode         Enable 64-bit Long Mode\n");
         fprintf(stderr, "  --linux <bzImage>   Boot Linux kernel (bzImage format)\n");
-        fprintf(stderr, "  --linux-entry MODE  Linux entry (setup|code32, default: code32)\n");
+        fprintf(stderr, "  --linux-entry MODE  Linux entry (setup|code32|boot64, default: code32)\n");
         fprintf(stderr, "  --linux-rsi MODE    Linux RSI base (base|hdr, default: base)\n");
         fprintf(stderr, "  --cmdline \"...\"     Kernel command line (for --linux)\n");
         fprintf(stderr, "  --initrd <file>     Initrd image to load (for --linux)\n");
@@ -2512,7 +2773,7 @@ int main(int argc, char **argv)
         {
             if (i + 1 >= argc)
             {
-                fprintf(stderr, "Error: --linux-entry requires an argument (setup|code32)\n");
+                fprintf(stderr, "Error: --linux-entry requires an argument (setup|code32|boot64)\n");
                 return 1;
             }
             if (strcmp(argv[i + 1], "setup") == 0)
@@ -2523,9 +2784,13 @@ int main(int argc, char **argv)
             {
                 linux_entry = LINUX_ENTRY_CODE32;
             }
+            else if (strcmp(argv[i + 1], "boot64") == 0)
+            {
+                linux_entry = LINUX_ENTRY_BOOT64;
+            }
             else
             {
-                fprintf(stderr, "Error: invalid --linux-entry '%s' (expected setup|code32)\n", argv[i + 1]);
+                fprintf(stderr, "Error: invalid --linux-entry '%s' (expected setup|code32|boot64)\n", argv[i + 1]);
                 return 1;
             }
             i++;
@@ -2690,8 +2955,8 @@ int main(int argc, char **argv)
         printf("Starting %d vCPU(s)\n\n", num_vcpus);
     }
 
-    // Set terminal to raw mode for character-by-character input (Protected Mode only)
-    if (enable_paging)
+    // Set terminal to raw mode for character-by-character input (Paging guests + Linux console)
+    if (enable_paging || linux_boot)
     {
         set_raw_mode();
     }
@@ -2774,8 +3039,22 @@ int main(int argc, char **argv)
             printf("Detected 32-bit Linux kernel\n");
         }
 
-        ctx->entry_point = boot_params->hdr.code32_start;
-        printf("Protected-mode entry (code32_start): 0x%x\n", ctx->entry_point);
+        if (linux_entry == LINUX_ENTRY_BOOT64)
+        {
+            if (!(boot_params->hdr.xloadflags & XLF_KERNEL_64))
+            {
+                fprintf(stderr, "Error: --linux-entry boot64 requires a 64-bit kernel (XLF_KERNEL_64)\n");
+                ret = 1;
+                goto cleanup_vcpus;
+            }
+            ctx->entry_point = KERNEL_LOAD_ADDR + 0x200;
+            printf("64-bit entry (boot64): 0x%x\n", ctx->entry_point);
+        }
+        else
+        {
+            ctx->entry_point = boot_params->hdr.code32_start;
+            printf("Protected-mode entry (code32_start): 0x%x\n", ctx->entry_point);
+        }
         printf("boot_params (zero page): 0x%x\n", LINUX_BOOT_PARAMS_ADDR);
         printf("linux RSI mode: %s\n", (linux_rsi == LINUX_RSI_BASE) ? "base" : "hdr");
         printf("Real-mode setup: 0x%x:0x0200\n", (unsigned)(REAL_MODE_KERNEL_ADDR / 16));
@@ -2871,11 +3150,11 @@ int main(int argc, char **argv)
     // Initialize dynamic colors for vCPUs (maximum contrast based on count)
     init_vcpu_colors(num_vcpus);
 
-    // Step 3: Start stdin thread (only for Protected Mode with paging)
-    // Real Mode guests don't use interrupts, so skip these threads
+    // Step 3: Start stdin thread (Paging guests + Linux console)
+    // Real Mode guests don't use interactive input, so skip these threads
     // NOTE: Timer thread is disabled - it injects IRQ0 that causes triple faults
     // if guest IDT is not properly set up. stdin thread is safe (no interrupt injection).
-    if (enable_paging)
+    if (enable_paging || linux_boot)
     {
         // Timer thread disabled - causes triple faults before IDT setup
         // timer_thread_running = true;
@@ -2886,10 +3165,12 @@ int main(int argc, char **argv)
         // }
 
         stdin_thread_running = true;
+        linux_serial_input_enabled = linux_boot;
         if (pthread_create(&stdin_thread, NULL, stdin_monitor_thread_func, NULL) != 0)
         {
             fprintf(stderr, "Warning: Failed to create stdin monitoring thread. Keyboard input disabled.\n");
             stdin_thread_running = false;
+            linux_serial_input_enabled = false;
         }
     }
 
@@ -2939,6 +3220,7 @@ cleanup_stdin:
         stdin_thread_running = false;
         pthread_join(stdin_thread, NULL);
     }
+    linux_serial_input_enabled = false;
 
 cleanup_vcpus:
     // Cleanup all vCPUs

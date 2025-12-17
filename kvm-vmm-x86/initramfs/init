@@ -1,0 +1,6 @@
+#!/bin/sh
+echo ""
+echo "[mini-kvm] initramfs booted"
+echo "[mini-kvm] dropping to /bin/sh (type 'exit' to panic)"
+exec /bin/sh -i
+

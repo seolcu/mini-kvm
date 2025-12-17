@@ -276,7 +276,7 @@ int load_initrd(const char *initrd_path, void *guest_mem, size_t mem_size,
     struct stat st;
     ssize_t bytes_read;
     uint8_t *buf = NULL;
-    uint32_t load_addr = INITRD_LOAD_ADDR;
+    uint64_t load_addr = 0;
 
     if (!initrd_path) {
         return 0;
@@ -301,17 +301,37 @@ int load_initrd(const char *initrd_path, void *guest_mem, size_t mem_size,
         return -1;
     }
 
-    if (load_addr + (size_t)st.st_size > mem_size) {
+    if ((uint64_t)st.st_size > mem_size) {
         fprintf(stderr, "Not enough memory for initrd (size %ld bytes)\n", st.st_size);
         close(fd);
         return -1;
     }
 
-    if (load_addr + (size_t)st.st_size > INITRD_ADDR_MAX) {
-        fprintf(stderr, "Initrd load exceeds INITRD_ADDR_MAX\n");
+    uint64_t max_end = boot_params->hdr.initrd_addr_max;
+    if (max_end >= mem_size) {
+        max_end = mem_size - 1;
+    }
+
+    uint64_t desired_end = max_end;
+    if ((uint64_t)st.st_size > desired_end + 1) {
+        fprintf(stderr, "Initrd too large for allowed range (size %ld, max_end 0x%llx)\n",
+                (long)st.st_size, (unsigned long long)desired_end);
         close(fd);
         return -1;
     }
+    uint64_t desired_start = (desired_end + 1) - (uint64_t)st.st_size;
+    desired_start &= ~0xfffull; // 4KB align down
+
+    uint64_t kernel_end = (uint64_t)KERNEL_LOAD_ADDR + (uint64_t)boot_params->hdr.init_size;
+    if (desired_start < kernel_end) {
+        fprintf(stderr,
+                "Initrd placement overlaps kernel (kernel_end=0x%llx, initrd_size=%ld, mem=%zu)\n",
+                (unsigned long long)kernel_end, (long)st.st_size, mem_size);
+        close(fd);
+        return -1;
+    }
+
+    load_addr = desired_start;
 
     buf = malloc(st.st_size);
     if (!buf) {
@@ -329,13 +349,13 @@ int load_initrd(const char *initrd_path, void *guest_mem, size_t mem_size,
         return -1;
     }
 
-    memcpy((char *)guest_mem + load_addr, buf, st.st_size);
+    memcpy((char *)guest_mem + (size_t)load_addr, buf, st.st_size);
 
-    boot_params->hdr.ramdisk_image = load_addr;
+    boot_params->hdr.ramdisk_image = (uint32_t)load_addr;
     boot_params->hdr.ramdisk_size = (uint32_t)st.st_size;
     boot_params->hdr.initrd_addr_max = INITRD_ADDR_MAX;
 
-    DEBUG_PRINT(DEBUG_BASIC, "Initrd loaded at 0x%x (%ld bytes)", load_addr, (long)st.st_size);
+    DEBUG_PRINT(DEBUG_BASIC, "Initrd loaded at 0x%llx (%ld bytes)", (unsigned long long)load_addr, (long)st.st_size);
 
     free(buf);
     close(fd);

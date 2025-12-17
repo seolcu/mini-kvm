@@ -96,6 +96,15 @@ struct linux_setup_header {
     uint32_t handover_offset;   // 0x0264: EFI handover protocol offset
 } __attribute__((packed));
 
+_Static_assert(offsetof(struct linux_setup_header, boot_flag) == (0x01fe - 0x01f1),
+               "linux_setup_header.boot_flag offset mismatch");
+_Static_assert(offsetof(struct linux_setup_header, header) == (0x0202 - 0x01f1),
+               "linux_setup_header.header offset mismatch");
+_Static_assert(offsetof(struct linux_setup_header, code32_start) == (0x0214 - 0x01f1),
+               "linux_setup_header.code32_start offset mismatch");
+_Static_assert(offsetof(struct linux_setup_header, init_size) == (0x0260 - 0x01f1),
+               "linux_setup_header.init_size offset mismatch");
+
 // Load flags (setup_header.loadflags)
 #define LOADED_HIGH             (1 << 0)    // Loaded at 0x100000 (bzImage)
 #define KASLR_FLAG              (1 << 1)    // Kernel supports KASLR
@@ -115,47 +124,38 @@ struct linux_setup_header {
  * The bootloader fills this in and passes it to the kernel
  */
 struct boot_params {
-    // Screen info (0x000 - 0x03f)
-    uint8_t  screen_info[0x40];
-    
-    // APM BIOS info (0x040 - 0x053)
-    uint8_t  apm_bios_info[0x14];
-    
-    uint8_t  _pad1[4];          // 0x054
-    
-    // Drive info (0x058 - 0x07f)
-    uint8_t  tboot_addr[8];     // 0x058
-    uint8_t  ist_info[16];      // 0x060
-    uint8_t  _pad2[16];         // 0x070
-    
-    // System descriptor table (0x080 - 0x0af)
-    uint8_t  hd0_info[16];      // 0x080
-    uint8_t  hd1_info[16];      // 0x090
-    uint8_t  sys_desc_table[16];// 0x0a0
-    
-    // Old loader parameter area (0x0b0 - 0x1ef)
-    uint8_t  olpc_ofw_header[16]; // 0x0b0
-    uint8_t  _pad3[0x140];        // 0x0c0
-    
-    // E820 memory map (0x1e8 - 0x1ef)
+    uint8_t  _pad0[0x1e8];      // 0x000 - 0x1e7: Unused/legacy fields
+
+    // E820 metadata (0x1e8 - 0x1ef)
     uint8_t  e820_entries;      // 0x1e8: Number of E820 entries
-    uint8_t  eddbuf_entries;    // 0x1e9: Number of EDD entries
+    uint8_t  eddbuf_entries;    // 0x1e9
     uint8_t  edd_mbr_sig_buf_entries; // 0x1ea
     uint8_t  kbd_status;        // 0x1eb
-    uint8_t  _pad4[4];          // 0x1ec
-    
-    // Setup header starts at 0x1f1
+    uint8_t  _pad1[0x1f1 - 0x1ec]; // 0x1ec - 0x1f0
+
+    // Setup header (0x1f1 - 0x289)
     struct linux_setup_header hdr; // 0x1f1
-    
-    uint8_t  _pad5[0x290 - 0x1f1 - sizeof(struct linux_setup_header)];
-    
+
+    uint8_t  _pad2[0x290 - 0x1f1 - sizeof(struct linux_setup_header)];
+
     // EDD info (0x290 - 0x2cf)
     uint32_t edd_mbr_sig_buffer[16]; // 0x290
-    
-    // E820 memory map entries (0x2d0 - 0x????)
-    // Each entry is 20 bytes: addr (8), size (8), type (4)
+
+    // E820 memory map entries (0x2d0 - 0x????), 20 bytes each
     uint8_t  e820_map[20 * 128]; // 0x2d0: Up to 128 entries
+
+    // Zero page is 4KB (4096 bytes)
+    uint8_t  _pad_end[4096 - 0x2d0 - (20 * 128)];
 } __attribute__((packed));
+
+_Static_assert(offsetof(struct boot_params, e820_entries) == 0x1e8,
+               "boot_params.e820_entries offset mismatch");
+_Static_assert(offsetof(struct boot_params, hdr) == 0x1f1,
+               "boot_params.hdr offset mismatch");
+_Static_assert(offsetof(struct boot_params, e820_map) == 0x2d0,
+               "boot_params.e820_map offset mismatch");
+_Static_assert(sizeof(struct boot_params) == 4096,
+               "boot_params must be 4KB zero page");
 
 // E820 memory types
 #define E820_RAM        1
