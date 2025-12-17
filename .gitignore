@@ -20,6 +20,10 @@ build/
 kvm-vmm-x86/kvm-vmm
 kvm-vmm/kvm-vmm
 
+# Local Linux boot artifacts (do not commit)
+kvm-vmm-x86/bzImage
+kvm-vmm-x86/initrd.img
+
 # Guest binaries (no extension)
 kvm-vmm-x86/guest/minimal
 kvm-vmm-x86/guest/hello
