@@ -16,11 +16,12 @@
 ## 0.5) 업데이트(현재 상태 요약)
 
 - VMM 기능 추가 완료: `--initrd`, `--linux-entry setup|code32`, `--linux-rsi base|hdr`
-- 메모리 레이아웃: setup=`0x10000`, kernel=`0x100000`, boot_params(zero page)=`0x90000`, initrd=`0x04000000`
+- 메모리 레이아웃: setup=`0x10000`, kernel=`0x100000`, boot_params(zero page)=`0x90000`, initrd=`상단 메모리(동적 배치)`
 - 최소 장치: COM1(0x3f8~0x3ff) UART 에뮬 + 레거시 포트 일부 + MMIO 기본 핸들러 + Linux 모드에서 `IRQCHIP` 강제
-- 현재 블로커:
-  - `--linux-entry code32 --linux-rsi base`: `0xbdfdf...` 대역 MMIO 폭주 후 `KVM_EXIT_INTERNAL_ERROR(suberror=0x3)`
-  - `--linux-entry code32 --linux-rsi hdr`: 단일 스텝에서는 더 진행하지만, `rep stosd` 구간에서 triple fault로 리셋
+- **부팅 상태(달성)**:
+  - `code32` 경로로 커널 로그 출력 → initramfs `/init` 실행 → `sh-5.3#` 프롬프트까지 확인
+  - userspace 출력/입력을 위해 COM1 `IRQ4`의 TX/RX pulse를 최소 구현
+  - 프로젝트 내부에서 재현 가능한 최소 initramfs 빌더(`kvm-vmm-x86/tools/mkinitramfs.sh`) 추가
 
 ## 1) 현 상태에서 Linux 부팅이 막히는 포인트(정리)
 
@@ -85,6 +86,8 @@ week14 조언대로 “드라이버/루트FS 동적 로딩”을 피하기 위�
 
 4) **M4(선택): 최소 상호작용**
 - 입력은 이번 주 범위 밖으로 두되(수신 UART), 최소한 “부팅 성공 스크린샷/로그” 확보.
+
+> 현재 상태: M3 달성, M4도 최소 수준으로 달성(키 입력을 COM1으로 전달).
 
 ## 5) 리스크 & 즉시 전환 가능한 플랜 B
 

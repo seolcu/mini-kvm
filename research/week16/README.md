@@ -147,3 +147,56 @@ make vmm
    - 필요하면 `--linux-rsi` 외에 관련 레지스터/세그먼트 값을 로그로 고정 출력.
 3) **테스트 커널을 바꿔서 변수 줄이기**
    - 호스트 최신 배포판 커널 대신, (가능하면) 부팅 경로가 단순한 “작은 bzImage”로 재현을 시도해 원인 범위를 좁힌다.
+
+---
+
+## 최종 업데이트(부팅 성공)
+
+### 1) root cause: boot_params(zero page) 레이아웃이 틀려서 커널이 헤더 필드를 잘못 읽고 있었음
+
+- 기존 `struct boot_params`가 실제 Linux boot protocol의 오프셋(`hdr@0x1f1`, `e820_map@0x2d0`)과 달라서,
+  커널이 `boot_params->hdr.init_size` 같은 필드를 **깨진 값으로 해석**하고 비정상 주소 접근/트리플폴트로 이어졌음.
+- `kvm-vmm-x86/src/linux_boot.h`에서 zero page를 4KB로 고정하고, 오프셋을 `_Static_assert`로 검증하도록 수정.
+
+### 2) initrd 적재 주소를 “고정 64MB”에서 “상단 메모리”로 변경
+
+- Fedora 커널의 `init_size`가 큰 편이라, initrd를 64MB에 고정 적재하면 **커널 footprint와 겹쳐 initrd가 덮어써짐**.
+- `kvm-vmm-x86/src/linux_boot.c`에서 initrd를 `mem_size` 상단 쪽(4KB align-down)으로 배치하고,
+  `KERNEL_LOAD_ADDR + init_size` 이후에만 놓이도록 체크를 추가.
+
+### 3) userspace 콘솔 출력/입력 지원: COM1 IRQ4 최소 동작 추가
+
+- 커널 printk는 polling으로도 출력되지만, userspace(`/init`/쉘)는 8250 드라이버의 **IRQ 기반 TX/RX**에 의존해 출력이 막힐 수 있었음.
+- `kvm-vmm-x86/src/main.c`에서
+  - UART RX: stdin 입력을 버퍼링하고 `IRQ4`를 pulse
+  - UART TX: `IER.THRE` 활성화 시점/THR write 시점에 `IRQ4`를 pulse
+  - `IIR/LSR`에 RX-ready/THRE 상태를 최소 반영
+  을 추가해서 `/bin/sh` 프롬프트까지 출력됨을 확인.
+
+### 4) initramfs 빌드 스크립트 추가(커밋에 바이너리 포함 X)
+
+- `/boot`의 initramfs는 권한(0600)으로 읽을 수 없는 경우가 있어, 프로젝트 내부에서 재현 가능한 최소 initramfs를 생성하도록 함.
+- `kvm-vmm-x86/tools/mkinitramfs.sh`가
+  - `kvm-vmm-x86/initramfs/init.c`를 빌드하여 `/init`로 넣고
+  - 호스트의 `bash` + 필요한 공유 라이브러리를 포함한 `initramfs.cpio`를 생성한다.
+
+### 재현 커맨드(현재 성공 조합)
+
+```bash
+cd kvm-vmm-x86
+make vmm
+./tools/mkinitramfs.sh initramfs.cpio
+./kvm-vmm --linux ./bzImage --initrd ./initramfs.cpio --linux-entry code32 --linux-rsi base --cmdline \
+  "console=ttyS0 earlycon=uart,io,0x3f8,115200 loglevel=4 nokaslr"
+```
+
+관찰(요지):
+
+- 커널 부팅 로그 출력 후, userspace에서 아래 메시지와 함께 쉘 프롬프트 진입:
+  - `[mini-kvm] userspace init started`
+  - `sh-5.3#`
+
+### 남은 한계(범위 밖으로 둔 것)
+
+- 디스크/virtio/PCI/ACPI 테이블 없음 → “완전한 배포판 부팅”은 목표 범위 밖.
+- initramfs는 최소 구성(현재는 `bash` 기반)이라 일반 유틸리티(`uname` 등)는 포함되지 않음(필요하면 바이너리+라이브러리 추가 가능).
