@@ -51,8 +51,12 @@ void add_e820_entry(struct boot_params *boot_params, uint64_t addr,
 void setup_linux_boot_params(struct boot_params *boot_params, size_t mem_size,
                               const char *cmdline)
 {
+    // Preserve setup header parsed from bzImage
+    struct linux_setup_header saved_hdr = boot_params->hdr;
+
     // Clear boot_params
     memset(boot_params, 0, sizeof(*boot_params));
+    boot_params->hdr = saved_hdr;
     
     // Setup E820 memory map
     // Entry 0: Low memory (0 - 640KB)
@@ -74,6 +78,7 @@ void setup_linux_boot_params(struct boot_params *boot_params, size_t mem_size,
     
     // Set loader type
     boot_params->hdr.type_of_loader = LOADER_TYPE_UNDEFINED;
+    boot_params->hdr.initrd_addr_max = INITRD_ADDR_MAX;
     
     DEBUG_PRINT(DEBUG_BASIC, "Boot parameters initialized (E820 entries: %d)",
                 boot_params->e820_entries);
@@ -201,7 +206,7 @@ int load_linux_kernel(const char *bzimage_path, void *guest_mem, size_t mem_size
         return -1;
     }
     
-    // Copy setup code to real-mode address (0x90000)
+    // Copy setup code to real-mode address (REAL_MODE_KERNEL_ADDR)
     if (REAL_MODE_KERNEL_ADDR + setup_size > mem_size) {
         fprintf(stderr, "Not enough memory for setup code\n");
         free(setup_buf);
@@ -258,5 +263,81 @@ int load_linux_kernel(const char *bzimage_path, void *guest_mem, size_t mem_size
     free(setup_buf);
     close(fd);
     
+    return 0;
+}
+
+/*
+ * Load initrd image into guest memory and update boot params
+ */
+int load_initrd(const char *initrd_path, void *guest_mem, size_t mem_size,
+                struct boot_params *boot_params)
+{
+    int fd = -1;
+    struct stat st;
+    ssize_t bytes_read;
+    uint8_t *buf = NULL;
+    uint32_t load_addr = INITRD_LOAD_ADDR;
+
+    if (!initrd_path) {
+        return 0;
+    }
+
+    fd = open(initrd_path, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "Failed to open initrd '%s': %s\n",
+                initrd_path, strerror(errno));
+        return -1;
+    }
+
+    if (fstat(fd, &st) < 0) {
+        perror("fstat initrd");
+        close(fd);
+        return -1;
+    }
+
+    if (st.st_size <= 0) {
+        fprintf(stderr, "Initrd is empty\n");
+        close(fd);
+        return -1;
+    }
+
+    if (load_addr + (size_t)st.st_size > mem_size) {
+        fprintf(stderr, "Not enough memory for initrd (size %ld bytes)\n", st.st_size);
+        close(fd);
+        return -1;
+    }
+
+    if (load_addr + (size_t)st.st_size > INITRD_ADDR_MAX) {
+        fprintf(stderr, "Initrd load exceeds INITRD_ADDR_MAX\n");
+        close(fd);
+        return -1;
+    }
+
+    buf = malloc(st.st_size);
+    if (!buf) {
+        perror("malloc initrd");
+        close(fd);
+        return -1;
+    }
+
+    bytes_read = read(fd, buf, st.st_size);
+    if (bytes_read != st.st_size) {
+        fprintf(stderr, "Failed to read initrd fully (read %ld of %ld)\n",
+                (long)bytes_read, (long)st.st_size);
+        free(buf);
+        close(fd);
+        return -1;
+    }
+
+    memcpy((char *)guest_mem + load_addr, buf, st.st_size);
+
+    boot_params->hdr.ramdisk_image = load_addr;
+    boot_params->hdr.ramdisk_size = (uint32_t)st.st_size;
+    boot_params->hdr.initrd_addr_max = INITRD_ADDR_MAX;
+
+    DEBUG_PRINT(DEBUG_BASIC, "Initrd loaded at 0x%x (%ld bytes)", load_addr, (long)st.st_size);
+
+    free(buf);
+    close(fd);
     return 0;
 }

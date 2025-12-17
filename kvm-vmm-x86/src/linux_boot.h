@@ -24,9 +24,11 @@
 
 // Kernel load addresses (for bzImage)
 #define KERNEL_LOAD_ADDR        0x100000    // 1MB (protected mode kernel)
-#define REAL_MODE_KERNEL_ADDR   0x90000     // Real-mode kernel setup
+#define REAL_MODE_KERNEL_ADDR   0x10000     // Real-mode kernel setup
 #define COMMAND_LINE_ADDR       0x20000     // Command line location
 #define INITRD_ADDR_MAX         0x37FFFFFF  // Max initrd address (<896MB)
+#define INITRD_LOAD_ADDR        0x04000000  // 64MB default initrd load address
+#define LINUX_BOOT_PARAMS_ADDR  0x90000     // traditional "zero page" location
 
 // Memory layout
 #define E820_MAP_ADDR           0x2d0       // E820 memory map location in real-mode data
@@ -169,5 +171,7 @@ void setup_linux_boot_params(struct boot_params *boot_params, size_t mem_size,
                               const char *cmdline);
 void add_e820_entry(struct boot_params *boot_params, uint64_t addr,
                     uint64_t size, uint32_t type);
+int load_initrd(const char *initrd_path, void *guest_mem, size_t mem_size,
+                struct boot_params *boot_params);
 
 #endif // LINUX_BOOT_H

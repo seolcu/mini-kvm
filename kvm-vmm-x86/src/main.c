@@ -41,6 +41,18 @@
 // Multi-vCPU configuration
 #define MAX_VCPUS 4 // Maximum number of vCPUs
 
+typedef enum
+{
+    LINUX_ENTRY_SETUP,
+    LINUX_ENTRY_CODE32,
+} linux_entry_mode_t;
+
+typedef enum
+{
+    LINUX_RSI_BASE,
+    LINUX_RSI_HDR,
+} linux_rsi_mode_t;
+
 // Keyboard buffer for interrupt-based input
 #define KEYBOARD_BUFFER_SIZE 256
 typedef struct
@@ -88,6 +100,27 @@ typedef struct
     uint32_t load_offset;     // Offset to load binary in guest memory
     int pending_getchar;      // GETCHAR request pending (0=no, 1=yes)
     int getchar_result;       // Cached GETCHAR result for IN instruction
+    bool linux_guest;         // Linux guest (bzImage) special handling
+    linux_entry_mode_t linux_entry; // Linux entry strategy
+    linux_rsi_mode_t linux_rsi;     // Linux RSI base (boot params vs setup header)
+    int singlestep_remaining; // KVM single-step budget (0=disabled)
+    bool singlestep_paused;   // Temporarily disable single-step (e.g., REP loops)
+    int singlestep_exits;     // Count of KVM_EXIT_DEBUG exits
+    uint64_t last_rip;
+    uint64_t last_rsi;
+    uint64_t last_rbx;
+    uint64_t last_rdi;
+    uint64_t last_rcx;
+    uint64_t last_rsp;
+    uint64_t last_rflags;
+    uint64_t last_cr0;
+    uint16_t last_cs;
+    uint16_t last_es;
+    uint64_t last_es_base;
+    uint32_t last_es_limit;
+    uint64_t last_idt_base;
+    uint16_t last_idt_limit;
+    uint8_t last_bytes[4];
 } vcpu_context_t;
 
 // Global KVM state (shared across vCPUs)
@@ -146,6 +179,22 @@ static void init_vcpu_colors(int n)
         int hue = start_hue + (i * span) / n;
         vcpu_colors[i] = hue_to_ansi256(hue);
     }
+}
+
+static int set_guest_singlestep(vcpu_context_t *ctx, bool enable)
+{
+    struct kvm_guest_debug dbg;
+    memset(&dbg, 0, sizeof(dbg));
+    if (enable)
+    {
+        dbg.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
+    }
+    if (ioctl(ctx->vcpu_fd, KVM_SET_GUEST_DEBUG, &dbg) < 0)
+    {
+        perror("KVM_SET_GUEST_DEBUG");
+        return -1;
+    }
+    return 0;
 }
 
 /*
@@ -453,8 +502,9 @@ static void *stdin_monitor_thread_func(void *arg)
 /*
  * Initialize KVM and create VM
  * need_irqchip: true for Protected Mode (needs interrupts), false for Real Mode
+ * force_irqchip: override to always create IRQCHIP (Linux mode)
  */
-static int init_kvm(bool need_irqchip)
+static int init_kvm(bool need_irqchip, bool force_irqchip)
 {
     int api_version;
 
@@ -515,18 +565,13 @@ static int init_kvm(bool need_irqchip)
     }
 
     // 4. Create interrupt controller (IRQCHIP) only if needed
-    // Real Mode guests don't need interrupts, Protected Mode does
-    // NOTE: When IRQCHIP is created, KVM also emulates the PIT (timer).
-    // The PIT will generate IRQ0 interrupts which can cause triple faults
-    // if the guest IDT is not properly set up. For now, we skip IRQCHIP
-    // creation to avoid this issue - the guest uses hypercalls for I/O anyway.
-    if (need_irqchip && 0)
-    { // DISABLED: causes triple fault before IDT setup
+    // Linux boot requires PIT/IRQ routing; keep disabled for legacy Real Mode guests.
+    if (force_irqchip)
+    {
         if (ioctl(vm_fd, KVM_CREATE_IRQCHIP) < 0)
         {
             perror("KVM_CREATE_IRQCHIP");
             fprintf(stderr, "Warning: Interrupt controller creation failed. Interrupts disabled.\n");
-            // Continue anyway - hypercall-based I/O will still work
         }
         else
         {
@@ -546,8 +591,13 @@ static int setup_vcpu_memory(vcpu_context_t *ctx)
 {
     struct kvm_userspace_memory_region mem_region;
 
+    // Linux guests need larger RAM; keep legacy defaults for other paths.
+    if (ctx->linux_guest)
+    {
+        ctx->mem_size = 256 * 1024 * 1024; // 256MB for Linux bzImage
+    }
     // Use 4MB per vCPU for 1K OS (with paging), 256KB for Real Mode guests
-    if (ctx->use_paging)
+    else if (ctx->use_paging)
     {
         ctx->mem_size = 4 * 1024 * 1024; // 4MB for Protected Mode
     }
@@ -1174,6 +1224,37 @@ static int run_vm(void) {
  */
 static void setup_realmode_segments(struct kvm_sregs *sregs, vcpu_context_t *ctx)
 {
+    if (ctx->linux_guest)
+    {
+        sregs->cs.base = REAL_MODE_KERNEL_ADDR;
+        sregs->cs.selector = (uint16_t)(REAL_MODE_KERNEL_ADDR / 16);
+        sregs->cs.limit = 0xFFFF;
+        sregs->cs.type = 0x9b;
+        sregs->cs.present = 1;
+        sregs->cs.dpl = 0;
+        sregs->cs.db = 0;
+        sregs->cs.s = 1;
+        sregs->cs.l = 0;
+        sregs->cs.g = 0;
+        sregs->cs.avl = 0;
+
+        // For bzImage setup, DS=CS is expected (setup uses far ret to DS:xxxx).
+        sregs->ds.base = REAL_MODE_KERNEL_ADDR;
+        sregs->ds.selector = (uint16_t)(REAL_MODE_KERNEL_ADDR / 16);
+        sregs->ds.limit = 0xFFFF;
+        sregs->ds.type = 0x93;
+        sregs->ds.present = 1;
+        sregs->ds.dpl = 0;
+        sregs->ds.db = 0;
+        sregs->ds.s = 1;
+        sregs->ds.l = 0;
+        sregs->ds.g = 0;
+        sregs->ds.avl = 0;
+
+        sregs->es = sregs->fs = sregs->gs = sregs->ss = sregs->ds;
+        return;
+    }
+
     // CS:IP must point to the vCPU's memory region
     // Physical address = CS * 16 + IP
     // For vCPU 0: GPA 0x00000 (CS = 0x0000, IP = 0x0)
@@ -1335,6 +1416,83 @@ static int configure_protected_mode(vcpu_context_t *ctx)
     return 0;
 }
 
+static void setup_linux_prot_idt(void *guest_mem);
+
+/*
+ * Configure vCPU for Linux protected-mode entry (no paging).
+ *
+ * Linux boot protocol requires protected mode with paging disabled at code32_start,
+ * with RSI/ESI pointing to the boot_params ("zero page").
+ */
+static int configure_linux_code32_entry(vcpu_context_t *ctx, uint32_t boot_params_addr)
+{
+    struct kvm_sregs sregs;
+    struct kvm_regs regs;
+
+    // Setup a basic flat GDT (used to load CS/DS selectors)
+    setup_gdt(ctx->guest_mem);
+    setup_linux_prot_idt(ctx->guest_mem);
+
+    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0)
+    {
+        perror("KVM_GET_SREGS (linux code32)");
+        return -1;
+    }
+
+    sregs.gdt.base = GDT_ADDR;
+    sregs.gdt.limit = GDT_TOTAL_SIZE - 1;
+    sregs.idt.base = GDT_ADDR + GDT_TOTAL_SIZE;
+    sregs.idt.limit = (256 * sizeof(idt_entry_t)) - 1;
+
+    // Protected mode, paging OFF
+    sregs.cr0 = 0x00000011; // PE + ET
+    sregs.cr3 = 0x00000000;
+    sregs.cr4 = 0x00000000;
+    sregs.efer = 0x0000000000000000;
+
+    setup_protectedmode_segments(&sregs);
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0)
+    {
+        perror("KVM_SET_SREGS (linux code32)");
+        return -1;
+    }
+
+    if (setup_cpuid(kvm_fd, ctx->vcpu_fd) < 0)
+    {
+        return -1;
+    }
+
+    memset(&regs, 0, sizeof(regs));
+    regs.rip = ctx->entry_point;
+    uint32_t rsi = boot_params_addr;
+    if (ctx->linux_rsi == LINUX_RSI_HDR)
+    {
+        rsi += 0x1f1;
+    }
+    regs.rsi = rsi;
+    regs.rbx = ctx->entry_point; // Linux decompressor may use EBX as base
+    regs.rsp = 0x9ff00;
+    regs.rbp = regs.rsp;
+    regs.rflags = 0x2;
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
+    {
+        perror("KVM_SET_REGS (linux code32)");
+        return -1;
+    }
+
+    struct kvm_mp_state mp_state;
+    mp_state.mp_state = KVM_MP_STATE_RUNNABLE;
+    if (ioctl(ctx->vcpu_fd, KVM_SET_MP_STATE, &mp_state) < 0)
+    {
+        perror("KVM_SET_MP_STATE (linux code32)");
+        return -1;
+    }
+
+    return 0;
+}
+
 /*
  * Setup vCPU context (multi-vCPU version)
  */
@@ -1386,6 +1544,63 @@ static int setup_vcpu_context(vcpu_context_t *ctx)
         return -1;
     }
 
+    // Linux path: enter either real-mode setup or code32_start
+    if (ctx->linux_guest)
+    {
+        if (ctx->linux_entry == LINUX_ENTRY_CODE32)
+        {
+            if (configure_linux_code32_entry(ctx, LINUX_BOOT_PARAMS_ADDR) < 0)
+            {
+                return -1;
+            }
+        }
+        else
+        {
+            sregs.cr0 = 0x00000010; // ET set, PE=0
+            sregs.cr3 = 0x00000000;
+            sregs.cr4 = 0x00000000;
+            sregs.efer = 0x0000000000000000;
+
+            setup_realmode_segments(&sregs, ctx);
+
+            if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0)
+            {
+                perror("KVM_SET_SREGS (linux real mode)");
+                return -1;
+            }
+
+            if (setup_cpuid(kvm_fd, ctx->vcpu_fd) < 0)
+            {
+                return -1;
+            }
+
+            memset(&regs, 0, sizeof(regs));
+            regs.rip = 0x200; // entry is CS:IP = (REAL_MODE_KERNEL_ADDR/16):0x0200
+            regs.rsp = 0x9ff00;
+            regs.rbp = regs.rsp;
+            regs.rsi = 0; // setup code uses DS:SI to locate boot_params
+            regs.rflags = 0x2;
+
+            if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
+            {
+                perror("KVM_SET_REGS (linux real mode)");
+                return -1;
+            }
+
+            struct kvm_mp_state mp_state;
+            mp_state.mp_state = KVM_MP_STATE_RUNNABLE;
+            if (ioctl(ctx->vcpu_fd, KVM_SET_MP_STATE, &mp_state) < 0)
+            {
+                perror("KVM_SET_MP_STATE");
+                return -1;
+            }
+        }
+
+        ctx->running = true;
+        ctx->exit_count = 0;
+        return 0;
+    }
+
     // Setup Real Mode segments
     setup_realmode_segments(&sregs, ctx);
 
@@ -1395,10 +1610,21 @@ static int setup_vcpu_context(vcpu_context_t *ctx)
         return -1;
     }
 
+    // Set CPUID entries (required for Linux to see LM/PAE/etc.)
+    if (setup_cpuid(kvm_fd, ctx->vcpu_fd) < 0)
+    {
+        return -1;
+    }
+
     // Set general purpose registers
     memset(&regs, 0, sizeof(regs));
-    regs.rip = GUEST_LOAD_ADDR;
+    regs.rip = ctx->linux_guest ? ctx->entry_point : GUEST_LOAD_ADDR;
     regs.rflags = 0x2;
+    if (ctx->linux_guest)
+    {
+        regs.rsp = 0x9ff00;
+        regs.rbp = regs.rsp;
+    }
 
     if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
     {
@@ -1420,21 +1646,25 @@ static int setup_vcpu_context(vcpu_context_t *ctx)
         return -1;
     }
 
-    // If long mode is enabled, use 64-bit setup
-    if (ctx->long_mode)
+    // Skip paging/long-mode setup for Linux real-mode entry
+    if (!ctx->linux_guest)
     {
-        extern int kvm_fd; // Access global KVM fd
-        if (setup_vcpu_longmode(kvm_fd, ctx) < 0)
+        // If long mode is enabled, use 64-bit setup
+        if (ctx->long_mode)
         {
-            return -1;
+            extern int kvm_fd; // Access global KVM fd
+            if (setup_vcpu_longmode(kvm_fd, ctx) < 0)
+            {
+                return -1;
+            }
         }
-    }
-    // Otherwise, if paging is enabled, switch to Protected Mode (32-bit)
-    else if (ctx->use_paging)
-    {
-        if (configure_protected_mode(ctx) < 0)
+        // Otherwise, if paging is enabled, switch to Protected Mode (32-bit)
+        else if (ctx->use_paging)
         {
-            return -1;
+            if (configure_protected_mode(ctx) < 0)
+            {
+                return -1;
+            }
         }
     }
 
@@ -1532,6 +1762,255 @@ static void handle_hypercall_in(vcpu_context_t *ctx, char *data)
     }
 }
 
+// Minimal 16550 UART emulation for COM1 (0x3f8-0x3ff)
+typedef struct
+{
+    uint8_t ier;
+    uint8_t lcr;
+    uint8_t mcr;
+    uint8_t dll;
+    uint8_t dlh;
+} uart16550_t;
+
+static uart16550_t uart0 = {
+    .ier = 0x00,
+    .lcr = 0x03, // 8N1
+    .mcr = 0x00,
+    .dll = 0x01,
+    .dlh = 0x00,
+};
+
+static bool is_uart_port(uint16_t port)
+{
+    return port >= 0x3f8 && port <= 0x3ff;
+}
+
+static void uart_write(uint16_t port, const char *data)
+{
+    uint16_t offset = port - 0x3f8;
+    bool dlab = (uart0.lcr & 0x80) != 0;
+
+    switch (offset)
+    {
+    case 0: // THR or DLL
+        if (dlab)
+        {
+            uart0.dll = data[0];
+        }
+        else
+        {
+            putchar(data[0]);
+            fflush(stdout);
+        }
+        break;
+    case 1: // IER or DLH
+        if (dlab)
+        {
+            uart0.dlh = data[0];
+        }
+        else
+        {
+            uart0.ier = data[0];
+        }
+        break;
+    case 3: // LCR
+        uart0.lcr = data[0];
+        break;
+    case 4: // MCR
+        uart0.mcr = data[0];
+        break;
+    default:
+        break;
+    }
+}
+
+static void uart_read(uint16_t port, char *data)
+{
+    uint16_t offset = port - 0x3f8;
+    bool dlab = (uart0.lcr & 0x80) != 0;
+
+    switch (offset)
+    {
+    case 0: // RBR or DLL
+        data[0] = dlab ? uart0.dll : 0x00;
+        break;
+    case 1: // IER or DLH
+        data[0] = dlab ? uart0.dlh : uart0.ier;
+        break;
+    case 2: // IIR
+        data[0] = 0x01; // No pending interrupts
+        break;
+    case 3: // LCR
+        data[0] = uart0.lcr;
+        break;
+    case 4: // MCR
+        data[0] = uart0.mcr;
+        break;
+    case 5: // LSR
+        data[0] = 0x60; // THR empty | TEMT
+        break;
+    case 6: // MSR
+        data[0] = 0x00;
+        break;
+    case 7: // SCR
+        data[0] = 0x00;
+        break;
+    default:
+        data[0] = 0x00;
+        break;
+    }
+}
+
+static void setup_linux_ivt(void *guest_mem)
+{
+    // Place a tiny IRET stub at 0x1000 and point all IVT vectors to it.
+    uint8_t *mem = (uint8_t *)guest_mem;
+
+    mem[0x1000] = 0xCF; // IRET
+
+    // Success stub at 0x1100:
+    // - clears CF in stacked flags
+    // - sets AX=0
+    // - iret
+    static const uint8_t int_success_stub[] = {
+        0x55,             // push bp
+        0x89, 0xE5,       // mov bp, sp
+        0x81, 0x66, 0x06, 0xFE, 0xFF, // and word [bp+6], 0xfffe
+        0x31, 0xC0,       // xor ax, ax
+        0x5D,             // pop bp
+        0xCF,             // iret
+    };
+    memcpy(mem + 0x1100, int_success_stub, sizeof(int_success_stub));
+
+    // Failure stub at 0x1200:
+    // - sets CF in stacked flags
+    // - sets AX=0
+    // - iret
+    static const uint8_t int_fail_stub[] = {
+        0x55,             // push bp
+        0x89, 0xE5,       // mov bp, sp
+        0x81, 0x4E, 0x06, 0x01, 0x00, // or word [bp+6], 0x0001
+        0x31, 0xC0,       // xor ax, ax
+        0x5D,             // pop bp
+        0xCF,             // iret
+    };
+    memcpy(mem + 0x1200, int_fail_stub, sizeof(int_fail_stub));
+
+    for (int vec = 0; vec < 256; vec++)
+    {
+        uint16_t off = 0x1000;
+        if (vec == 0x15 || vec == 0x10 || vec == 0x16 || vec == 0x1a)
+        {
+            off = 0x1100;
+        }
+        else if (vec == 0x13)
+        {
+            off = 0x1200;
+        }
+        uint16_t seg = 0x0000;
+        size_t ivt = (size_t)vec * 4;
+        mem[ivt + 0] = (uint8_t)(off & 0xFF);
+        mem[ivt + 1] = (uint8_t)((off >> 8) & 0xFF);
+        mem[ivt + 2] = (uint8_t)(seg & 0xFF);
+        mem[ivt + 3] = (uint8_t)((seg >> 8) & 0xFF);
+    }
+}
+
+static void setup_linux_prot_idt(void *guest_mem)
+{
+    // Place IDT right after our GDT and point all vectors to a tiny handler.
+    uint8_t *mem = (uint8_t *)guest_mem;
+    uint32_t idt_addr = GDT_ADDR + GDT_TOTAL_SIZE;
+    idt_entry_t *idt = (idt_entry_t *)(mem + idt_addr);
+
+    // Exception handler: print 'E' to COM1 then halt.
+    const uint32_t handler_addr = 0x7000;
+    static const uint8_t handler_code[] = {
+        0x50,                         // push eax
+        0x52,                         // push edx
+        0xBA, 0xF8, 0x03, 0x00, 0x00, // mov edx, 0x3f8
+        0xB0, 0x45,                   // mov al, 'E'
+        0xEE,                         // out dx, al
+        0x5A,                         // pop edx
+        0x58,                         // pop eax
+        0xF4,                         // hlt
+        0xEB, 0xFE,                   // jmp $
+    };
+    memcpy(mem + handler_addr, handler_code, sizeof(handler_code));
+
+    for (int vec = 0; vec < 256; vec++)
+    {
+        uint32_t off = handler_addr;
+        idt[vec].offset_low = (uint16_t)(off & 0xFFFF);
+        idt[vec].selector = SEL_KCODE;
+        idt[vec].reserved = 0;
+        idt[vec].flags = 0x8E; // present, ring0, 32-bit interrupt gate
+        idt[vec].offset_high = (uint16_t)((off >> 16) & 0xFFFF);
+    }
+}
+
+// Minimal legacy port emulation for Linux setup (A20/8042/CMOS/PIC/etc.)
+static uint8_t cmos_index = 0;
+static uint8_t port92 = 0x02; // A20 enabled bit set by default
+
+static void misc_port_out(uint16_t port, const char *data, int size)
+{
+    (void)size;
+    uint8_t value = (uint8_t)data[0];
+
+    switch (port)
+    {
+    case 0x92: // Fast A20 gate
+        port92 = value | 0x02;
+        break;
+    case 0x70: // CMOS index
+        cmos_index = value;
+        break;
+    case 0x20: // PIC1 command
+    case 0x21: // PIC1 data
+    case 0xA0: // PIC2 command
+    case 0xA1: // PIC2 data
+    case 0x80: // POST delay port
+    case 0x60: // 8042 data
+    case 0x64: // 8042 status/command
+        break;
+    default:
+        break;
+    }
+}
+
+static void misc_port_in(uint16_t port, char *data, int size)
+{
+    // Default: return 0 for unknown ports so polling loops can progress
+    memset(data, 0, (size_t)size);
+
+    switch (port)
+    {
+    case 0x92:
+        data[0] = port92;
+        break;
+    case 0x64:
+        // 8042 status: input buffer empty (bit1=0), output buffer empty (bit0=0)
+        data[0] = 0x00;
+        break;
+    case 0x60:
+        data[0] = 0x00;
+        break;
+    case 0x71:
+        // CMOS data - return 0
+        data[0] = 0x00;
+        break;
+    case 0x20:
+    case 0x21:
+    case 0xA0:
+    case 0xA1:
+        data[0] = 0x00;
+        break;
+    default:
+        break;
+    }
+}
+
 /*
  * Handle I/O port operations
  */
@@ -1565,13 +2044,17 @@ static int handle_io(vcpu_context_t *ctx)
             }
             return handle_hypercall_out(ctx, &regs);
         }
-        else if (ctx->kvm_run->io.port == 0x3f8)
+        else if (is_uart_port(ctx->kvm_run->io.port))
         {
             // UART output
             for (int i = 0; i < ctx->kvm_run->io.size; i++)
             {
-                vcpu_putchar(ctx, data[i]);
+                uart_write(ctx->kvm_run->io.port + i, &data[i]);
             }
+        }
+        else
+        {
+            misc_port_out(ctx->kvm_run->io.port, data, ctx->kvm_run->io.size);
         }
     }
     else
@@ -1580,6 +2063,17 @@ static int handle_io(vcpu_context_t *ctx)
         if (ctx->kvm_run->io.port == HYPERCALL_PORT)
         {
             handle_hypercall_in(ctx, data);
+        }
+        else if (is_uart_port(ctx->kvm_run->io.port))
+        {
+            for (int i = 0; i < ctx->kvm_run->io.size; i++)
+            {
+                uart_read(ctx->kvm_run->io.port + i, &data[i]);
+            }
+        }
+        else
+        {
+            misc_port_in(ctx->kvm_run->io.port, data, ctx->kvm_run->io.size);
         }
     }
 
@@ -1592,6 +2086,17 @@ static int handle_io(vcpu_context_t *ctx)
 static int handle_vm_exit(vcpu_context_t *ctx)
 {
     ctx->exit_count++;
+
+    // If we temporarily disabled single-step (e.g., to let REP instructions complete),
+    // re-enable it on the next non-debug exit while the budget remains.
+    if (ctx->singlestep_paused && ctx->kvm_run->exit_reason != KVM_EXIT_DEBUG)
+    {
+        ctx->singlestep_paused = false;
+        if (ctx->singlestep_remaining > 0)
+        {
+            set_guest_singlestep(ctx, true);
+        }
+    }
 
     // Log exit reasons if verbose mode is enabled
     if (verbose)
@@ -1619,14 +2124,122 @@ static int handle_vm_exit(vcpu_context_t *ctx)
     case KVM_EXIT_IO:
         return handle_io(ctx);
 
+    case KVM_EXIT_DEBUG:
+    {
+        if (ctx->singlestep_remaining > 0)
+        {
+            ctx->singlestep_exits++;
+            struct kvm_regs regs;
+            struct kvm_sregs sregs;
+            if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) == 0 &&
+                ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) == 0)
+            {
+                uint64_t linear = sregs.cs.base + regs.rip;
+                uint8_t *mem = (uint8_t *)ctx->guest_mem;
+
+                uint8_t b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+                if (linear + 3 < ctx->mem_size)
+                {
+                    b0 = mem[linear + 0];
+                    b1 = mem[linear + 1];
+                    b2 = mem[linear + 2];
+                    b3 = mem[linear + 3];
+                }
+
+                ctx->last_rip = regs.rip;
+                ctx->last_rsi = regs.rsi;
+                ctx->last_rbx = regs.rbx;
+                ctx->last_rdi = regs.rdi;
+                ctx->last_rcx = regs.rcx;
+                ctx->last_rsp = regs.rsp;
+                ctx->last_rflags = regs.rflags;
+                ctx->last_cr0 = sregs.cr0;
+                ctx->last_cs = sregs.cs.selector;
+                ctx->last_es = sregs.es.selector;
+                ctx->last_es_base = sregs.es.base;
+                ctx->last_es_limit = sregs.es.limit;
+                ctx->last_idt_base = sregs.idt.base;
+                ctx->last_idt_limit = sregs.idt.limit;
+                ctx->last_bytes[0] = b0;
+                ctx->last_bytes[1] = b1;
+                ctx->last_bytes[2] = b2;
+                ctx->last_bytes[3] = b3;
+
+                bool should_log = (ctx->singlestep_exits <= 50) || ((ctx->singlestep_exits % 50) == 0);
+                if (should_log)
+                {
+                    vcpu_printf(ctx, "STEP: RIP=0x%llx CS=0x%x linear=0x%llx CR0=0x%llx RSI=0x%llx RBX=0x%llx RDI=0x%llx bytes=%02x %02x %02x %02x\n",
+                                (unsigned long long)regs.rip,
+                                sregs.cs.selector,
+                                (unsigned long long)linear,
+                                (unsigned long long)sregs.cr0,
+                                (unsigned long long)regs.rsi,
+                                (unsigned long long)regs.rbx,
+                                (unsigned long long)regs.rdi,
+                                b0, b1, b2, b3);
+                }
+
+                // REP string ops can generate enormous amounts of single-step exits.
+                // Let them run at full speed and resume single-step on the next exit.
+                if (!ctx->singlestep_paused && (b0 == 0xF3 || b0 == 0xF2))
+                {
+                    ctx->singlestep_paused = true;
+                    set_guest_singlestep(ctx, false);
+                    vcpu_printf(ctx, "STEP: pausing single-step for REP instruction\n");
+                    return 0;
+                }
+            }
+            ctx->singlestep_remaining--;
+            if (ctx->singlestep_remaining == 0)
+            {
+                set_guest_singlestep(ctx, false);
+                vcpu_printf(ctx, "STEP: disabled single-step\n");
+            }
+            return 0;
+        }
+        return 0;
+    }
+
     case KVM_EXIT_FAIL_ENTRY:
         vcpu_printf(ctx, "FAIL_ENTRY: reason 0x%llx\n",
                     ctx->kvm_run->fail_entry.hardware_entry_failure_reason);
         return -1;
 
+    case KVM_EXIT_MMIO:
+        if (verbose)
+        {
+            static int mmio_log_count = 0;
+            if (mmio_log_count++ < 50)
+            {
+                vcpu_printf(ctx, "MMIO: addr=0x%llx is_write=%d len=%d\n",
+                            ctx->kvm_run->mmio.phys_addr,
+                            ctx->kvm_run->mmio.is_write,
+                            ctx->kvm_run->mmio.len);
+            }
+        }
+        if (!ctx->kvm_run->mmio.is_write)
+        {
+            // Return zeroed data
+            memset(ctx->kvm_run->mmio.data, 0, ctx->kvm_run->mmio.len);
+        }
+        return 0;
+
+    case KVM_EXIT_IRQ_WINDOW_OPEN:
+        // Interrupt window opened; just continue
+        return 0;
+
+    case KVM_EXIT_INTR:
+        // External interrupt handled by KVM
+        return 0;
+
     case KVM_EXIT_INTERNAL_ERROR:
-        vcpu_printf(ctx, "INTERNAL_ERROR: suberror 0x%x\n",
-                    ctx->kvm_run->internal.suberror);
+        vcpu_printf(ctx, "INTERNAL_ERROR: suberror 0x%x ndata=%d\n",
+                    ctx->kvm_run->internal.suberror, ctx->kvm_run->internal.ndata);
+        for (uint32_t i = 0; i < ctx->kvm_run->internal.ndata && i < 8; i++)
+        {
+            vcpu_printf(ctx, "  data[%u]=0x%llx\n", i,
+                        (unsigned long long)ctx->kvm_run->internal.data[i]);
+        }
         return -1;
 
     case KVM_EXIT_SHUTDOWN:
@@ -1636,6 +2249,25 @@ static int handle_vm_exit(vcpu_context_t *ctx)
         struct kvm_vcpu_events events;
 
         vcpu_printf(ctx, "SHUTDOWN - Attempting to get exception info...\n");
+        if (ctx->singlestep_exits > 0)
+        {
+            vcpu_printf(ctx, "  Last step: RIP=0x%llx CS=0x%x ES=0x%x ES.base=0x%llx ES.limit=0x%x IDT.base=0x%llx IDT.limit=0x%x CR0=0x%llx RFLAGS=0x%llx RSI=0x%llx RBX=0x%llx RCX=0x%llx RDI=0x%llx RSP=0x%llx bytes=%02x %02x %02x %02x\n",
+                        (unsigned long long)ctx->last_rip,
+                        (unsigned)ctx->last_cs,
+                        (unsigned)ctx->last_es,
+                        (unsigned long long)ctx->last_es_base,
+                        (unsigned)ctx->last_es_limit,
+                        (unsigned long long)ctx->last_idt_base,
+                        (unsigned)ctx->last_idt_limit,
+                        (unsigned long long)ctx->last_cr0,
+                        (unsigned long long)ctx->last_rflags,
+                        (unsigned long long)ctx->last_rsi,
+                        (unsigned long long)ctx->last_rbx,
+                        (unsigned long long)ctx->last_rcx,
+                        (unsigned long long)ctx->last_rdi,
+                        (unsigned long long)ctx->last_rsp,
+                        ctx->last_bytes[0], ctx->last_bytes[1], ctx->last_bytes[2], ctx->last_bytes[3]);
+        }
 
         if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) == 0)
         {
@@ -1816,7 +2448,11 @@ int main(int argc, char **argv)
     bool enable_paging = false;
     bool enable_long_mode = false;
     bool linux_boot = false;
+    linux_entry_mode_t linux_entry = LINUX_ENTRY_CODE32;
+    linux_rsi_mode_t linux_rsi = LINUX_RSI_BASE;
     const char *linux_cmdline = NULL;
+    const char *initrd_path = NULL;
+    const char *bzimage_path = NULL;
     uint32_t entry_point = 0x80001000; // Default entry point for paging mode
     uint32_t load_offset = 0x1000;     // Default load offset for paging mode
     int guest_arg_start = 1;
@@ -1824,13 +2460,16 @@ int main(int argc, char **argv)
     // Parse command line arguments
     if (argc < 2)
     {
-        fprintf(stderr, "Usage: %s [OPTIONS] <guest_binary> | --linux <bzImage> [--cmdline \"...\"]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [OPTIONS] <guest_binary> | --linux <bzImage> [--linux-entry setup|code32] [--linux-rsi base|hdr] [--cmdline \"...\"] [--initrd <file>]\n", argv[0]);
         fprintf(stderr, "  Run 1-4 guests simultaneously in separate vCPUs or boot Linux kernel\n");
         fprintf(stderr, "\nOptions:\n");
         fprintf(stderr, "  --paging            Enable Protected Mode with paging\n");
         fprintf(stderr, "  --long-mode         Enable 64-bit Long Mode\n");
         fprintf(stderr, "  --linux <bzImage>   Boot Linux kernel (bzImage format)\n");
+        fprintf(stderr, "  --linux-entry MODE  Linux entry (setup|code32, default: code32)\n");
+        fprintf(stderr, "  --linux-rsi MODE    Linux RSI base (base|hdr, default: base)\n");
         fprintf(stderr, "  --cmdline \"...\"     Kernel command line (for --linux)\n");
+        fprintf(stderr, "  --initrd <file>     Initrd image to load (for --linux)\n");
         fprintf(stderr, "  --entry ADDR        Set entry point (default: 0x80001000)\n");
         fprintf(stderr, "  --load OFFSET       Set load offset (default: 0x1000)\n");
         fprintf(stderr, "  --verbose, -v       Enable basic debug logging (VM exits, hypercalls)\n");
@@ -1845,18 +2484,17 @@ int main(int argc, char **argv)
     }
 
     // Parse flags
-    for (int i = 1; i < argc && argv[i][0] == '-'; i++)
+    int i;
+    for (i = 1; i < argc && argv[i][0] == '-'; i++)
     {
         if (strcmp(argv[i], "--paging") == 0)
         {
             enable_paging = true;
-            guest_arg_start++;
         }
         else if (strcmp(argv[i], "--long-mode") == 0)
         {
             enable_long_mode = true;
             enable_paging = true; // Long mode requires paging
-            guest_arg_start++;
         }
         else if (strcmp(argv[i], "--linux") == 0)
         {
@@ -1865,11 +2503,54 @@ int main(int argc, char **argv)
                 fprintf(stderr, "Error: --linux requires a bzImage path\n");
                 return 1;
             }
+            bzimage_path = argv[i + 1];
             linux_boot = true;
-            enable_paging = true; // Linux requires paging
             // Guest binary path will be used as bzImage path
             i++;
-            guest_arg_start += 2;
+        }
+        else if (strcmp(argv[i], "--linux-entry") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                fprintf(stderr, "Error: --linux-entry requires an argument (setup|code32)\n");
+                return 1;
+            }
+            if (strcmp(argv[i + 1], "setup") == 0)
+            {
+                linux_entry = LINUX_ENTRY_SETUP;
+            }
+            else if (strcmp(argv[i + 1], "code32") == 0)
+            {
+                linux_entry = LINUX_ENTRY_CODE32;
+            }
+            else
+            {
+                fprintf(stderr, "Error: invalid --linux-entry '%s' (expected setup|code32)\n", argv[i + 1]);
+                return 1;
+            }
+            i++;
+        }
+        else if (strcmp(argv[i], "--linux-rsi") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                fprintf(stderr, "Error: --linux-rsi requires an argument (base|hdr)\n");
+                return 1;
+            }
+            if (strcmp(argv[i + 1], "base") == 0)
+            {
+                linux_rsi = LINUX_RSI_BASE;
+            }
+            else if (strcmp(argv[i + 1], "hdr") == 0)
+            {
+                linux_rsi = LINUX_RSI_HDR;
+            }
+            else
+            {
+                fprintf(stderr, "Error: invalid --linux-rsi '%s' (expected base|hdr)\n", argv[i + 1]);
+                return 1;
+            }
+            i++;
         }
         else if (strcmp(argv[i], "--cmdline") == 0)
         {
@@ -1880,7 +2561,16 @@ int main(int argc, char **argv)
             }
             linux_cmdline = argv[i + 1];
             i++;
-            guest_arg_start += 2;
+        }
+        else if (strcmp(argv[i], "--initrd") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                fprintf(stderr, "Error: --initrd requires an argument\n");
+                return 1;
+            }
+            initrd_path = argv[i + 1];
+            i++;
         }
         else if (strcmp(argv[i], "--entry") == 0)
         {
@@ -1891,7 +2581,6 @@ int main(int argc, char **argv)
             }
             entry_point = strtoul(argv[i + 1], NULL, 0);
             i++;
-            guest_arg_start += 2;
         }
         else if (strcmp(argv[i], "--load") == 0)
         {
@@ -1902,13 +2591,11 @@ int main(int argc, char **argv)
             }
             load_offset = strtoul(argv[i + 1], NULL, 0);
             i++;
-            guest_arg_start += 2;
         }
         else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0)
         {
             verbose = true;
             debug_level = DEBUG_BASIC;
-            guest_arg_start++;
         }
         else if (strcmp(argv[i], "--debug") == 0)
         {
@@ -1926,12 +2613,10 @@ int main(int argc, char **argv)
             debug_level = (debug_level_t)level;
             verbose = (level > 0);
             i++;
-            guest_arg_start += 2;
         }
         else if (strcmp(argv[i], "--dump-regs") == 0)
         {
             // Flag will be checked in VM exit handler
-            guest_arg_start++;
         }
         else if (strcmp(argv[i], "--dump-mem") == 0)
         {
@@ -1942,7 +2627,6 @@ int main(int argc, char **argv)
             }
             // Store filename for later use
             i++;
-            guest_arg_start += 2;
         }
         else
         {
@@ -1950,21 +2634,21 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+    guest_arg_start = i;
 
-    // Determine number of guests
-    num_vcpus = argc - guest_arg_start;
-    
-    // Linux boot mode requires exactly one guest (the bzImage)
     if (linux_boot)
     {
-        if (num_vcpus != 1)
+        if (!bzimage_path)
         {
-            fprintf(stderr, "Error: --linux mode requires exactly one bzImage argument\n");
+            fprintf(stderr, "Error: --linux requires a bzImage path\n");
             return 1;
         }
+        num_vcpus = 1;
     }
     else
     {
+        // Determine number of guests
+        num_vcpus = argc - guest_arg_start;
         if (num_vcpus == 0)
         {
             fprintf(stderr, "Error: No guest binaries specified\n");
@@ -1981,10 +2665,14 @@ int main(int argc, char **argv)
     if (linux_boot)
     {
         printf("Mode: Linux Boot Protocol\n");
-        printf("bzImage: %s\n", argv[guest_arg_start]);
+        printf("bzImage: %s\n", bzimage_path);
         if (linux_cmdline)
         {
             printf("Command line: %s\n", linux_cmdline);
+        }
+        if (initrd_path)
+        {
+            printf("Initrd: %s\n", initrd_path);
         }
     }
     else if (enable_paging)
@@ -2010,45 +2698,44 @@ int main(int argc, char **argv)
 
     // Step 1: Initialize KVM and create VM
     // Only create IRQCHIP for Protected Mode (paging enabled)
-    if (init_kvm(enable_paging) < 0)
+    if (init_kvm(enable_paging, linux_boot) < 0)
     {
         ret = 1;
         goto cleanup_early;
     }
 
     // Step 1.5: Linux Boot Protocol Setup
-    struct boot_params *boot_params = NULL;
     if (linux_boot)
     {
         printf("\n=== Linux Boot Protocol Setup ===\n");
-        
-        // Allocate boot parameters structure (zero page)
-        boot_params = calloc(1, sizeof(struct boot_params));
-        if (!boot_params)
-        {
-            fprintf(stderr, "Error: Failed to allocate boot_params\n");
-            ret = 1;
-            goto cleanup_early;
-        }
 
         // Setup single vCPU context for Linux kernel
         vcpu_context_t *ctx = &vcpus[0];
         memset(ctx, 0, sizeof(*ctx));
         ctx->vcpu_id = 0;
-        ctx->guest_binary = argv[guest_arg_start];
+        ctx->guest_binary = bzimage_path;
         snprintf(ctx->name, sizeof(ctx->name), "Linux");
         ctx->vcpu_fd = -1;
-        ctx->use_paging = true;   // Linux always needs paging
-        ctx->long_mode = false;   // Will be set based on kernel detection
-        ctx->entry_point = 0;     // Will be set from boot_params
+        ctx->use_paging = false;  // Enter protected mode (no paging) at code32_start
+        ctx->long_mode = false;
+        ctx->entry_point = 0;     // Will be set to code32_start after load
         ctx->load_offset = 0;
+        ctx->linux_guest = true;
+        ctx->linux_entry = linux_entry;
+        ctx->linux_rsi = linux_rsi;
 
         // Allocate guest memory
         if (setup_vcpu_memory(ctx) < 0)
         {
             ret = 1;
-            goto cleanup_linux;
+            goto cleanup_vcpus;
         }
+
+        struct boot_params *boot_params = (struct boot_params *)(ctx->guest_mem + LINUX_BOOT_PARAMS_ADDR);
+        memset(boot_params, 0, sizeof(*boot_params));
+
+        // Setup a minimal IVT so bzImage setup code can execute basic interrupts safely
+        setup_linux_ivt(ctx->guest_mem);
 
         // Load Linux kernel bzImage
         printf("Loading bzImage...\n");
@@ -2056,12 +2743,24 @@ int main(int argc, char **argv)
         {
             fprintf(stderr, "Error: Failed to load Linux kernel\n");
             ret = 1;
-            goto cleanup_linux;
+            goto cleanup_vcpus;
         }
 
         // Setup boot parameters (E820 memory map, etc.)
         printf("Setting up boot parameters...\n");
         setup_linux_boot_params(boot_params, ctx->mem_size, linux_cmdline);
+
+        // Load initrd if provided
+        if (initrd_path)
+        {
+            printf("Loading initrd...\n");
+            if (load_initrd(initrd_path, ctx->guest_mem, ctx->mem_size, boot_params) < 0)
+            {
+                fprintf(stderr, "Error: Failed to load initrd\n");
+                ret = 1;
+                goto cleanup_vcpus;
+            }
+        }
 
         // Detect 64-bit kernel
         if (boot_params->hdr.xloadflags & XLF_KERNEL_64)
@@ -2075,13 +2774,11 @@ int main(int argc, char **argv)
             printf("Detected 32-bit Linux kernel\n");
         }
 
-        // Get kernel entry point
         ctx->entry_point = boot_params->hdr.code32_start;
-        printf("Kernel entry point: 0x%x\n", ctx->entry_point);
-
-        // Copy boot_params to guest memory (zero page at 0x0)
-        printf("Copying boot parameters to guest memory (zero page)...\n");
-        memcpy(ctx->guest_mem, boot_params, sizeof(struct boot_params));
+        printf("Protected-mode entry (code32_start): 0x%x\n", ctx->entry_point);
+        printf("boot_params (zero page): 0x%x\n", LINUX_BOOT_PARAMS_ADDR);
+        printf("linux RSI mode: %s\n", (linux_rsi == LINUX_RSI_BASE) ? "base" : "hdr");
+        printf("Real-mode setup: 0x%x:0x0200\n", (unsigned)(REAL_MODE_KERNEL_ADDR / 16));
 
         // Copy command line to guest memory if provided
         if (linux_cmdline)
@@ -2101,23 +2798,20 @@ int main(int argc, char **argv)
         if (setup_vcpu_context(ctx) < 0)
         {
             ret = 1;
-            goto cleanup_linux;
+            goto cleanup_vcpus;
         }
 
-        // Set ESI to point to boot_params (required by Linux boot protocol)
-        struct kvm_regs regs;
-        if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0)
+        // Optional: enable KVM single-step for early Linux bring-up debugging
+        if (debug_level == DEBUG_ALL)
         {
-            perror("KVM_GET_REGS");
-            ret = 1;
-            goto cleanup_linux;
-        }
-        regs.rsi = 0;  // ESI points to zero page
-        if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
-        {
-            perror("KVM_SET_REGS");
-            ret = 1;
-            goto cleanup_linux;
+            ctx->singlestep_remaining = 2000;
+            ctx->singlestep_paused = false;
+            ctx->singlestep_exits = 0;
+            if (set_guest_singlestep(ctx, true) < 0)
+            {
+                ret = 1;
+                goto cleanup_vcpus;
+            }
         }
 
         printf("Linux boot setup complete!\n\n");
@@ -2251,13 +2945,6 @@ cleanup_vcpus:
     for (int i = 0; i < num_vcpus; i++)
     {
         cleanup_vcpu(&vcpus[i]);
-    }
-
-cleanup_linux:
-    // Cleanup Linux boot parameters
-    if (boot_params)
-    {
-        free(boot_params);
     }
 
 cleanup_early:
