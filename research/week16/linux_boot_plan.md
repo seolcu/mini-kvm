@@ -21,7 +21,8 @@
 - **부팅 상태(달성)**:
   - `code32` 경로로 커널 로그 출력 → initramfs `/init` 실행 → `sh-5.3#` 프롬프트까지 확인
   - userspace 출력/입력을 위해 COM1 `IRQ4`의 TX/RX pulse를 최소 구현
-  - 프로젝트 내부에서 재현 가능한 최소 initramfs 빌더(`kvm-vmm-x86/tools/mkinitramfs.sh`) 추가
+  - 프로젝트 내부에서 재현 가능한 최소 initramfs 빌더(`kvm-vmm-x86/tools/mkinitramfs.sh`) + 데모용 `miniutils`(uname/ls/cat) 추가
+  - `/init`가 `PATH` 설정 + 쉘 종료 시 respawn(커널 panic 방지)
 
 ## 1) 현 상태에서 Linux 부팅이 막히는 포인트(정리)
 

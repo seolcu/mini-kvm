@@ -179,6 +179,8 @@ make vmm
 - `kvm-vmm-x86/tools/mkinitramfs.sh`가
   - `kvm-vmm-x86/initramfs/init.c`를 빌드하여 `/init`로 넣고
   - 호스트의 `bash` + 필요한 공유 라이브러리를 포함한 `initramfs.cpio`를 생성한다.
+- 추가로 `kvm-vmm-x86/initramfs/miniutils.c`를 빌드해 `/bin/{ls,cat,uname}` 등을 제공하고,
+  `/init`에서 `PATH=/bin:...` 설정 + 쉘 종료 시 respawn 하도록 해서 데모 UX를 안정화했다.
 
 ### 재현 커맨드(현재 성공 조합)
 
@@ -199,4 +201,4 @@ make vmm
 ### 남은 한계(범위 밖으로 둔 것)
 
 - 디스크/virtio/PCI/ACPI 테이블 없음 → “완전한 배포판 부팅”은 목표 범위 밖.
-- initramfs는 최소 구성(현재는 `bash` 기반)이라 일반 유틸리티(`uname` 등)는 포함되지 않음(필요하면 바이너리+라이브러리 추가 가능).
+- initramfs는 최소 구성(현재는 `bash` 기반)이라 배포판 수준 유틸리티는 없고, 데모용으로 `miniutils`(uname/ls/cat 등)만 포함.
