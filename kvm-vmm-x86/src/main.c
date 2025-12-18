@@ -490,7 +490,10 @@ static void *stdin_monitor_thread_func(void *arg)
 {
     (void)arg;
 
-    printf("[Keyboard] Stdin monitoring thread started\n");
+    if (verbose)
+    {
+        printf("[Keyboard] Stdin monitoring thread started\n");
+    }
 
     // Set stdin to non-blocking mode
     int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
@@ -509,11 +512,14 @@ static void *stdin_monitor_thread_func(void *arg)
         int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
         if (ret > 0 && FD_ISSET(STDIN_FILENO, &readfds))
         {
-            int ch = getchar();
-            if (ch != EOF)
+            char buf[256];
+            ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
+            if (n > 0)
             {
-                // Store character in buffer
-                keyboard_buffer_push((char)ch);
+                for (ssize_t i = 0; i < n; i++)
+                {
+                    keyboard_buffer_push(buf[i]);
+                }
 
                 // For Linux, wake the serial driver by pulsing COM1 IRQ4.
                 if (linux_serial_input_enabled)
@@ -527,7 +533,10 @@ static void *stdin_monitor_thread_func(void *arg)
     // Restore stdin blocking mode
     fcntl(STDIN_FILENO, F_SETFL, flags);
 
-    printf("[Keyboard] Stdin monitoring thread stopped\n");
+    if (verbose)
+    {
+        printf("[Keyboard] Stdin monitoring thread stopped\n");
+    }
     return NULL;
 }
 
@@ -2281,6 +2290,10 @@ static int handle_io(vcpu_context_t *ctx)
     {
         if (ctx->kvm_run->io.port == HYPERCALL_PORT)
         {
+            if (ctx->linux_guest)
+            {
+                return 0;
+            }
             struct kvm_regs regs;
             if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0)
             {
@@ -2307,6 +2320,11 @@ static int handle_io(vcpu_context_t *ctx)
         // IN instruction
         if (ctx->kvm_run->io.port == HYPERCALL_PORT)
         {
+            if (ctx->linux_guest)
+            {
+                memset(data, 0, ctx->kvm_run->io.size);
+                return 0;
+            }
             handle_hypercall_in(ctx, data);
         }
         else if (is_uart_port(ctx->kvm_run->io.port))

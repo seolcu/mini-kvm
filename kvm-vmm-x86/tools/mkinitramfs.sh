@@ -16,6 +16,13 @@ if ! command -v gcc >/dev/null 2>&1; then
   exit 1
 fi
 gcc -O2 -s "${repo_root}/initramfs/init.c" -o "${tmp_root}/init"
+gcc -O2 -s "${repo_root}/initramfs/miniutils.c" -o "${tmp_root}/bin/miniutils"
+
+ln -sf miniutils "${tmp_root}/bin/ls"
+ln -sf miniutils "${tmp_root}/bin/cat"
+ln -sf miniutils "${tmp_root}/bin/uname"
+ln -sf miniutils "${tmp_root}/bin/halt"
+ln -sf miniutils "${tmp_root}/bin/poweroff"
 
 bash_bin="$(command -v bash)"
 if [[ -z "${bash_bin}" ]]; then

@@ -1,8 +1,11 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static void write_all(int fd, const char *s)
@@ -68,17 +71,30 @@ int main(int argc, char **argv)
     mount_early_fs();
     setup_console_stdio();
 
+    setenv("PATH", "/bin:/usr/bin:/usr/local/bin", 1);
+
     log_console("\n[mini-kvm] userspace init started\n");
-    log_console("[mini-kvm] exec /bin/sh -i (serial input supported)\n\n");
+    log_console("[mini-kvm] starting /bin/sh -i (type 'exit' to respawn)\n\n");
 
-    char *const sh_argv[] = {"/bin/sh", "-i", NULL};
-    execv("/bin/sh", sh_argv);
+    for (;;)
+    {
+        pid_t pid = fork();
+        if (pid < 0)
+        {
+            log_console("[mini-kvm] fork failed, retrying...\n");
+            sleep(1);
+            continue;
+        }
 
-    log_console("[mini-kvm] execv(/bin/sh) failed: ");
-    log_console(strerror(errno));
-    log_console("\n");
+        if (pid == 0)
+        {
+            char *const sh_argv[] = {"/bin/sh", "-i", NULL};
+            execv("/bin/sh", sh_argv);
+            _exit(127);
+        }
 
-    for (;;) {
-        sleep(1);
+        int status = 0;
+        (void)waitpid(pid, &status, 0);
+        log_console("\n[mini-kvm] shell exited, respawning...\n");
     }
 }
