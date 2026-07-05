@@ -8,9 +8,9 @@ Linux KVM API를 사용하여 제작된 작지만 모든 기능이 동작하는 
 [![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
-과목명: 자기주도프로젝트
-주제: 리눅스 KVM API를 이용한 초소형 가상 머신 모니터(VMM) 개발
-담당 교수: 김상훈
+- 과목명: 자기주도프로젝트
+- 주제: 리눅스 KVM API를 이용한 초소형 가상 머신 모니터(VMM) 개발
+- 담당 교수: 김상훈
 
 ---
 
