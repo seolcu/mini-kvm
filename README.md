@@ -1,14 +1,16 @@
 # Mini-KVM: 교육용 x86 하이퍼바이저
 
-> Linux KVM API를 사용하여 제작된 작지만 모든 기능이 동작하는 교육용 x86 하이퍼바이저입니다.
+> 2025-2 Ajou SoftCon 연구부문 장려상 수상
+
+Linux KVM API를 사용하여 제작된 작지만 모든 기능이 동작하는 교육용 x86 하이퍼바이저입니다.
 
 [![Project Status](https://img.shields.io/badge/status-complete-success)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
-**아주대학교 개인연구 프로젝트** (2025 가을)  
-**작성자**: Seolcu  
-**완료일**: 2025년 12월 2일
+과목명: 자기주도프로젝트
+주제: 리눅스 KVM API를 이용한 초소형 가상 머신 모니터(VMM) 개발
+담당 교수: 김상훈
 
 ---
 
