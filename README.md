@@ -11,9 +11,8 @@ with headers), small enough to read in an afternoon.
 
 > **Status: early but real.** Mini-KVM boots stock Multiboot and ELF kernels,
 > renders VGA text mode, and runs its own real-mode guests and a bundled 32-bit
-> teaching OS, with working timer and keyboard interrupts. Its Linux boot
-> support is incomplete, and the diagnostics that are the whole point of the
-> project are still ahead. See
+> teaching OS, with working timer and keyboard interrupts, and it can explain
+> why a guest triple-faulted. Its Linux boot support is incomplete. See
 > [Current state](#current-state) for exactly what works and
 > [Roadmap](#roadmap) for where it is going. Nothing below is aspirational: if
 > it is listed as working, `make test` covers it.
@@ -99,7 +98,7 @@ Hello from 64-bit!
 
 ## Current state
 
-Everything in this section is exercised by `make test` (17 cases diffed against
+Everything in this section is exercised by `make test` (20 cases diffed against
 stored baselines in `kvm-vmm-x86/tools/baseline/`).
 
 **Working**
@@ -119,6 +118,7 @@ stored baselines in `kvm-vmm-x86/tools/baseline/`).
 | 1K OS | Bundled teaching OS with a 9-program interactive shell |
 | Hypercall interface | Port `0x500`; `EXIT`, `PUTCHAR`, blocking `GETCHAR` |
 | 16550 UART (COM1) | `0x3f8`–`0x3ff`, forwarded to stdout |
+| **Fault analysis** | `--explain` names the cause of a triple fault |
 | Diagnostics | `--verbose`, `--debug 0..3`, `--dump-regs`, `--dump-mem` |
 
 A stock Multiboot kernel that knows nothing about Mini-KVM boots and runs:
@@ -161,6 +161,27 @@ hello from the guest
 Halting.
 ```
 
+When a guest dies, `--explain` single-steps it so the state from just before
+the fault survives the CPU reset, then reads the guest's own tables to work
+out the cause:
+
+```bash
+$ ./kvm-vmm --explain examples/faults/no-idt.elf
+Guest triple-faulted (the CPU gave up and reset).
+  Last instruction before the fault, at step 4:
+    CS:EIP = 0x0008:0x0010001a, in protected mode, paging off
+    bytes: f7 f1 f4 00 00 00 04 00
+  That instruction raises #DE divide error - the divisor register is zero.
+
+  IDT at 0x528, limit 0x7ff: 0 of 256 entries present.
+  Not one entry is present, so no exception of any kind can
+  be dispatched. The guest needs to build an IDT and lidt it
+  before it can survive a fault.
+```
+
+Without `--explain` the state is already gone, and it says so rather than
+presenting reset-vector registers as if they meant something.
+
 **Not working yet**
 
 | Gap | Consequence |
@@ -170,7 +191,8 @@ Halting.
 | No a.out kludge | Multiboot images that are not ELF are rejected |
 | Linux boot incomplete | `--linux` loads a bzImage but does not reach a shell |
 | No virtio | No block or network devices |
-| No diagnostics yet | The features that justify the project are Phase 3 |
+| Fault analysis is 32-bit only | PAE and long-mode page walks are not decoded |
+| No live inspection | `inspect` for dumping a running guest's tables is not written |
 
 ---
 
@@ -192,19 +214,10 @@ people, which is a stronger claim and is not met yet.
 Finish the 64-bit entry path. An initramfs avoids needing virtio.
 *Gate: a busybox shell prompt, pinned in CI.*
 
-**Phase 3 — the diagnostics that justify the project**
-`--explain` for post-mortem fault analysis, `inspect` for decoding live
-GDT/IDT/page tables, mode-transition tracing, and pre-boot validation of guest
-descriptor tables. Target output:
-
-```
-Triple fault at CS:EIP = 0x08:0x00100234
-  Fault chain: #PF (CR2=0xdeadbeef) → #GP → #DF → reset
-  Cause: IDT entry 14 (#PF) has P=0 — no handler installed.
-  Your IDT at 0x00009000 has 3 valid entries of 256.
-  Page tables (CR3=0x00100000): 0xdeadbeef is not mapped.
-    PDE[891] = 0x00000000 (not present)
-```
+**Phase 3 — the diagnostics that justify the project** *(started)*
+Done: `--explain` post-mortem fault analysis.
+Remaining: `inspect` for decoding a live guest's GDT/IDT/page tables,
+mode-transition tracing, and pre-boot validation of descriptor tables.
 
 **Phase 4 — workflow**
 A kernel test runner (boot, assert on output, exit code) and a GitHub Action.
@@ -230,6 +243,7 @@ and ARM/RISC-V ports.
 │      hypercall.c  port 0x500                     │
 │      console.c    terminal, input, output        │
 │      vga.c        0xB8000 text buffer            │
+│      explain.c    why the guest died              │
 │                    ↕ ioctl()                     │
 ├──────────────────────────────────────────────────┤
 │  Host kernel — KVM (hardware virtualization)     │
