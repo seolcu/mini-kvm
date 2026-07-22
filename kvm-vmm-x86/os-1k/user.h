@@ -2,12 +2,13 @@
 #include "common.h"
 
 void putchar(char ch);
+
+// Blocking read of one character. Returns -1 at end of input.
 int getchar(void);
-int readfile(const char *filename, char *buf, int len);
-int writefile(const char *filename, const char *buf, int len);
+
 __attribute__((noreturn)) void exit(void);
 
-// Read a line of input with echo and backspace support
-// Returns length of input (excluding null terminator)
-// Buffer must have space for at least bufsz characters + null terminator
+// Read a line of input with echo and backspace support.
+// Returns the length of the input, excluding the null terminator.
+// At end of input this terminates the process rather than returning.
 int readline(char *buf, int bufsz);

@@ -24,8 +24,18 @@ typedef enum {
     DEBUG_ALL = 3       // Everything including I/O port accesses
 } debug_level_t;
 
-// Global debug configuration
+// Global debug configuration, set once from the command line.
 extern debug_level_t debug_level;
+
+/*
+ * Single source of truth for "is this a verbose run?". --verbose and
+ * --debug N previously set two separate globals that were checked
+ * independently, so they could disagree.
+ */
+static inline bool verbose_enabled(void)
+{
+    return debug_level >= DEBUG_BASIC;
+}
 
 // Macros for conditional debug output
 #define DEBUG_PRINT(level, fmt, ...) \
@@ -58,8 +68,6 @@ void dump_guest_memory_map(void *mem, size_t mem_size);
 
 // Page table walking (for debugging paging issues)
 void walk_page_tables_32bit(void *mem, uint32_t cr3, uint32_t virt_addr);
-void walk_page_tables_pae(void *mem, uint32_t cr3, uint32_t virt_addr);
-void walk_page_tables_64bit(void *mem, uint64_t cr3, uint64_t virt_addr);
 
 // VM exit analysis
 const char *get_exit_reason_string(uint32_t exit_reason);

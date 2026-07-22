@@ -16,11 +16,6 @@
 /* User space base address */
 #define USER_BASE 0x01000000
 
-/* Filesystem */
-#define FILES_MAX   2
-#define SECTOR_SIZE       512
-#define DISK_MAX_SIZE     (((sizeof(struct file) * FILES_MAX) + SECTOR_SIZE - 1) & ~(SECTOR_SIZE - 1))
-
 struct process {
     int pid;
     int state;
@@ -29,41 +24,12 @@ struct process {
     uint8_t stack[8192];
 };
 
-struct tar_header {
-    char name[100];
-    char mode[8];
-    char uid[8];
-    char gid[8];
-    char size[12];
-    char mtime[12];
-    char checksum[8];
-    char type;
-    char linkname[100];
-    char magic[6];
-    char version[2];
-    char uname[32];
-    char gname[32];
-    char devmajor[8];
-    char devminor[8];
-    char prefix[155];
-    char padding[12];
-    char data[];
-} __attribute__((packed));
-
-struct file {
-    bool in_use;
-    char name[100];
-    char data[1024];
-    size_t size;
-};
-
-/* Trap frame for syscalls (pushed by INT 0x80 handler) */
-struct trap_frame {
-    uint32_t eax;   // Syscall number / return value
-    uint32_t ebx;   // Arg 0
-    uint32_t ecx;   // Arg 1
-    uint32_t edx;   // Arg 2
-} __attribute__((packed));
+/*
+ * There is deliberately no trap frame and no syscall gate here. User code
+ * runs with IOPL=3 and issues syscalls as a direct OUT to port 0x500, which
+ * exits straight to the VMM -- the VMM *is* the syscall handler. The kernel
+ * is never involved in a syscall.
+ */
 
 /* Interrupt frame (passed by CPU to interrupt handlers) */
 struct interrupt_frame {

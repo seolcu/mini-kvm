@@ -278,19 +278,6 @@ void walk_page_tables_32bit(void *mem, uint32_t cr3, uint32_t virt_addr) {
     fprintf(stderr, "  → Physical Address: 0x%08x\n", phys_addr);
 }
 
-// TODO: Implement 64-bit and PAE page table walking
-void walk_page_tables_pae(void *mem __attribute__((unused)), 
-                         uint32_t cr3 __attribute__((unused)), 
-                         uint32_t virt_addr __attribute__((unused))) {
-    fprintf(stderr, "[Page Table Walk] PAE paging not yet implemented\n");
-}
-
-void walk_page_tables_64bit(void *mem __attribute__((unused)), 
-                           uint64_t cr3 __attribute__((unused)), 
-                           uint64_t virt_addr __attribute__((unused))) {
-    fprintf(stderr, "[Page Table Walk] 64-bit paging not yet implemented\n");
-}
-
 // Print detailed VM exit information
 void print_vm_exit_details(struct kvm_run *run, int vcpu_id) {
     fprintf(stderr, "\n[vCPU %d] ===== VM EXIT DETAILS =====\n", vcpu_id);

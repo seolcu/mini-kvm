@@ -22,12 +22,11 @@ typedef unsigned long uintptr_t;
 #define va_arg   __builtin_va_arg
 #define PAGE_SIZE 4096
 
-/* Syscall numbers (hypercall via port 0x500) */
+/* Syscall numbers. These are the hypercall numbers from src/hypercall.h;
+ * the two lists must stay in sync. */
 #define SYS_EXIT       0
 #define SYS_PUTCHAR    1
 #define SYS_GETCHAR    2
-#define SYS_READFILE   3
-#define SYS_WRITEFILE  4
 
 void *memset(void *buf, char c, size_t n);
 void *memcpy(void *dst, const void *src, size_t n);

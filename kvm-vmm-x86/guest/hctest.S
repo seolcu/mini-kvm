@@ -1,73 +1,89 @@
 # Hypercall Test Guest
-# Demonstrates all hypercall functions
+#
+# Exercises the full Mini-KVM hypercall ABI (see src/hypercall.h):
+#   AL = 0x00  HC_EXIT     terminate
+#   AL = 0x01  HC_PUTCHAR  write BL
+#   AL = 0x02  HC_GETCHAR  read one character into AL (blocking, -1 at EOF)
+#
+# Every hypercall returns its result in AL, so GETCHAR is a single OUT.
 
 .code16
 .section .text
 .global _start
 
-# Hypercall definitions
-.equ HC_EXIT, 0x00
-.equ HC_PUTCHAR, 0x01
-.equ HC_PUTNUM, 0x02
-.equ HC_NEWLINE, 0x03
-.equ HYPERCALL_PORT, 0x500
+.equ HC_EXIT,         0x00
+.equ HC_PUTCHAR,      0x01
+.equ HC_GETCHAR,      0x02
+.equ HYPERCALL_PORT,  0x500
 
 _start:
-    # Test 1: Output "Hello!"
-    mov $'H', %bl
-    call putchar_hc
+    # Test 1: PUTCHAR - print a string via repeated hypercalls
+    lea     banner, %si
+    call    puts_hc
 
-    mov $'e', %bl
-    call putchar_hc
+    # Test 2: PUTCHAR with a computed value - print digits 0-9
+    mov     $'0', %bl
+digit_loop:
+    call    putchar_hc
+    inc     %bl
+    cmp     $'9', %bl
+    jbe     digit_loop
 
-    mov $'l', %bl
-    call putchar_hc
+    mov     $'\n', %bl
+    call    putchar_hc
 
-    mov $'l', %bl
-    call putchar_hc
+    # Test 3: GETCHAR - echo input back until end of input.
+    # AL comes back as the character, or -1 (0xFF) when input is exhausted.
+    lea     prompt, %si
+    call    puts_hc
 
-    mov $'o', %bl
-    call putchar_hc
+echo_loop:
+    mov     $HC_GETCHAR, %al
+    mov     $HYPERCALL_PORT, %dx
+    out     %al, (%dx)          # AL = character, or 0xFF at end of input
 
-    mov $'!', %bl
-    call putchar_hc
+    cmp     $0xFF, %al
+    je      done
 
-    call newline_hc
+    mov     %al, %bl            # echo it back
+    call    putchar_hc
+    jmp     echo_loop
 
-    # Test 2: Output numbers
-    mov $42, %bx
-    call putnum_hc
+done:
+    lea     bye, %si
+    call    puts_hc
 
-    call newline_hc
+    # Test 4: EXIT
+    mov     $HC_EXIT, %al
+    mov     $HYPERCALL_PORT, %dx
+    out     %al, (%dx)
 
-    mov $1234, %bx
-    call putnum_hc
+    hlt                         # unreachable
 
-    call newline_hc
+# --- helpers ---------------------------------------------------------------
 
-    # Test 3: Exit via hypercall
-    mov $HC_EXIT, %al
-    mov $HYPERCALL_PORT, %dx
-    out %al, (%dx)
-
-    # Should never reach here
-    hlt
-
-# Hypercall wrappers
+# putchar_hc: print the character in BL
 putchar_hc:
-    mov $HC_PUTCHAR, %al
-    mov $HYPERCALL_PORT, %dx
-    out %al, (%dx)
+    mov     $HC_PUTCHAR, %al
+    mov     $HYPERCALL_PORT, %dx
+    out     %al, (%dx)
     ret
 
-putnum_hc:
-    mov $HC_PUTNUM, %al
-    mov $HYPERCALL_PORT, %dx
-    out %al, (%dx)
+# puts_hc: print the NUL-terminated string at SI (clobbers AL, BL, SI)
+puts_hc:
+    lodsb
+    test    %al, %al
+    jz      puts_done
+    mov     %al, %bl
+    call    putchar_hc
+    jmp     puts_hc
+puts_done:
     ret
 
-newline_hc:
-    mov $HC_NEWLINE, %al
-    mov $HYPERCALL_PORT, %dx
-    out %al, (%dx)
-    ret
+.section .rodata
+banner:
+    .asciz "hypercall test: putchar "
+prompt:
+    .asciz "echo (ends at EOF): "
+bye:
+    .asciz "\nexit\n"

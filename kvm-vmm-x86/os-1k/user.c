@@ -10,68 +10,44 @@ extern char __stack_top[];
 
 /*
  * Syscall interface via hypercall (port 0x500)
- * Direct hypercall to VMM - IOPL=3 allows user space to use OUT instruction
- * Arguments: EAX=syscall number, EBX=arg0, ECX=arg1, EDX=arg2
- * Return value in EAX (set by VMM via KVM_SET_REGS after hypercall)
+ *
+ * Direct hypercall to the VMM: IOPL=3 lets ring 3 execute OUT, so there is no
+ * in-kernel syscall gate -- the VMM is the syscall handler.
+ *
+ *   EAX = syscall number, EBX/ECX = args
+ *   EAX = return value, written back by the VMM before the guest resumes
+ *
+ * DX must be loaded with the port *last*. The previous version wrote the port
+ * with `movw $0x500, %dx` after loading an argument into EDX, silently
+ * destroying the low 16 bits of that argument.
  */
-int syscall(int sysno, int arg0, int arg1, int arg2) {
+int syscall(int sysno, int arg0, int arg1) {
     int ret;
     __asm__ volatile(
-        "pushl %%ebx\n\t"         // Save EBX (callee-saved)
-        "movl %1, %%eax\n\t"      // Syscall number
-        "movl %2, %%ebx\n\t"      // Arg 0
-        "movl %3, %%ecx\n\t"      // Arg 1
-        "movl %4, %%edx\n\t"      // Arg 2
-        "movw $0x500, %%dx\n\t"   // Port 0x500
-        "outb %%al, %%dx\n\t"     // Trigger hypercall (VMM handles & sets RAX)
-        "movl %%eax, %0\n\t"      // Return value (RAX modified by VMM)
-        "popl %%ebx"              // Restore EBX
-        : "=r"(ret)
-        : "r"(sysno), "r"(arg0), "r"(arg1), "r"(arg2)
-        : "eax", "ecx", "edx", "memory"
+        "outb %%al, %%dx\n\t"     // Trigger hypercall; VMM writes result to EAX
+        : "=a"(ret)
+        : "a"(sysno), "b"(arg0), "c"(arg1), "d"((short)0x500)
+        : "memory"
     );
 
     return ret;
 }
 
 void putchar(char ch) {
-    syscall(SYS_PUTCHAR, ch, 0, 0);
+    syscall(SYS_PUTCHAR, ch, 0);
 }
 
+/*
+ * Blocking read of one character. The VMM parks this vCPU until a key is
+ * available, so there is no retry loop and no spinning: an idle prompt costs
+ * no host CPU. Returns -1 at end of input.
+ */
 int getchar(void) {
-    int ch;
-    // Blocking getchar: retry until we get a valid character
-    while (1) {
-        __asm__ volatile(
-            "movb $2, %%al\n\t"         // SYS_GETCHAR
-            "movw $0x500, %%dx\n\t"     // Port 0x500
-            "outb %%al, %%dx\n\t"       // Signal GETCHAR request to VMM
-            "inb %%dx, %%al\n\t"        // Read character from VMM
-            "movsbl %%al, %0"           // Sign-extend AL to int
-            : "=r"(ch)
-            :
-            : "eax", "edx"
-        );
-        
-        if (ch != -1) {
-            return ch;
-        }
-        
-        // No input yet, brief delay and retry
-        for (volatile int i = 0; i < 1000; i++);
-    }
-}
-
-int readfile(const char *filename, char *buf, int len) {
-    return syscall(SYS_READFILE, (int) filename, (int) buf, len);
-}
-
-int writefile(const char *filename, const char *buf, int len) {
-    return syscall(SYS_WRITEFILE, (int) filename, (int) buf, len);
+    return syscall(SYS_GETCHAR, 0, 0);
 }
 
 __attribute__((noreturn)) void exit(void) {
-    syscall(SYS_EXIT, 0, 0, 0);
+    syscall(SYS_EXIT, 0, 0);
     for (;;);
 }
 
@@ -85,8 +61,15 @@ int readline(char *buf, int bufsz) {
     
     while (pos < bufsz - 1) {  // Reserve space for null terminator
         int ch = getchar();
-        
-        if (ch == '\n' || ch == '\r') {
+
+        if (ch < 0) {
+            // End of input. Nothing more will ever arrive, so quit instead of
+            // looping forever -- this is what used to hang scripted runs that
+            // did not end with an explicit exit command.
+            putchar('\n');
+            exit();
+        }
+        else if (ch == '\n' || ch == '\r') {
             putchar('\n');
             buf[pos] = '\0';
             return pos;
