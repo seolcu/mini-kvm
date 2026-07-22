@@ -11,9 +11,9 @@ with headers), small enough to read in an afternoon.
 
 > **Status: early but real.** Mini-KVM boots stock Multiboot and ELF kernels,
 > renders VGA text mode, and runs its own real-mode guests and a bundled 32-bit
-> teaching OS, with working timer interrupts. Its Linux boot support is
-> incomplete, and the diagnostics that are the whole point of the project are
-> still ahead. See
+> teaching OS, with working timer and keyboard interrupts. Its Linux boot
+> support is incomplete, and the diagnostics that are the whole point of the
+> project are still ahead. See
 > [Current state](#current-state) for exactly what works and
 > [Roadmap](#roadmap) for where it is going. Nothing below is aspirational: if
 > it is listed as working, `make test` covers it.
@@ -99,7 +99,7 @@ Hello from 64-bit!
 
 ## Current state
 
-Everything in this section is exercised by `make test` (16 cases diffed against
+Everything in this section is exercised by `make test` (17 cases diffed against
 stored baselines in `kvm-vmm-x86/tools/baseline/`).
 
 **Working**
@@ -114,6 +114,8 @@ stored baselines in `kvm-vmm-x86/tools/baseline/`).
 | **Multiboot kernels** | 0x1BADB002 header, boot info structure, memory map |
 | **VGA text mode** | 0xB8000 rendered to the terminal with `--vga` |
 | **Interrupts** | In-kernel 8259 PIC, IOAPIC, LAPIC and 8254 PIT for kernel guests |
+| **PS/2 keyboard** | Host input translated to set 1 scancodes, delivered on IRQ1 |
+| **VGA cursor** | CRTC location registers tracked and rendered |
 | 1K OS | Bundled teaching OS with a 9-program interactive shell |
 | Hypercall interface | Port `0x500`; `EXIT`, `PUTCHAR`, blocking `GETCHAR` |
 | 16550 UART (COM1) | `0x3f8`–`0x3ff`, forwarded to stdout |
@@ -145,13 +147,25 @@ Kernel reached the end of main. Halting.
 ```
 
 That example uses no Mini-KVM headers and no hypercalls; the same binary
-boots under GRUB.
+boots under GRUB. A second one under `examples/multiboot-keyboard` adds a
+command prompt driven by PS/2 scancodes:
+
+```bash
+$ ./kvm-vmm --vga examples/multiboot-keyboard/kernel.elf
+Multiboot keyboard example
+Commands: help, clear, echo <text>, halt
+
+> echo hello from the guest
+hello from the guest
+> halt
+Halting.
+```
 
 **Not working yet**
 
 | Gap | Consequence |
 |---|---|
-| No PS/2 keyboard or RTC | A kernel cannot read the clock or take keyboard input |
+| No RTC / CMOS | A kernel cannot read the wall clock |
 | No Multiboot 2 | Only the original 0x1BADB002 protocol is recognised |
 | No a.out kludge | Multiboot images that are not ELF are rejected |
 | Linux boot incomplete | `--linux` loads a bzImage but does not reach a shell |
@@ -166,9 +180,13 @@ The goal is a tool people actually use to develop x86 kernels. Each phase has a
 gate that must pass before the next begins.
 
 **Phase 1 — run other people's kernels** *(in progress)*
-Done: ELF32/64 loader, Multiboot 1, VGA text buffer, PIC and PIT interrupts.
-Remaining: PS/2 keyboard, RTC, and Multiboot 2.
-*Gate: three third-party hobby kernels boot unmodified, pinned in CI.*
+Done: ELF32/64 loader, Multiboot 1, VGA text buffer and cursor, PIC and PIT
+interrupts, PS/2 keyboard.
+Remaining: RTC, Multiboot 2, and the gate itself.
+*Gate: three third-party hobby kernels boot unmodified, pinned in CI.* The two
+kernels under `examples/` use no Mini-KVM facilities and would boot under
+GRUB, but they were written here — the gate means kernels written by other
+people, which is a stronger claim and is not met yet.
 
 **Phase 2 — boot Linux**
 Finish the 64-bit entry path. An initramfs avoids needing virtio.
@@ -206,8 +224,9 @@ and ARM/RISC-V ports.
 │      vm.c         /dev/kvm, the VM, memory slots │
 │      vcpu.c       one pthread per vCPU, KVM_RUN  │
 │      cpu_modes.c  real → protected → long        │
-│      loader.c    ELF / Multiboot images          │
-│      devices.c    16550 UART, legacy ports       │
+│      loader.c     ELF / Multiboot images         │
+│      devices.c    UART, CRTC, legacy ports       │
+│      ps2.c        i8042 keyboard                 │
 │      hypercall.c  port 0x500                     │
 │      console.c    terminal, input, output        │
 │      vga.c        0xB8000 text buffer            │
