@@ -9,9 +9,11 @@ with headers), small enough to read in an afternoon.
 
 [한국어 README](README.ko.md) · [License: MIT](LICENSE)
 
-> **Status: early.** Mini-KVM today runs guests written for it — a set of
-> real-mode programs and a bundled 32-bit teaching OS. It does **not** yet load
-> ELF or Multiboot kernels, and its Linux boot support is incomplete. See
+> **Status: early but real.** Mini-KVM boots stock Multiboot and ELF kernels,
+> renders VGA text mode, and runs its own real-mode guests and a bundled 32-bit
+> teaching OS. It has **no interrupt controller yet**, so a kernel's timer will
+> not tick, and its Linux boot support is incomplete. The diagnostics that are
+> the whole point of the project are still ahead. See
 > [Current state](#current-state) for exactly what works and
 > [Roadmap](#roadmap) for where it is going. Nothing below is aspirational: if
 > it is listed as working, `make test` covers it.
@@ -97,7 +99,7 @@ Hello from 64-bit!
 
 ## Current state
 
-Everything in this section is exercised by `make test` (14 cases diffed against
+Everything in this section is exercised by `make test` (16 cases diffed against
 stored baselines in `kvm-vmm-x86/tools/baseline/`).
 
 **Working**
@@ -198,16 +200,18 @@ and ARM/RISC-V ports.
 │      vm.c         /dev/kvm, the VM, memory slots │
 │      vcpu.c       one pthread per vCPU, KVM_RUN  │
 │      cpu_modes.c  real → protected → long        │
+│      loader.c    ELF / Multiboot images          │
 │      devices.c    16550 UART, legacy ports       │
 │      hypercall.c  port 0x500                     │
 │      console.c    terminal, input, output        │
+│      vga.c        0xB8000 text buffer            │
 │                    ↕ ioctl()                     │
 ├──────────────────────────────────────────────────┤
 │  Host kernel — KVM (hardware virtualization)     │
 ├──────────────────────────────────────────────────┤
 │  Guest                                           │
-│    a real-mode program, or the 1K OS,            │
-│    or a 64-bit long-mode program                 │
+│    a Multiboot or ELF kernel, a real-mode        │
+│    program, the 1K OS, or a long-mode program    │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -230,8 +234,9 @@ different program. This is a teaching decision, not a virtualization one.
 kvm-vmm-x86/          The hypervisor — this is the project
   src/                VMM source, one module per concern
     linux/            Experimental bzImage boot, quarantined
-  guest/              Real-mode guest programs (assembly)
+  guest/              Real-mode and protected-mode guest programs (assembly)
   os-1k/              The bundled 32-bit teaching OS
+  examples/           Stock kernels that use no Mini-KVM facilities
   tools/smoke.sh      Verification harness (make test)
 docs/  research/  meetings/    Reports and notes, mostly Korean
 experimental/         Unrelated Rust experiments, not built here
