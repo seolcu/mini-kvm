@@ -359,6 +359,19 @@ int cpu_mode_enter_protected(vcpu_context_t *ctx)
     regs.rip = ctx->entry_point;
     regs.rflags = 0x2;
 
+    /*
+     * Give the guest a usable stack. A kernel is expected to install its own
+     * (os-1k/boot.S does so immediately), but leaving ESP at 0 means the very
+     * first CALL underflows to 0xFFFFFFFC, which is unmapped: page fault, then
+     * double fault, then triple fault, before the guest executes anything
+     * recognisable. Long mode already avoided this; protected mode did not.
+     *
+     * PROT_MODE_DEFAULT_STACK sits above the load area and below the page
+     * directory at 0x00100000, inside the identity-mapped low 4MB.
+     */
+    regs.rsp = PROT_MODE_DEFAULT_STACK;
+    regs.rbp = regs.rsp;
+
     if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0)
     {
         perror("KVM_SET_REGS (paging)");

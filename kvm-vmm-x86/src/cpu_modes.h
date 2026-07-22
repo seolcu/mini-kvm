@@ -40,6 +40,13 @@ void segments_set_real(struct kvm_sregs *sregs, uint32_t base);
 
 /* --- Protected mode ---------------------------------------------------- */
 
+/*
+ * Initial ESP handed to a protected-mode guest, chosen to sit above the load
+ * area (0x1000) and below the page directory (0x00100000), within the
+ * identity-mapped low 4MB. Kernels normally replace this immediately.
+ */
+#define PROT_MODE_DEFAULT_STACK 0x00080000
+
 /* Flat 4GB ring-0 code/data segments matching the GDT built by gdt_setup(). */
 void segments_set_flat32(struct kvm_sregs *sregs);
 
