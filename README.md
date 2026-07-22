@@ -108,23 +108,47 @@ stored baselines in `kvm-vmm-x86/tools/baseline/`).
 | Multiple vCPUs | Up to 4, one guest program each, real pthreads |
 | Protected mode + paging | 32-bit, 4KB pages, GDT/IDT built by the VMM |
 | Long mode | 64-bit, PAE page tables |
+| **ELF kernels** | Program headers loaded at their physical addresses |
+| **Multiboot kernels** | 0x1BADB002 header, boot info structure, memory map |
+| **VGA text mode** | 0xB8000 rendered to the terminal with `--vga` |
 | 1K OS | Bundled teaching OS with a 9-program interactive shell |
 | Hypercall interface | Port `0x500`; `EXIT`, `PUTCHAR`, blocking `GETCHAR` |
 | 16550 UART (COM1) | `0x3f8`–`0x3ff`, forwarded to stdout |
 | Diagnostics | `--verbose`, `--debug 0..3`, `--dump-regs`, `--dump-mem` |
 
+A stock Multiboot kernel that knows nothing about Mini-KVM boots and runs:
+
+```bash
+$ make all
+$ ./kvm-vmm --vga examples/multiboot-barebones/kernel.elf
+ Multiboot bare bones kernel
+
+Bootloader magic: 0x2BADB002  OK
+Info structure:   0x00007000
+Lower memory:     640 KB
+Upper memory:     127 MB
+Booted by:        Mini-KVM
+
+Memory map:
+  0x00000000 + 0x0009FC00  available
+  0x0009FC00 + 0x00000400  reserved
+  0x000F0000 + 0x00010000  reserved
+  0x00100000 + 0x07F00000  available
+```
+
+That example uses no Mini-KVM headers and no hypercalls; the same binary
+boots under GRUB.
+
 **Not working yet**
 
 | Gap | Consequence |
 |---|---|
-| No ELF or Multiboot loader | Guests must be flat binaries; your kernel will not load |
-| No VGA text buffer | Writes to `0xB8000` go nowhere; MMIO returns zeros |
-| No PIC / PIT / RTC / keyboard | Ports are accepted and discarded; no interrupt delivery |
+| No PIC / PIT / RTC / keyboard | Ports are accepted and discarded; no interrupt delivery, so a kernel's scheduler will not tick |
+| No Multiboot 2 | Only the original 0x1BADB002 protocol is recognised |
+| No a.out kludge | Multiboot images that are not ELF are rejected |
 | Linux boot incomplete | `--linux` loads a bzImage but does not reach a shell |
 | No virtio | No block or network devices |
-
-The honest summary: **Mini-KVM cannot yet run a kernel it did not ship with.**
-Closing that gap is Phase 1 of the roadmap and the project's top priority.
+| No diagnostics yet | The features that justify the project are Phase 3 |
 
 ---
 
@@ -134,8 +158,8 @@ The goal is a tool people actually use to develop x86 kernels. Each phase has a
 gate that must pass before the next begins.
 
 **Phase 1 — run other people's kernels** *(in progress)*
-ELF32/64 loader, Multiboot 1 and 2, VGA text buffer rendered to the terminal,
-and real 8259 PIC / 8254 PIT / RTC / PS/2 keyboard emulation.
+Done: ELF32/64 loader, Multiboot 1, VGA text buffer.
+Remaining: 8259 PIC, 8254 PIT, RTC, PS/2 keyboard, and Multiboot 2.
 *Gate: three third-party hobby kernels boot unmodified, pinned in CI.*
 
 **Phase 2 — boot Linux**
