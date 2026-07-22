@@ -133,7 +133,8 @@ int vm_map_vcpu_memory(vcpu_context_t *ctx)
     if (ctx->linux_guest) {
         ctx->mem_size = MEM_SIZE_LINUX;
     } else if (ctx->image.format == GUEST_ELF ||
-               ctx->image.format == GUEST_MULTIBOOT) {
+               ctx->image.format == GUEST_MULTIBOOT ||
+               ctx->image.format == GUEST_MULTIBOOT2) {
         /* These load at 1MB and expect to allocate above it. 4MB would leave
          * a kernel almost no usable memory. */
         ctx->mem_size = MEM_SIZE_KERNEL;

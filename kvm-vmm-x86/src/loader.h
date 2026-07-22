@@ -12,6 +12,9 @@
  *   Multiboot     an ELF carrying a Multiboot 1 header. Same as ELF, plus the
  *                 boot information structure and the EAX/EBX handshake the
  *                 specification requires
+ *   Multiboot 2   likewise, with the newer tag-based information block. An
+ *                 image carrying both headers is treated as Multiboot 2,
+ *                 which is what GRUB does
  *
  * Multiboot is what makes existing hobby kernels run unmodified: it is the
  * protocol GRUB implements and the one most of them are written against.
@@ -28,6 +31,7 @@ typedef enum {
     GUEST_FLAT,         /* raw binary, no recognised container */
     GUEST_ELF,          /* ELF32/64 without a Multiboot header */
     GUEST_MULTIBOOT,    /* ELF with a Multiboot 1 header */
+    GUEST_MULTIBOOT2,   /* ELF with a Multiboot 2 header */
 } guest_format_t;
 
 typedef struct {

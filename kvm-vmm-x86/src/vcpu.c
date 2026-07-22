@@ -255,7 +255,9 @@ int vcpu_setup(vcpu_context_t *ctx)
         // An ELF or Multiboot image dictates its own entry state: 32-bit
         // protected mode with paging off, which is what those kernels expect
         // to enable themselves. --paging and --long-mode do not apply.
-        if (ctx->image.format == GUEST_ELF || ctx->image.format == GUEST_MULTIBOOT)
+        if (ctx->image.format == GUEST_ELF ||
+            ctx->image.format == GUEST_MULTIBOOT ||
+            ctx->image.format == GUEST_MULTIBOOT2)
         {
             if (cpu_mode_enter_flat32(ctx, ctx->image.entry,
                                       ctx->image.boot_eax, ctx->image.boot_ebx) < 0)

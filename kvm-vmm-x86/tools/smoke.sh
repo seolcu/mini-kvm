@@ -76,6 +76,7 @@ check_stale "${vmm}" src || stale_found=1
 check_stale os-1k/kernel os-1k || stale_found=1
 check_stale examples/multiboot-barebones/kernel.elf examples/multiboot-barebones || stale_found=1
 check_stale examples/multiboot-keyboard/kernel.elf examples/multiboot-keyboard || stale_found=1
+check_stale examples/multiboot2/kernel.elf examples/multiboot2 || stale_found=1
 check_stale examples/faults/no-idt.elf examples/faults || stale_found=1
 for g in guest/hello guest/vgademo; do
     check_stale "$g" guest || stale_found=1
@@ -198,6 +199,11 @@ run_case multiboot_kbd 'help\necho hi\nnope\nhalt\n' \
 # kernel that needs one simply fails.
 run_case multiboot_mod ''          -- --vga --module tools/testmodule.txt \
     examples/multiboot-barebones/kernel.elf
+
+# Multiboot 2 replaces the fixed info structure with a tag list; the kernel
+# walks it, so this checks the whole block rather than one field.
+run_case multiboot2   '' -- --vga --module tools/testmodule.txt \
+    --cmdline "root=/dev/null quiet" examples/multiboot2/kernel.elf
 
 # --- Fault analysis --------------------------------------------------------
 # Deliberately broken kernels. These check that --explain names the actual

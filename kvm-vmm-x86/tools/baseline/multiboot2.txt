@@ -1,0 +1,17 @@
+ Multiboot 2 tag walker
+
+Bootloader magic: 0x36D76289  OK
+Info block size:  224 bytes
+
+Tags:
+  memory: 640 KB low, 127 MB high
+  cmdline: root=/dev/null quiet
+  loader: Mini-KVM
+  module: 0x00108000 + 17 bytes
+  memory map:
+    0x00000000 + 0x0009FC00  available
+    0x0009FC00 + 0x00000400  reserved
+    0x000F0000 + 0x00010000  reserved
+    0x00100000 + 0x07F00000  available
+
+Walked the whole tag list. Halting.

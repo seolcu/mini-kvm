@@ -54,6 +54,7 @@ examples:
 	@echo "=> Building examples..."
 	@$(MAKE) --no-print-directory -C examples/multiboot-barebones
 	@$(MAKE) --no-print-directory -C examples/multiboot-keyboard
+	@$(MAKE) --no-print-directory -C examples/multiboot2
 	@$(MAKE) --no-print-directory -C examples/faults
 
 # --- Verification ---
@@ -72,6 +73,8 @@ clean:
 	@$(MAKE) --no-print-directory -C os-1k clean
 	@$(MAKE) --no-print-directory -C examples/multiboot-barebones clean
 	@$(MAKE) --no-print-directory -C examples/multiboot-keyboard clean
+	@$(MAKE) --no-print-directory -C examples/multiboot2
+	@$(MAKE) --no-print-directory -C examples/multiboot2 clean
 	@$(MAKE) --no-print-directory -C examples/faults clean
 	@echo "Done."
 

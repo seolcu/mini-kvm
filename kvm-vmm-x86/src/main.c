@@ -97,7 +97,8 @@ static int prepare_vcpus(const vmm_config_t *cfg)
         }
 
         bool is_kernel_image = (ctx->image.format == GUEST_ELF ||
-                                ctx->image.format == GUEST_MULTIBOOT);
+                                ctx->image.format == GUEST_MULTIBOOT ||
+                                ctx->image.format == GUEST_MULTIBOOT2);
 
         /* Each vCPU's memory is mapped at guest physical vcpu_id * mem_size,
          * so only vCPU 0 sees its kernel at the physical addresses the image
@@ -183,7 +184,8 @@ int main(int argc, char **argv)
     }
     bool wants_interrupts = cfg.linux_boot ||
                             first_format == GUEST_ELF ||
-                            first_format == GUEST_MULTIBOOT;
+                            first_format == GUEST_MULTIBOOT ||
+                            first_format == GUEST_MULTIBOOT2;
 
     if (vm_init(wants_interrupts) < 0) {
         ret = 1;

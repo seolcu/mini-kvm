@@ -10,6 +10,26 @@
 #include "loader.h"
 #include "debug.h"
 
+/* --- Multiboot 2 ------------------------------------------------------- */
+
+#define MB2_HEADER_MAGIC      0xE85250D6u   /* in the kernel image */
+#define MB2_BOOTLOADER_MAGIC  0x36D76289u   /* handed to the kernel in EAX */
+#define MB2_HEADER_SEARCH     32768         /* spec: within the first 32KB */
+#define MB2_ARCH_I386         0
+
+/* Boot information tag types we emit. */
+#define MB2_TAG_END           0
+#define MB2_TAG_CMDLINE       1
+#define MB2_TAG_LOADER_NAME   2
+#define MB2_TAG_MODULE        3
+#define MB2_TAG_BASIC_MEMINFO 4
+#define MB2_TAG_MMAP          6
+#define MB2_TAG_FRAMEBUFFER   8
+
+/* Where the Multiboot 2 information block goes. */
+#define MB2_INFO_ADDR         0x00008000u
+#define MB2_INFO_MAX          0x00001000u
+
 /* --- Multiboot 1 ------------------------------------------------------- */
 
 #define MB_HEADER_MAGIC   0x1BADB002u   /* in the kernel image */
@@ -100,10 +120,11 @@ struct multiboot_mod_list {
 const char *loader_format_name(guest_format_t format)
 {
     switch (format) {
-    case GUEST_FLAT:      return "flat binary";
-    case GUEST_ELF:       return "ELF";
-    case GUEST_MULTIBOOT: return "Multiboot";
-    default:              return "unknown";
+    case GUEST_FLAT:       return "flat binary";
+    case GUEST_ELF:        return "ELF";
+    case GUEST_MULTIBOOT:  return "Multiboot";
+    case GUEST_MULTIBOOT2: return "Multiboot 2";
+    default:               return "unknown";
     }
 }
 
@@ -179,6 +200,31 @@ static long find_multiboot_header(const unsigned char *buf, size_t size)
     return -1;
 }
 
+/*
+ * Find a Multiboot 2 header: magic, 8-byte aligned, within the first 32KB,
+ * with magic + architecture + length + checksum summing to zero.
+ */
+static long find_multiboot2_header(const unsigned char *buf, size_t size)
+{
+    size_t limit = size < MB2_HEADER_SEARCH ? size : MB2_HEADER_SEARCH;
+
+    for (size_t off = 0; off + 16 <= limit; off += 8) {
+        uint32_t magic, arch, length, checksum;
+        memcpy(&magic, buf + off, 4);
+        if (magic != MB2_HEADER_MAGIC) {
+            continue;
+        }
+        memcpy(&arch, buf + off + 4, 4);
+        memcpy(&length, buf + off + 8, 4);
+        memcpy(&checksum, buf + off + 12, 4);
+
+        if ((uint32_t)(magic + arch + length + checksum) == 0) {
+            return (long)off;
+        }
+    }
+    return -1;
+}
+
 int loader_probe(const char *path, guest_format_t *format)
 {
     size_t size = 0;
@@ -189,6 +235,10 @@ int loader_probe(const char *path, guest_format_t *format)
 
     if (!is_elf(buf, size)) {
         *format = GUEST_FLAT;
+    } else if (find_multiboot2_header(buf, size) >= 0) {
+        /* Checked first: an image carrying both headers prefers the newer
+         * protocol, which is what GRUB does. */
+        *format = GUEST_MULTIBOOT2;
     } else if (find_multiboot_header(buf, size) >= 0) {
         *format = GUEST_MULTIBOOT;
     } else {
@@ -474,6 +524,115 @@ static void build_multiboot_info(void *mem, size_t mem_size,
     out->boot_ebx = MB_INFO_ADDR;
 }
 
+/*
+ * Build the Multiboot 2 information block.
+ *
+ * Where Multiboot 1 had one fixed structure with a flags word, Multiboot 2
+ * uses a length-prefixed list of tags, each 8-byte aligned, terminated by an
+ * end tag. That is the whole difference from the loader's point of view: the
+ * same facts, in an extensible container.
+ */
+static void build_multiboot2_info(void *mem, size_t mem_size,
+                                  const char *cmdline, int num_modules,
+                                  const struct multiboot_mod_list *mods,
+                                  bool wants_video, guest_image_t *out)
+{
+    uint8_t *base = (uint8_t *)mem + MB2_INFO_ADDR;
+    uint32_t off = 8;       /* total_size and reserved are filled in last */
+
+    /* Append a tag header and return where its payload starts. */
+    #define TAG_BEGIN(type_) \
+        uint8_t *tag = base + off; \
+        *(uint32_t *)(tag + 0) = (type_); \
+        uint32_t tag_start = off; \
+        off += 8;
+    #define TAG_END() \
+        *(uint32_t *)(base + tag_start + 4) = off - tag_start; \
+        off = (off + 7u) & ~7u;     /* every tag starts 8-byte aligned */
+
+    {   /* Basic memory information, in kilobytes. */
+        TAG_BEGIN(MB2_TAG_BASIC_MEMINFO);
+        *(uint32_t *)(base + off) = 640;                            off += 4;
+        *(uint32_t *)(base + off) = (uint32_t)((mem_size - 0x100000) / 1024);
+        off += 4;
+        TAG_END();
+    }
+
+    if (cmdline) {
+        TAG_BEGIN(MB2_TAG_CMDLINE);
+        size_t n = strlen(cmdline);
+        memcpy(base + off, cmdline, n + 1);
+        off += (uint32_t)n + 1;
+        TAG_END();
+    }
+
+    {   /* Who booted this. */
+        TAG_BEGIN(MB2_TAG_LOADER_NAME);
+        const char *name = "Mini-KVM";
+        size_t n = strlen(name);
+        memcpy(base + off, name, n + 1);
+        off += (uint32_t)n + 1;
+        TAG_END();
+    }
+
+    for (int i = 0; i < num_modules; i++) {
+        TAG_BEGIN(MB2_TAG_MODULE);
+        *(uint32_t *)(base + off) = mods[i].mod_start;  off += 4;
+        *(uint32_t *)(base + off) = mods[i].mod_end;    off += 4;
+        *(base + off) = 0;                              off += 1;   /* empty cmdline */
+        TAG_END();
+    }
+
+    {   /* Memory map. Entry size is fixed at 24 and stated in the tag. */
+        TAG_BEGIN(MB2_TAG_MMAP);
+        *(uint32_t *)(base + off) = 24;     off += 4;   /* entry_size */
+        *(uint32_t *)(base + off) = 0;      off += 4;   /* entry_version */
+
+        struct { uint64_t addr, len; uint32_t type, zero; } entries[] = {
+            { 0x00000000, 0x0009FC00, MB_MEMORY_AVAILABLE, 0 },
+            { 0x0009FC00, 0x00000400, MB_MEMORY_RESERVED,  0 },
+            { 0x000F0000, 0x00010000, MB_MEMORY_RESERVED,  0 },
+            { 0x00100000, (uint64_t)mem_size - 0x100000, MB_MEMORY_AVAILABLE, 0 },
+        };
+        memcpy(base + off, entries, sizeof(entries));
+        off += (uint32_t)sizeof(entries);
+        TAG_END();
+    }
+
+    if (wants_video) {
+        /* Same reasoning as Multiboot 1: answer with the text display we do
+         * have rather than leaving the kernel to guess. */
+        TAG_BEGIN(MB2_TAG_FRAMEBUFFER);
+        *(uint64_t *)(base + off) = 0xB8000;    off += 8;   /* addr */
+        *(uint32_t *)(base + off) = 80 * 2;     off += 4;   /* pitch */
+        *(uint32_t *)(base + off) = 80;         off += 4;   /* width */
+        *(uint32_t *)(base + off) = 25;         off += 4;   /* height */
+        *(base + off) = 16;                     off += 1;   /* bpp */
+        *(base + off) = MB_FRAMEBUFFER_EGA_TEXT; off += 1;  /* type */
+        *(uint16_t *)(base + off) = 0;          off += 2;   /* reserved */
+        TAG_END();
+    }
+
+    {   /* The list is terminated by an end tag of type 0, size 8. */
+        TAG_BEGIN(MB2_TAG_END);
+        TAG_END();
+    }
+
+    #undef TAG_BEGIN
+    #undef TAG_END
+
+    *(uint32_t *)(base + 0) = off;      /* total_size */
+    *(uint32_t *)(base + 4) = 0;        /* reserved */
+
+    if (off > MB2_INFO_MAX) {
+        fprintf(stderr, "Warning: Multiboot 2 info block is %u bytes, past its "
+                        "reserved %u.\n", off, MB2_INFO_MAX);
+    }
+
+    out->boot_eax = MB2_BOOTLOADER_MAGIC;
+    out->boot_ebx = MB2_INFO_ADDR;
+}
+
 int loader_load(const char *path, void *mem, size_t mem_size,
                 const char *cmdline, const char *const *modules, int num_modules,
                 guest_image_t *out)
@@ -496,9 +655,36 @@ int loader_load(const char *path, void *mem, size_t mem_size,
         return 0;
     }
 
-    long mb_off = find_multiboot_header(file, file_size);
-    out->format = (mb_off >= 0) ? GUEST_MULTIBOOT : GUEST_ELF;
+    long mb2_off = find_multiboot2_header(file, file_size);
+    long mb_off = (mb2_off >= 0) ? -1 : find_multiboot_header(file, file_size);
     bool wants_video = false;
+
+    if (mb2_off >= 0) {
+        out->format = GUEST_MULTIBOOT2;
+        /* A framebuffer request is a header tag rather than a flag bit.
+         * Scanning for it is cheap and tells us whether to answer. */
+        uint32_t hdr_len;
+        memcpy(&hdr_len, file + mb2_off + 8, 4);
+        for (uint32_t t = 16; t + 8 <= hdr_len && (size_t)mb2_off + t + 8 <= file_size; ) {
+            uint16_t type;
+            uint32_t size;
+            memcpy(&type, file + mb2_off + t, 2);
+            memcpy(&size, file + mb2_off + t + 4, 4);
+            if (size < 8) {
+                break;
+            }
+            if (type == 5) {            /* framebuffer request tag */
+                wants_video = true;
+            }
+            if (type == 0) {
+                break;                  /* end tag */
+            }
+            t += (size + 7u) & ~7u;
+        }
+        DEBUG_PRINT(DEBUG_BASIC, "Multiboot 2 header at file offset %ld", mb2_off);
+    } else {
+        out->format = (mb_off >= 0) ? GUEST_MULTIBOOT : GUEST_ELF;
+    }
 
     if (mb_off >= 0) {
         uint32_t flags;
@@ -534,7 +720,7 @@ int loader_load(const char *path, void *mem, size_t mem_size,
         return -1;
     }
 
-    if (out->format == GUEST_MULTIBOOT) {
+    if (out->format == GUEST_MULTIBOOT || out->format == GUEST_MULTIBOOT2) {
         int loaded = 0;
         if (num_modules > 0) {
             uint32_t modules_end = 0;
@@ -545,7 +731,14 @@ int loader_load(const char *path, void *mem, size_t mem_size,
             }
             out->load_high = modules_end;
         }
-        build_multiboot_info(mem, mem_size, cmdline, loaded, wants_video, out);
+        if (out->format == GUEST_MULTIBOOT2) {
+            const struct multiboot_mod_list *mods =
+                (const struct multiboot_mod_list *)((char *)mem + MB_MODLIST_ADDR);
+            build_multiboot2_info(mem, mem_size, cmdline, loaded, mods,
+                                  wants_video, out);
+        } else {
+            build_multiboot_info(mem, mem_size, cmdline, loaded, wants_video, out);
+        }
     } else if (num_modules > 0) {
         fprintf(stderr, "Warning: --module is only meaningful for Multiboot "
                         "kernels; ignored.\n");
