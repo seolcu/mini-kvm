@@ -137,6 +137,25 @@ static inline void outb(uint16_t port, uint8_t val)
     __asm__ volatile("outb %0, %1" :: "a"(val), "Nd"(port));
 }
 
+static inline uint8_t inb(uint16_t port)
+{
+    uint8_t v;
+    __asm__ volatile("inb %1, %0" : "=a"(v) : "Nd"(port));
+    return v;
+}
+
+/* Read one MC146818 register: latch the index at 0x70, read data at 0x71. */
+static uint8_t cmos_get(uint8_t index)
+{
+    outb(0x70, index);
+    return inb(0x71);
+}
+
+static uint8_t from_bcd(uint8_t v)
+{
+    return (uint8_t)((v >> 4) * 10 + (v & 0x0F));
+}
+
 struct idt_entry {
     uint16_t offset_low;
     uint16_t selector;
@@ -278,6 +297,14 @@ void kernel_main(uint32_t magic, uint32_t info_addr)
             term_write("'\n");
         }
     }
+
+    /* The RTC gives the guest a wall clock. Printing only the date keeps
+     * this reproducible enough to diff while still proving the read works. */
+    term_write("\nRTC century field: ");
+    term_write_dec(from_bcd(cmos_get(0x32)));
+    term_write("  (status B = ");
+    term_write_hex(cmos_get(0x0B));
+    term_write(")\n");
 
     /* Set up interrupts and wait for the timer to prove it ticks. */
     term_setcolor(VGA_LIGHT_GREY, VGA_BLACK);

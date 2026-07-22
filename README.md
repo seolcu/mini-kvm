@@ -120,6 +120,7 @@ stored baselines in `kvm-vmm-x86/tools/baseline/`).
 | 16550 UART (COM1) | `0x3f8`–`0x3ff`, forwarded to stdout |
 | **Multiboot 2** | Tag-based information block, modules, EGA text framebuffer |
 | **Multiboot modules** | `--module FILE`, which is how a kernel gets an initrd |
+| **RTC / CMOS** | MC146818 read-only, giving the guest the host wall clock |
 | **Fault analysis** | `--explain` names the cause; 32-bit, PAE and long-mode walks |
 | **Linux** | A stock distribution kernel boots to a shell with an initramfs |
 | Diagnostics | `--verbose`, `--debug 0..3`, `--dump-regs`, `--dump-mem` |
@@ -189,7 +190,6 @@ presenting reset-vector registers as if they meant something.
 
 | Gap | Consequence |
 |---|---|
-| No RTC / CMOS | A kernel cannot read the wall clock |
 | No a.out kludge | Multiboot images that are not ELF are rejected |
 | No virtio | Linux has no disk or network; an initramfs is the only root filesystem |
 | Serial input races early boot | The kernel's UART probe eats anything typed before the shell starts, as on real hardware |
@@ -204,8 +204,8 @@ gate that must pass before the next begins.
 
 **Phase 1 — run other people's kernels** *(in progress)*
 Done: ELF32/64 loader, Multiboot 1 and 2, modules, VGA text buffer and cursor,
-PIC and PIT interrupts, PS/2 keyboard.
-Remaining: RTC, and the gate itself.
+PIC and PIT interrupts, PS/2 keyboard, RTC.
+Remaining: the gate itself.
 *Gate: three third-party hobby kernels boot unmodified, pinned in CI.* The two
 kernels under `examples/` use no Mini-KVM facilities and would boot under
 GRUB, but they were written here — the gate means kernels written by other

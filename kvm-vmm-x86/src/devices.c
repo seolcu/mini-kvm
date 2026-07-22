@@ -3,6 +3,7 @@
  */
 
 #include <string.h>
+#include <time.h>
 
 #include "devices.h"
 #include "console.h"
@@ -293,6 +294,46 @@ int devices_vga_cursor(void)
 static uint8_t cmos_index = 0;
 static uint8_t port92 = 0x02;   /* A20 gate reported enabled */
 
+/*
+ * MC146818 real-time clock, read-only.
+ *
+ * A kernel reads the RTC to learn the wall-clock time; without it the guest
+ * believes it is the epoch. Values are BCD by convention, which is what the
+ * status register below advertises, and are taken from the host clock so a
+ * guest sees a plausible time rather than a fixed one.
+ */
+static uint8_t to_bcd(int v)
+{
+    return (uint8_t)(((v / 10) << 4) | (v % 10));
+}
+
+static uint8_t cmos_read(uint8_t index)
+{
+    time_t now = time(NULL);
+    struct tm tm;
+    gmtime_r(&now, &tm);
+
+    switch (index & 0x7F) {
+    case 0x00: return to_bcd(tm.tm_sec);
+    case 0x02: return to_bcd(tm.tm_min);
+    case 0x04: return to_bcd(tm.tm_hour);
+    case 0x06: return to_bcd(tm.tm_wday + 1);
+    case 0x07: return to_bcd(tm.tm_mday);
+    case 0x08: return to_bcd(tm.tm_mon + 1);
+    case 0x09: return to_bcd(tm.tm_year % 100);
+    case 0x32: return to_bcd((tm.tm_year + 1900) / 100);   /* century */
+    case 0x0A: return 0x26;     /* status A: not updating, 1024Hz divider */
+    case 0x0B: return 0x02;     /* status B: 24-hour, BCD */
+    case 0x0C: return 0x00;     /* status C: no interrupt pending */
+    case 0x0D: return 0x80;     /* status D: battery good */
+    case 0x0F: return 0x00;     /* shutdown status */
+    case 0x14: return 0x05;     /* equipment: 80x25 colour, no floppy */
+    case 0x15: return 0x80;     /* base memory low  (640KB) */
+    case 0x16: return 0x02;     /* base memory high */
+    default:   return 0x00;
+    }
+}
+
 void devices_misc_out(uint16_t port, const uint8_t *data, int size)
 {
     (void)size;
@@ -343,9 +384,7 @@ void devices_misc_in(uint16_t port, uint8_t *data, int size)
         data[0] = ps2_read_status();
         break;
     case 0x71:
-        /* CMOS data for whichever index was latched; we model none of it. */
-        (void)cmos_index;
-        data[0] = 0x00;
+        data[0] = cmos_read(cmos_index);
         break;
     default:
         break;
