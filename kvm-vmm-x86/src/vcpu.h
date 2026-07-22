@@ -36,7 +36,9 @@
 typedef struct {
     bool enabled;
     bool valid;                 /* a snapshot has been taken */
+    bool exhausted;             /* budget spent; tracing turned itself off */
     unsigned long steps;
+    unsigned long budget;
     struct kvm_regs regs;
     struct kvm_sregs sregs;
     uint8_t bytes[16];
@@ -118,7 +120,7 @@ int vcpu_setup(vcpu_context_t *ctx);
  * the CPU. Costs a VM exit per instruction, hence --explain rather than
  * always on.
  */
-void vcpu_enable_trace(vcpu_context_t *ctx);
+void vcpu_enable_trace(vcpu_context_t *ctx, unsigned long budget);
 
 /* pthread entry point: run KVM_RUN until the guest stops. */
 void *vcpu_thread(void *arg);

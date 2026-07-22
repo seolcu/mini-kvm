@@ -194,6 +194,11 @@ run_case multiboot    ''            -- --vga examples/multiboot-barebones/kernel
 run_case multiboot_kbd 'help\necho hi\nnope\nhalt\n' \
     -- --vga examples/multiboot-keyboard/kernel.elf
 
+# Multiboot modules are how a kernel receives an initrd; without them a
+# kernel that needs one simply fails.
+run_case multiboot_mod ''          -- --vga --module tools/testmodule.txt \
+    examples/multiboot-barebones/kernel.elf
+
 # --- Fault analysis --------------------------------------------------------
 # Deliberately broken kernels. These check that --explain names the actual
 # cause, not merely that the guest died.

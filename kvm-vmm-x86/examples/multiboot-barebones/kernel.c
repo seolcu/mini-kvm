@@ -31,6 +31,13 @@ struct multiboot_info {
     uint32_t boot_loader_name;
 } __attribute__((packed));
 
+struct multiboot_mod_list {
+    uint32_t mod_start;
+    uint32_t mod_end;
+    uint32_t cmdline;
+    uint32_t pad;
+} __attribute__((packed));
+
 struct multiboot_mmap_entry {
     uint32_t size;
     uint64_t base_addr;
@@ -251,6 +258,24 @@ void kernel_main(uint32_t magic, uint32_t info_addr)
             term_write(e->type == 1 ? "  available\n" : "  reserved\n");
 
             addr += e->size + sizeof(uint32_t);
+        }
+    }
+
+    /* Modules are how a Multiboot kernel receives its root filesystem. */
+    if (mbi->flags & (1 << 3)) {
+        term_write("\nModules: ");
+        term_write_dec(mbi->mods_count);
+        term_write("\n");
+        const struct multiboot_mod_list *mods =
+            (const struct multiboot_mod_list *)mbi->mods_addr;
+        for (uint32_t i = 0; i < mbi->mods_count; i++) {
+            term_write("  ");
+            term_write_hex(mods[i].mod_start);
+            term_write(" + ");
+            term_write_dec(mods[i].mod_end - mods[i].mod_start);
+            term_write(" bytes, first byte '");
+            term_putchar(*(const char *)mods[i].mod_start);
+            term_write("'\n");
         }
     }
 

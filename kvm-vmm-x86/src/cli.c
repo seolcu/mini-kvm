@@ -24,6 +24,10 @@ void cli_usage(const char *argv0, FILE *out)
         "  --entry ADDR          guest entry point in paging mode (default 0x80001000)\n"
         "  --load OFFSET         where to load the binary (default 0x1000 with paging)\n"
         "\n"
+        "Multiboot:\n"
+        "  --module FILE         load FILE as a Multiboot module (repeatable);\n"
+        "                        this is how a kernel receives an initrd\n"
+        "\n"
         "Display:\n"
         "  --vga                 render the VGA text buffer at 0xB8000 (needs --paging)\n"
         "\n"
@@ -32,6 +36,8 @@ void cli_usage(const char *argv0, FILE *out)
         "  --debug LEVEL         verbosity 0-3 (0=none 1=basic 2=detailed 3=all)\n"
         "  --explain             single-step the guest so that a crash can be\n"
         "                        explained in detail (much slower)\n"
+        "  --explain-steps N     how many instructions --explain may trace\n"
+        "                        (default 2000000, 0 for unlimited)\n"
         "  --dump-regs           dump registers on every VM exit\n"
         "  --dump-mem FILE       write guest memory to FILE when the guest exits\n"
         "  -h, --help            this message\n"
@@ -121,6 +127,9 @@ int cli_parse(int argc, char **argv, vmm_config_t *cfg)
     cfg->entry_point = 0x80001000;
     cfg->load_offset = 0x1000;
     cfg->debug_level = DEBUG_NONE;
+    /* Enough for a kernel that dies during early setup, which is the case
+     * --explain is for; a longer-lived one needs --explain-steps. */
+    cfg->explain_steps = 2000000;
     cfg->linux_entry = LINUX_ENTRY_CODE32;
     cfg->linux_rsi = LINUX_RSI_BASE;
 
@@ -155,6 +164,14 @@ int cli_parse(int argc, char **argv, vmm_config_t *cfg)
         else if (is_option(arg, "--vga")) {
             cfg->vga = true;
         }
+        else if (is_option(arg, "--module")) {
+            if (!(value = option_value(arg, "--module", argc, argv, &i, &inlined))) return 1;
+            if (cfg->num_modules >= MAX_MODULES) {
+                fprintf(stderr, "Error: at most %d modules\n", MAX_MODULES);
+                return 1;
+            }
+            cfg->modules[cfg->num_modules++] = value;
+        }
         else if (is_option(arg, "--long-mode")) {
             cfg->long_mode = true;
             cfg->paging = true;     /* long mode requires paging */
@@ -169,6 +186,13 @@ int cli_parse(int argc, char **argv, vmm_config_t *cfg)
             cfg->dump_regs = true;
         }
         else if (is_option(arg, "--explain")) {
+            cfg->explain = true;
+        }
+        else if (is_option(arg, "--explain-steps")) {
+            if (!(value = option_value(arg, "--explain-steps", argc, argv, &i, &inlined))) return 1;
+            uint32_t n;
+            if (parse_u32(value, "--explain-steps", &n) < 0) return 1;
+            cfg->explain_steps = n;
             cfg->explain = true;
         }
         else if (is_option(arg, "--entry")) {

@@ -150,8 +150,17 @@ static bool translate(vcpu_context_t *ctx, const struct kvm_sregs *s,
     return true;
 }
 
-/* How many IDT entries are present, and whether the given vector has one. */
-static void inspect_idt(vcpu_context_t *ctx, const struct kvm_sregs *s,
+/*
+ * How many IDT entries are present, and whether the given vector has one.
+ *
+ * IDTR holds a *virtual* address, so once the guest has enabled paging -- as
+ * any higher-half kernel does immediately -- reading it as a physical offset
+ * lands somewhere unrelated and reports an empty table. Every entry has to go
+ * through the guest's own page tables.
+ *
+ * Returns false if the table could not be read at all.
+ */
+static bool inspect_idt(vcpu_context_t *ctx, const struct kvm_sregs *s,
                         unsigned vector, int *valid_out, int *vector_present_out,
                         uint32_t *handler_out)
 {
@@ -164,11 +173,19 @@ static void inspect_idt(vcpu_context_t *ctx, const struct kvm_sregs *s,
         entries = 256;
     }
 
+    char why[160];
+    bool read_any = false;
+
     for (unsigned i = 0; i < entries; i++) {
-        uint64_t addr = s->idt.base + (uint64_t)i * sizeof(idt_entry_t);
+        uint64_t va = s->idt.base + (uint64_t)i * sizeof(idt_entry_t);
+        uint64_t addr;
+        if (!translate(ctx, s, va, &addr, why, sizeof(why))) {
+            break;
+        }
         if (addr + sizeof(idt_entry_t) > ctx->mem_size) {
             break;
         }
+        read_any = true;
         const idt_entry_t *e =
             (const idt_entry_t *)((const char *)ctx->guest_mem + addr);
 
@@ -182,6 +199,8 @@ static void inspect_idt(vcpu_context_t *ctx, const struct kvm_sregs *s,
                            ((uint32_t)e->offset_high << 16);
         }
     }
+
+    return read_any;
 }
 
 /*
@@ -298,7 +317,15 @@ void explain_shutdown(vcpu_context_t *ctx)
     say(ctx, "\n");
     say(ctx, "Guest triple-faulted (the CPU gave up and reset).\n");
 
-    if (from_trace) {
+    if (from_trace && ctx->trace.exhausted) {
+        say(ctx, "  Tracing stopped after %lu instructions, before the fault, so\n",
+            ctx->trace.steps);
+        say(ctx, "  the state below is from where it stopped and not from the\n");
+        say(ctx, "  fault itself. Re-run with a larger --explain-steps.\n");
+        say(ctx, "  At that point:\n");
+        say(ctx, "    CS:EIP = 0x%04x:0x%08llx, in %s\n",
+            sregs.cs.selector, (unsigned long long)regs.rip, mode_name(&sregs));
+    } else if (from_trace) {
         say(ctx, "  Last instruction before the fault, at step %lu:\n",
             ctx->trace.steps);
         say(ctx, "    CS:EIP = 0x%04x:0x%08llx, in %s\n",
@@ -333,7 +360,7 @@ void explain_shutdown(vcpu_context_t *ctx)
             say(ctx, "  Pending exception: %s (vector %u)\n",
                 exception_name(vector), vector);
         }
-    } else if (from_trace) {
+    } else if (from_trace && !ctx->trace.exhausted) {
         /* KVM reports no exception behind a triple fault, but the opcode
          * often says exactly what it would have been. */
         const char *detail = NULL;
@@ -368,9 +395,16 @@ void explain_shutdown(vcpu_context_t *ctx)
     } else {
         int valid = 0, vector_present = -1;
         uint32_t handler = 0;
-        inspect_idt(ctx, &sregs, know_vector ? vector : 256,
-                    &valid, &vector_present, &handler);
+        bool readable = inspect_idt(ctx, &sregs, know_vector ? vector : 256,
+                                    &valid, &vector_present, &handler);
 
+        if (!readable) {
+            say(ctx, "  IDT at 0x%llx, limit 0x%x - but that address is not\n",
+                (unsigned long long)sregs.idt.base, sregs.idt.limit);
+            say(ctx, "  readable through the guest's own page tables, so either\n");
+            say(ctx, "  IDTR is wrong or the table's mapping is gone. Either way\n");
+            say(ctx, "  no exception can be dispatched.\n");
+        } else {
         say(ctx, "  IDT at 0x%llx, limit 0x%x: %d of %u entries present.\n",
             (unsigned long long)sregs.idt.base, sregs.idt.limit,
             valid, (sregs.idt.limit + 1u) / (unsigned)sizeof(idt_entry_t));
@@ -387,6 +421,7 @@ void explain_shutdown(vcpu_context_t *ctx)
             say(ctx, "  Entry %u (%s) points at 0x%08x, so the first fault was\n",
                 vector, exception_name(vector), handler);
             say(ctx, "  dispatchable; something inside the handler faulted again.\n");
+        }
         }
     }
 

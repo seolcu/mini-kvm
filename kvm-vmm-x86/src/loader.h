@@ -54,6 +54,7 @@ int loader_probe(const char *path, guest_format_t *format);
  * cmdline may be NULL. Fails rather than writing outside the mapping.
  */
 int loader_load(const char *path, void *mem, size_t mem_size,
-                const char *cmdline, guest_image_t *out);
+                const char *cmdline, const char *const *modules, int num_modules,
+                guest_image_t *out);
 
 #endif /* LOADER_H */

@@ -21,6 +21,7 @@
 /* Boot information flags we populate. */
 #define MB_INFO_MEMORY    (1u << 0)     /* mem_lower / mem_upper */
 #define MB_INFO_CMDLINE   (1u << 2)
+#define MB_INFO_MODS      (1u << 3)
 #define MB_INFO_MMAP      (1u << 6)
 #define MB_INFO_LOADER    (1u << 9)     /* boot_loader_name */
 
@@ -32,6 +33,7 @@
 #define MB_MMAP_ADDR      0x00007100u
 #define MB_CMDLINE_ADDR   0x00007400u
 #define MB_LOADER_ADDR    0x00007600u
+#define MB_MODLIST_ADDR   0x00007800u
 
 /* Multiboot 1 boot information structure, through the fields we set. */
 struct multiboot_info {
@@ -61,6 +63,14 @@ struct multiboot_mmap_entry {
     uint64_t base_addr;
     uint64_t length;
     uint32_t type;
+} __attribute__((packed));
+
+/* One entry per loaded module, as the specification lays it out. */
+struct multiboot_mod_list {
+    uint32_t mod_start;
+    uint32_t mod_end;
+    uint32_t cmdline;
+    uint32_t pad;
 } __attribute__((packed));
 
 #define MB_MEMORY_AVAILABLE 1
@@ -225,6 +235,9 @@ static int load_elf32(void *mem, size_t mem_size, const unsigned char *file,
         return -1;
     }
 
+    uint32_t entry = eh->e_entry;
+    bool entry_translated = false;
+
     for (unsigned i = 0; i < eh->e_phnum; i++) {
         const Elf32_Phdr *ph =
             (const Elf32_Phdr *)(file + eh->e_phoff + (size_t)i * eh->e_phentsize);
@@ -235,9 +248,33 @@ static int load_elf32(void *mem, size_t mem_size, const unsigned char *file,
                          ph->p_filesz, ph->p_memsz, ph->p_paddr, out) < 0) {
             return -1;
         }
+
+        /*
+         * A higher-half kernel links its code at a virtual address it cannot
+         * reach yet -- 0xC0100000 is typical -- and uses AT() so the segment
+         * loads at a low physical address. e_entry is then the *virtual*
+         * entry, which is unmapped at the moment we jump to it, because
+         * Multiboot hands the kernel a machine with paging off.
+         *
+         * The segment holding the entry point says how to fix it: the same
+         * vaddr-to-paddr difference applies. This is what GRUB does, and
+         * without it every higher-half kernel jumps into nothing.
+         */
+        if (!entry_translated &&
+            eh->e_entry >= ph->p_vaddr &&
+            eh->e_entry < ph->p_vaddr + ph->p_memsz) {
+            entry = eh->e_entry - ph->p_vaddr + ph->p_paddr;
+            entry_translated = true;
+        }
     }
 
-    out->entry = eh->e_entry;
+    if (entry_translated && entry != eh->e_entry) {
+        DEBUG_PRINT(DEBUG_BASIC,
+                    "higher-half image: entry 0x%08x translated to physical 0x%08x",
+                    eh->e_entry, entry);
+    }
+
+    out->entry = entry;
     return 0;
 }
 
@@ -295,8 +332,57 @@ static size_t write_mmap_entry(void *mem, uint32_t addr, uint64_t base,
  * Build the Multiboot boot information block: memory sizes, a memory map, the
  * command line, and our name.
  */
+/*
+ * Load modules immediately above the kernel, page-aligned, and describe them
+ * in a module list. Most Multiboot kernels take their root filesystem this
+ * way, so a kernel that needs one simply fails without it.
+ *
+ * Returns the number loaded, or -1 on error. *end_out receives the first
+ * address past the last module, so the kernel can tell where it may allocate.
+ */
+static int load_modules(void *mem, size_t mem_size, const char *const *modules,
+                        int count, uint32_t place_at, uint32_t *end_out)
+{
+    uint32_t cursor = (place_at + 0xFFFu) & ~0xFFFu;      /* page align */
+    struct multiboot_mod_list *list =
+        (struct multiboot_mod_list *)((char *)mem + MB_MODLIST_ADDR);
+
+    for (int i = 0; i < count; i++) {
+        size_t size = 0;
+        unsigned char *data = read_file(modules[i], &size);
+        if (!data) {
+            return -1;
+        }
+        if (cursor > mem_size || size > mem_size - cursor) {
+            fprintf(stderr, "Error: module '%s' (%zu bytes) does not fit at 0x%08x\n",
+                    modules[i], size, cursor);
+            free(data);
+            return -1;
+        }
+
+        memcpy((char *)mem + cursor, data, size);
+        free(data);
+
+        list[i].mod_start = cursor;
+        list[i].mod_end = cursor + (uint32_t)size;
+        list[i].cmdline = 0;
+        list[i].pad = 0;
+
+        if (verbose_enabled()) {
+            printf("Module %d: %s -> 0x%08x-0x%08x (%zu bytes)\n",
+                   i, modules[i], list[i].mod_start, list[i].mod_end, size);
+        }
+
+        cursor = (list[i].mod_end + 0xFFFu) & ~0xFFFu;
+    }
+
+    *end_out = cursor;
+    return count;
+}
+
 static void build_multiboot_info(void *mem, size_t mem_size,
-                                 const char *cmdline, guest_image_t *out)
+                                 const char *cmdline, int num_modules,
+                                 guest_image_t *out)
 {
     /* Memory map. Mirrors a conventional PC: low memory, the EBDA and BIOS
      * areas carved out as reserved, then everything above 1MB. */
@@ -322,6 +408,12 @@ static void build_multiboot_info(void *mem, size_t mem_size,
     info.mem_lower = 640;
     info.mem_upper = (uint32_t)((mem_size - 0x100000) / 1024);
 
+    if (num_modules > 0) {
+        info.flags |= MB_INFO_MODS;
+        info.mods_count = (uint32_t)num_modules;
+        info.mods_addr = MB_MODLIST_ADDR;
+    }
+
     info.mmap_addr = MB_MMAP_ADDR;
     info.mmap_length = cursor - MB_MMAP_ADDR;
     info.boot_loader_name = MB_LOADER_ADDR;
@@ -344,7 +436,8 @@ static void build_multiboot_info(void *mem, size_t mem_size,
 }
 
 int loader_load(const char *path, void *mem, size_t mem_size,
-                const char *cmdline, guest_image_t *out)
+                const char *cmdline, const char *const *modules, int num_modules,
+                guest_image_t *out)
 {
     size_t file_size = 0;
     unsigned char *file = read_file(path, &file_size);
@@ -401,7 +494,20 @@ int loader_load(const char *path, void *mem, size_t mem_size,
     }
 
     if (out->format == GUEST_MULTIBOOT) {
-        build_multiboot_info(mem, mem_size, cmdline, out);
+        int loaded = 0;
+        if (num_modules > 0) {
+            uint32_t modules_end = 0;
+            loaded = load_modules(mem, mem_size, modules, num_modules,
+                                  out->load_high, &modules_end);
+            if (loaded < 0) {
+                return -1;
+            }
+            out->load_high = modules_end;
+        }
+        build_multiboot_info(mem, mem_size, cmdline, loaded, out);
+    } else if (num_modules > 0) {
+        fprintf(stderr, "Warning: --module is only meaningful for Multiboot "
+                        "kernels; ignored.\n");
     }
 
     if (verbose_enabled()) {

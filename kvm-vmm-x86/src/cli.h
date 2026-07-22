@@ -15,6 +15,7 @@
 #include "debug.h"
 
 #define MAX_VCPUS 4
+#define MAX_MODULES 8
 
 /* Linux boot entry strategy (experimental; see linux_boot.h). */
 typedef enum {
@@ -48,7 +49,12 @@ typedef struct {
     debug_level_t debug_level;
     bool dump_regs;             /* dump registers on every VM exit */
     bool explain;               /* single-step so a fault can be explained */
+    unsigned long explain_steps; /* step budget; 0 means unlimited */
     const char *dump_mem_path;  /* dump guest memory here on exit, or NULL */
+
+    /* Multiboot modules (an initrd, usually) */
+    const char *modules[MAX_MODULES];
+    int num_modules;
 
     /* Linux boot (experimental) */
     bool linux_boot;

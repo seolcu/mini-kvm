@@ -122,7 +122,8 @@ static int prepare_vcpus(const vmm_config_t *cfg)
 
         if (is_kernel_image) {
             if (loader_load(ctx->guest_binary, ctx->guest_mem, ctx->mem_size,
-                            cfg->linux_cmdline, &ctx->image) < 0) {
+                            cfg->linux_cmdline, cfg->modules, cfg->num_modules,
+                            &ctx->image) < 0) {
                 return -1;
             }
         } else if (vcpu_load_guest_binary(ctx->guest_binary, ctx->guest_mem,
@@ -135,7 +136,7 @@ static int prepare_vcpus(const vmm_config_t *cfg)
         }
 
         if (cfg->explain) {
-            vcpu_enable_trace(ctx);
+            vcpu_enable_trace(ctx, cfg->explain_steps);
         }
 
         if (verbose_enabled()) {

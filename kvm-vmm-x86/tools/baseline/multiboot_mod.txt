@@ -1,0 +1,21 @@
+ Multiboot bare bones kernel
+
+Bootloader magic: 0x2BADB002  OK
+Info structure:   0x00007000
+Lower memory:     640 KB
+Upper memory:     127 MB
+Booted by:        Mini-KVM
+
+Memory map:
+  0x00000000 + 0x0009FC00  available
+  0x0009FC00 + 0x00000400  reserved
+  0x000F0000 + 0x00010000  reserved
+  0x00100000 + 0x07F00000  available
+
+Modules: 1
+  0x00107000 + 17 bytes, first byte 'M'
+
+Enabling interrupts...
+Timer interrupts received: 10
+
+Kernel reached the end of main. Halting.

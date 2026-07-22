@@ -526,11 +526,13 @@ static int set_singlestep(vcpu_context_t *ctx, bool enable)
     return 0;
 }
 
-void vcpu_enable_trace(vcpu_context_t *ctx)
+void vcpu_enable_trace(vcpu_context_t *ctx, unsigned long budget)
 {
     ctx->trace.enabled = true;
     ctx->trace.valid = false;
+    ctx->trace.exhausted = false;
     ctx->trace.steps = 0;
+    ctx->trace.budget = budget;
     if (set_singlestep(ctx, true) < 0) {
         ctx->trace.enabled = false;
         vcpu_printf(ctx, "Warning: --explain unavailable; single-step was refused.\n");
@@ -559,6 +561,21 @@ static void trace_capture(vcpu_context_t *ctx)
 
     t->valid = true;
     t->steps++;
+
+    /*
+     * A VM exit per instruction is affordable for a kernel that dies in the
+     * first few thousand, and hopeless for one that initialises for millions
+     * before failing. Stop rather than appear to hang; the guest then runs at
+     * full speed and we still have the state from where tracing stopped.
+     */
+    if (t->budget != 0 && t->steps >= t->budget) {
+        t->exhausted = true;
+        t->enabled = false;
+        set_singlestep(ctx, false);
+        vcpu_printf(ctx, "--explain: step budget of %lu exhausted; tracing off.\n",
+                    t->budget);
+        vcpu_printf(ctx, "  Raise it with --explain-steps N if the fault is later.\n");
+    }
 }
 
 static bool vcpu_is_permanently_halted(vcpu_context_t *ctx)
