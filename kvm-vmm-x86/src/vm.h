@@ -41,6 +41,14 @@ int vm_get_fd(void);
 void vm_pulse_irq(uint32_t irq);
 
 /*
+ * Hold an IRQ line at a level. Devices whose interrupt is level-triggered --
+ * the keyboard controller asserts IRQ1 for as long as its output buffer has
+ * data -- must use this rather than a pulse, or an interrupt raised while the
+ * guest still has the line masked is lost for good.
+ */
+void vm_set_irq_level(uint32_t irq, int level);
+
+/*
  * Size, allocate, and register this vCPU's guest memory, filling in
  * ctx->guest_mem and ctx->mem_size.
  */

@@ -75,6 +75,7 @@ stale_found=0
 check_stale "${vmm}" src || stale_found=1
 check_stale os-1k/kernel os-1k || stale_found=1
 check_stale examples/multiboot-barebones/kernel.elf examples/multiboot-barebones || stale_found=1
+check_stale examples/multiboot-keyboard/kernel.elf examples/multiboot-keyboard || stale_found=1
 for g in guest/hello guest/vgademo; do
     check_stale "$g" guest || stale_found=1
 done
@@ -187,6 +188,10 @@ run_case vga          ''            -- --paging --vga guest/vgademo
 # A stock Multiboot kernel that uses no Mini-KVM facilities at all. This is
 # the case that decides whether the VMM can run someone else's work.
 run_case multiboot    ''            -- --vga examples/multiboot-barebones/kernel.elf
+# Interactive: PS/2 scancodes on IRQ1 and the CRTC cursor registers, which is
+# a completely different device path from the barebones case.
+run_case multiboot_kbd 'help\necho hi\nnope\nhalt\n' \
+    -- --vga examples/multiboot-keyboard/kernel.elf
 
 # --- Long mode -------------------------------------------------------------
 run_case long_mode    ''            -- --long-mode guest/hello_64

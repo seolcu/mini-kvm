@@ -335,6 +335,22 @@ static int handle_io(vcpu_context_t *ctx)
         return 0;
     }
 
+    if (devices_is_vga_crtc_port(port))
+    {
+        for (int i = 0; i < size; i++)
+        {
+            if (is_out)
+            {
+                devices_vga_crtc_write(port + i, data[i]);
+            }
+            else
+            {
+                data[i] = devices_vga_crtc_read(port + i);
+            }
+        }
+        return 0;
+    }
+
     if (devices_is_uart_port(port))
     {
         // A multi-byte access covers consecutive UART registers.
@@ -699,8 +715,11 @@ static void *watchdog_loop(void *arg)
     (void)arg;
 
     while (watchdog_running) {
-        struct timespec ts = { .tv_sec = 0, .tv_nsec = 200 * 1000 * 1000L };
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 50 * 1000 * 1000L };
         nanosleep(&ts, NULL);
+
+        /* Re-assert device interrupts the guest could not take earlier. */
+        devices_tick();
 
         for (int i = 0; i < running_vcpus; i++) {
             pthread_kill(vcpu_threads[i], SIGUSR1);

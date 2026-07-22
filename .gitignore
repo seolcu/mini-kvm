@@ -70,3 +70,4 @@ softcon/past_awards_posters.playwright-mcp/
 
 # Example kernel build artifacts
 kvm-vmm-x86/examples/**/*.elf
+kvm-vmm-x86/examples/**/*.o

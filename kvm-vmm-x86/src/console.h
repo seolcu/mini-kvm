@@ -51,11 +51,12 @@ void console_request_shutdown(void);
 /* --- Keyboard input -------------------------------------------------- */
 
 /*
- * Start the stdin monitor thread. It reads stdin and feeds the keyboard
- * ring. If wake_irq4 is non-NULL it is invoked after each batch of input,
- * which the Linux serial console uses to raise COM1 IRQ4.
+ * Start the stdin monitor thread. It reads stdin and feeds the keyboard ring
+ * that console_wait_char() serves. If on_input is non-NULL it is also called
+ * once per character, which the device layer uses to generate scancodes and
+ * raise the matching interrupt.
  */
-int console_start_input_thread(void (*wake_irq4)(void));
+int console_start_input_thread(void (*on_input)(char ch));
 void console_stop_input_thread(void);
 
 /* Pop one character, or -1 if none buffered. Never blocks. */

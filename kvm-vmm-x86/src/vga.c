@@ -11,6 +11,7 @@
 
 #include "vga.h"
 #include "console.h"
+#include "devices.h"
 
 /* ~30 fps. Fast enough to look live, slow enough to cost nothing. */
 #define REFRESH_NS (33 * 1000 * 1000L)
@@ -79,6 +80,15 @@ static size_t build_frame(char *buf, size_t cap)
     }
 
     n += (size_t)snprintf(buf + n, cap - n, "\033[0m");
+
+    /* Place the terminal cursor where the guest put the hardware one, so a
+     * text-mode driver's cursor tracking is visible. */
+    int cell = devices_vga_cursor();
+    if (cell >= 0 && cell < VGA_COLS * VGA_ROWS) {
+        n += (size_t)snprintf(buf + n, cap - n, "\033[%d;%dH\033[?25h",
+                              cell / VGA_COLS + 1, cell % VGA_COLS + 1);
+    }
+
     return n;
 }
 

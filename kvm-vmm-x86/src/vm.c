@@ -112,16 +112,20 @@ void vm_shutdown(void)
     }
 }
 
-void vm_pulse_irq(uint32_t irq)
+void vm_set_irq_level(uint32_t irq, int level)
 {
     if (vm_fd < 0) {
         return;
     }
 
-    struct kvm_irq_level level = { .irq = irq, .level = 1 };
-    (void)ioctl(vm_fd, KVM_IRQ_LINE, &level);
-    level.level = 0;
-    (void)ioctl(vm_fd, KVM_IRQ_LINE, &level);
+    struct kvm_irq_level req = { .irq = irq, .level = (uint32_t)level };
+    (void)ioctl(vm_fd, KVM_IRQ_LINE, &req);
+}
+
+void vm_pulse_irq(uint32_t irq)
+{
+    vm_set_irq_level(irq, 1);
+    vm_set_irq_level(irq, 0);
 }
 
 int vm_map_vcpu_memory(vcpu_context_t *ctx)

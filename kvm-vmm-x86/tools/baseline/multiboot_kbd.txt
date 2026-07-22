@@ -1,0 +1,11 @@
+Multiboot keyboard example
+Commands: help, clear, echo <text>, halt
+
+> help
+help, clear, echo <text>, halt
+> echo hi
+hi
+> nope
+unknown command: nope
+> halt
+Halting.

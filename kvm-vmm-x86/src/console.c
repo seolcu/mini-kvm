@@ -15,7 +15,9 @@
 
 #include "console.h"
 
-#define KEYBOARD_BUFFER_SIZE 256
+/* Holds everything the host has typed or piped in that the guest has not
+ * consumed yet, so it must be able to absorb a whole scripted run. */
+#define KEYBOARD_BUFFER_SIZE 8192
 #define MAX_COLORS 8
 
 /* --- Terminal state --------------------------------------------------- */
@@ -47,7 +49,7 @@ static struct {
 
 static pthread_t stdin_thread;
 static bool stdin_thread_running = false;
-static void (*input_wakeup)(void) = NULL;
+static void (*input_hook)(char ch) = NULL;
 
 /* --- Output state ----------------------------------------------------- */
 
@@ -246,9 +248,9 @@ static void *stdin_monitor_thread_func(void *arg)
         if (n > 0) {
             for (ssize_t i = 0; i < n; i++) {
                 keyboard_push(buf[i]);
-            }
-            if (input_wakeup) {
-                input_wakeup();
+                if (input_hook) {
+                    input_hook(buf[i]);
+                }
             }
         } else if (n == 0) {
             /* EOF. Wake any blocked reader so it can return -1. */
@@ -265,18 +267,18 @@ static void *stdin_monitor_thread_func(void *arg)
     return NULL;
 }
 
-int console_start_input_thread(void (*wake_irq4)(void))
+int console_start_input_thread(void (*on_input)(char ch))
 {
     if (stdin_thread_running) {
         return 0;
     }
-    input_wakeup = wake_irq4;
+    input_hook = on_input;
     stdin_thread_running = true;
 
     if (pthread_create(&stdin_thread, NULL, stdin_monitor_thread_func, NULL) != 0) {
         fprintf(stderr, "Warning: failed to start stdin thread; keyboard input disabled.\n");
         stdin_thread_running = false;
-        input_wakeup = NULL;
+        input_hook = NULL;
         return -1;
     }
     return 0;
@@ -289,7 +291,7 @@ void console_stop_input_thread(void)
     }
     stdin_thread_running = false;
     pthread_join(stdin_thread, NULL);
-    input_wakeup = NULL;
+    input_hook = NULL;
 }
 
 /* ====================================================================== */

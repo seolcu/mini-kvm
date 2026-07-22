@@ -53,6 +53,7 @@ guests:
 examples:
 	@echo "=> Building examples..."
 	@$(MAKE) --no-print-directory -C examples/multiboot-barebones
+	@$(MAKE) --no-print-directory -C examples/multiboot-keyboard
 
 # --- Verification ---
 
@@ -69,6 +70,7 @@ clean:
 	@$(MAKE) --no-print-directory -C guest clean
 	@$(MAKE) --no-print-directory -C os-1k clean
 	@$(MAKE) --no-print-directory -C examples/multiboot-barebones clean
+	@$(MAKE) --no-print-directory -C examples/multiboot-keyboard clean
 	@echo "Done."
 
 # --- Help ---

@@ -30,10 +30,16 @@
 
 static vcpu_context_t vcpus[MAX_VCPUS];
 
-/* Input-arrival hook for the Linux serial console (see console.h). */
-static void pulse_serial_irq(void)
+/* Lets devices.c drive a guest IRQ line without depending on the VM module. */
+static void set_guest_irq(uint32_t irq, int level)
 {
-    vm_pulse_irq(4);
+    vm_set_irq_level(irq, level);
+}
+
+/* Called by the stdin reader for each character the host receives. */
+static void on_host_input(char ch)
+{
+    devices_notify_input(ch);
 }
 
 /*
@@ -198,8 +204,12 @@ int main(int argc, char **argv)
      * guests too, and without one they would block on input that never
      * arrives. The IRQ hook stays NULL outside Linux mode, because an
      * unexpected IRQ hangs a HLT-terminated real-mode guest. */
-    devices_set_irq_hook(cfg.linux_boot ? pulse_serial_irq : NULL);
-    if (console_start_input_thread(cfg.linux_boot ? pulse_serial_irq : NULL) < 0) {
+    devices_set_irq_hook(wants_interrupts ? set_guest_irq : NULL);
+    devices_enable_serial_irq(cfg.linux_boot);
+    /* A kernel guest reads scancodes from the i8042; nothing else does. */
+    devices_enable_keyboard(!cfg.linux_boot && wants_interrupts);
+
+    if (console_start_input_thread(on_host_input) < 0) {
         devices_set_irq_hook(NULL);
     }
 
@@ -226,6 +236,7 @@ int main(int argc, char **argv)
     vga_stop();
     console_stop_input_thread();
     devices_set_irq_hook(NULL);
+    devices_enable_keyboard(false);
 
 cleanup_vcpus:
     for (int i = 0; i < cfg.num_guests; i++) {
