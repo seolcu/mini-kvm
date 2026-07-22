@@ -1,244 +1,232 @@
-# Mini-KVM: 교육용 x86 하이퍼바이저
+# Mini-KVM
 
-> 2025-2 Ajou SoftCon 연구부문 장려상 수상
+**A small x86 hypervisor for people who write their own kernels.**
 
-Linux KVM API를 사용하여 제작된 작지만 모든 기능이 동작하는 교육용 x86 하이퍼바이저입니다.
+Mini-KVM runs a guest directly on Linux KVM and tells you what it did — where it
+faulted, what was in its descriptor tables, what its page tables actually
+mapped. It is built on the raw KVM ioctl API in about 4,200 lines of C (5,300
+with headers), small enough to read in an afternoon.
 
-[![Project Status](https://img.shields.io/badge/status-complete-success)]()
-[![Platform](https://img.shields.io/badge/platform-Linux%20x86__64-blue)]()
-[![License](https://img.shields.io/badge/license-MIT-green)]()
+[한국어 README](README.ko.md) · [License: MIT](LICENSE)
 
-- 과목명: 자기주도프로젝트
-- 주제: 리눅스 KVM API를 이용한 초소형 가상 머신 모니터(VMM) 개발
-- 담당 교수: 김상훈
-
----
-
-## 프로젝트 개요
-
-Mini-KVM은 Linux KVM API를 사용하여 핵심 가상화 개념을 시연하는 교육용 하이퍼바이저입니다. 약 4,000줄의 C 코드로 이루어진 작은 크기에도 불구하고 다음과 같은 기능을 지원합니다.
-
-- **다중 vCPU**: 최대 4개의 가상 CPU를 동시에 실행
-- **리얼 모드 게스트**: 간단한 16비트 x86 프로그램 실행
-- **보호 모드 및 페이징**: 32비트 운영체제 '1K OS' 완벽 지원
-- **9개의 사용자 프로그램**: 수학/유틸리티 프로그램을 포함한 대화형 셸
-- **네이티브에 가까운 성능**: 최소한의 가상화 오버헤드
-
-이 프로젝트는 완전한 기능의 하이퍼바이저를 합리적인 시간 안에 처음부터 이해하고 구축할 수 있음을 증명합니다.
+> **Status: early.** Mini-KVM today runs guests written for it — a set of
+> real-mode programs and a bundled 32-bit teaching OS. It does **not** yet load
+> ELF or Multiboot kernels, and its Linux boot support is incomplete. See
+> [Current state](#current-state) for exactly what works and
+> [Roadmap](#roadmap) for where it is going. Nothing below is aspirational: if
+> it is listed as working, `make test` covers it.
 
 ---
 
-## 주요 기능
+## Why this exists
 
-### VMM 핵심 기능
-- **다중 vCPU 지원**: 최대 4개의 게스트 프로그램을 병렬로 실행
-  - 색상 출력으로 vCPU 구분 (빨강/초록/노랑/파랑)
-  - 진짜 병렬 실행: 출력이 실시간으로 섞임
-- **리얼 모드 (16비트)**: 레거시 x86 코드 직접 지원
-  - 조건부 IRQCHIP: 불필요한 인터럽트 없이 즉시 실행/종료
-- **보호 모드 (32비트)**: 세그멘테이션 및 페이징 완벽 지원
-  - 4MB 페이지 (PSE), GDT/IDT 완벽 지원
-- **인터럽트 처리**: 타이머 및 키보드 인터럽트
-  - Protected Mode에서만 활성화 (성능 최적화)
-- **하이퍼콜 인터페이스**: 효율적인 게스트-호스트 통신
-  - PUTCHAR, GETCHAR, EXIT 하이퍼콜
-- **I/O 에뮬레이션**: UART 시리얼 포트, 키보드 입력
+If you are writing a kernel, your tools are QEMU and GDB. They work, but they
+are general-purpose: QEMU is two million lines that will happily run anything,
+and when your kernel triple-faults it resets the CPU and says nothing useful.
+Production VMMs like Firecracker and libkrun are the opposite extreme — by
+design they are black boxes that assume your guest is correct.
 
-### 게스트 운영체제
-1. **리얼 모드 게스트** (8개 프로그램)
-   - `minimal.bin`: 가장 간단한 1바이트 HLT 명령어 게스트
-   - `hello.bin`: UART를 통해 "Hello, KVM!" 출력
-   - `counter.bin`: 0부터 9까지 카운트
-   - `multiplication.bin`: 하이퍼콜을 이용한 구구단 출력
-   - `multiplication_short.bin`: 간단한 구구단 (2-4단)
-   - `fibonacci.bin`: 피보나치 수열 생성기
-   - `matrix.bin`: 행렬 연산 데모
-   - `hctest.bin`: 하이퍼콜 테스트 모음
+Nobody is building the tool in between: a hypervisor whose product is
+**insight** rather than throughput. That is what Mini-KVM is aiming at.
 
-2. **1K OS** (보호 모드)
-   - **9개의 대화형 프로그램**:
-     1. 구구단 (2단 ~ 9단)
-     2. 카운터 (0~9)
-     3. 에코 (대화형 입출력)
-     4. 피보나치 수열 (처음 15개 숫자)
-     5. 소수 (100까지)
-     6. 계산기 (+, -, *, /)
-     7. 팩토리얼 (0! ~ 12!)
-     8. 최대공약수 (유클리드 호제법)
-     9. 1K OS 정보
-   - GDT/IDT를 포함한 커널 공간
-   - 시스템 콜을 통한 사용자 공간 프로그램
-   - 하이퍼콜 기반 I/O
-   - 타이머 인터럽트
+**What Mini-KVM is:**
+
+- A KVM-based runner for kernels you wrote yourself
+- A diagnostic tool that explains guest failures instead of just reporting them
+- A readable reference implementation of x86 virtualization, host *and* guest
+
+**What Mini-KVM is not:**
+
+- Not a production VMM. Use QEMU, Firecracker, or cloud-hypervisor.
+- Not a cross-architecture emulator. It is built on KVM, so it runs x86 guests
+  on x86 hosts and structurally cannot do otherwise. If you need to run an ARM
+  kernel on an x86 laptop, you need QEMU.
+- Not a container runtime or a sandbox.
 
 ---
 
-## 빠른 시작
+## Quick start
 
-`kvm-vmm-x86` 디렉토리의 `Makefile`을 통해 모든 빌드와 실행을 한번에 관리할 수 있습니다.
+Requires Linux with KVM enabled and read/write access to `/dev/kvm`.
 
-### 사전 요구사항
 ```bash
 # Fedora/RHEL
-sudo dnf install gcc make binutils qemu-kvm
-
+sudo dnf install gcc make binutils
 # Ubuntu/Debian
-sudo apt install gcc make binutils qemu-kvm
+sudo apt install gcc make binutils
 
-# KVM 지원 확인
-lsmod | grep kvm
-ls -l /dev/kvm
+ls -l /dev/kvm          # must exist and be accessible
 ```
 
-### 빌드 및 실행
-
 ```bash
-# 저장소 복제
 git clone https://github.com/seolcu/mini-kvm.git
 cd mini-kvm/kvm-vmm-x86
-
-# 모든 컴포넌트 빌드 (VMM, 게스트, 1K OS)
 make all
-
-# 사용법 보기 (모든 명령어 확인)
-make help
 ```
 
-### 실행 예제
+Then run a guest. A plain run prints only the guest's own output:
 
-빌드 후 `./kvm-vmm` 바이너리로 게스트를 직접 실행합니다.
-
-**1. 단일 게스트 실행 (리얼 모드)**
 ```bash
-# "Hello, KVM!" 출력
-./kvm-vmm guest/hello.bin
-
-# 0-9 카운터
-./kvm-vmm guest/counter.bin
-
-# 2-9단 구구단
-./kvm-vmm guest/multiplication.bin
-
-# 최소 게스트 (HLT)
-./kvm-vmm guest/minimal.bin
+$ ./kvm-vmm guest/hello
+Hello, KVM!
 ```
 
-**2. 다중 vCPU 병렬 실행** (색상으로 구분)
+Run several guests at once — one per vCPU, each with its own memory, colored so
+you can see them interleave:
+
 ```bash
-# 2개 게스트 동시 실행 (빨강/초록 색상)
-./kvm-vmm guest/multiplication.bin guest/counter.bin
-
-# 4개 게스트 동시 실행 (빨강/초록/노랑/파랑 색상)
-./kvm-vmm guest/counter.bin guest/hello.bin guest/multiplication.bin guest/minimal.bin
+./kvm-vmm guest/counter guest/hello guest/multiplication
 ```
 
-**3. 1K OS (보호 모드) 실행**
+Boot the bundled 32-bit OS into an interactive shell:
+
 ```bash
-# 대화형 셸 실행
-./kvm-vmm --paging os-1k/kernel.bin
-
-# 구구단 프로그램 바로 실행 (프로그램 1 선택 후 종료)
-printf '1\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin
-
-# 에코 프로그램 실행 (프로그램 3 선택, 메시지 입력, quit 후 종료)
-printf '3\nHello\nquit\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin
-
-# 계산기 실행 (프로그램 6 선택, 10+5 계산, quit 후 종료)
-printf '6\n10+5\nquit\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin
+./kvm-vmm --paging os-1k/kernel
 ```
 
-**4. Verbose 모드** (디버깅용)
+Enter 64-bit long mode:
+
 ```bash
-# VM exit 및 하이퍼콜 상세 로그 출력
-./kvm-vmm --verbose guest/hello.bin
+$ ./kvm-vmm --long-mode guest/hello_64
+Hello from 64-bit!
 ```
+
+`make help` lists everything; `./kvm-vmm --help` lists all options.
 
 ---
 
-## 아키텍처
+## Current state
 
-### 시스템 개요
-```
-┌─────────────────────────────────────────────┐
-│           사용자 공간 (호스트)              │
-│  ┌───────────────────────────────────────┐  │
-│  │  Mini-KVM VMM (main.c)                │  │
-│  │  - VM 생성 및 관리                      │  │
-│  │  - vCPU 스레드 (pthreads)               │  │
-│  │  - I/O 처리 (UART, 하이퍼콜)            │  │
-│  │  - 인터럽트 주입                        │  │
-│  └───────────────────────────────────────┘  │
-│              ↕ KVM ioctl()                   │
-├─────────────────────────────────────────────┤
-│           커널 공간 (호스트)                │
-│  ┌───────────────────────────────────────┐  │
-│  │  Linux KVM 모듈                       │  │
-│  │  - 하드웨어 가상화 (Intel VT)           │  │
-│  │  - VM exit 처리                       │  │
-│  │  - 메모리 관리 (EPT)                    │  │
-│  └───────────────────────────────────────┘  │
-│              ↕ 하드웨어                      │
-├─────────────────────────────────────────────┤
-│           게스트 (가상 머신)                │
-│  ┌───────────────────────────────────────┐  │
-│  │  리얼 모드 게스트                     │  │
-│  │  - 직접 x86 16비트 코드 실행          │  │
-│  │  - UART I/O (port 0x3f8)              │  │
-│  │  - 하이퍼콜 (port 0x500)                │  │
-│  └───────────────────────────────────────┘  │
-│                   또는                         │
-│  ┌───────────────────────────────────────┐  │
-│  │  1K OS (보호 모드)                    │  │
-│  │  ┌─────────────────────────────────┐  │  │
-│  │  │ 커널 공간                       │  │  │
-│  │  │ - GDT/IDT                       │  │  │
-│  │  │ - 페이징 (4MB 페이지)             │  │  │
-│  │  │ - 인터럽트 핸들러                 │  │  │
-│  │  └─────────────────────────────────┘  │  │
-│  │  ┌─────────────────────────────────┐  │  │
-│  │  │ 사용자 공간                     │  │  │
-│  │  │ - 셸 (9개 프로그램)             │  │  │
-│  │  │ - 하이퍼콜을 통한 시스템 콜     │  │  │
-│  │  └─────────────────────────────────┘  │  │
-│  └───────────────────────────────────────┘  │
-└─────────────────────────────────────────────┘
-```
+Everything in this section is exercised by `make test` (14 cases diffed against
+stored baselines in `kvm-vmm-x86/tools/baseline/`).
+
+**Working**
+
+| Capability | Notes |
+|---|---|
+| Real-mode (16-bit) guests | Flat binaries loaded at physical 0 |
+| Multiple vCPUs | Up to 4, one guest program each, real pthreads |
+| Protected mode + paging | 32-bit, 4KB pages, GDT/IDT built by the VMM |
+| Long mode | 64-bit, PAE page tables |
+| 1K OS | Bundled teaching OS with a 9-program interactive shell |
+| Hypercall interface | Port `0x500`; `EXIT`, `PUTCHAR`, blocking `GETCHAR` |
+| 16550 UART (COM1) | `0x3f8`–`0x3ff`, forwarded to stdout |
+| Diagnostics | `--verbose`, `--debug 0..3`, `--dump-regs`, `--dump-mem` |
+
+**Not working yet**
+
+| Gap | Consequence |
+|---|---|
+| No ELF or Multiboot loader | Guests must be flat binaries; your kernel will not load |
+| No VGA text buffer | Writes to `0xB8000` go nowhere; MMIO returns zeros |
+| No PIC / PIT / RTC / keyboard | Ports are accepted and discarded; no interrupt delivery |
+| Linux boot incomplete | `--linux` loads a bzImage but does not reach a shell |
+| No virtio | No block or network devices |
+
+The honest summary: **Mini-KVM cannot yet run a kernel it did not ship with.**
+Closing that gap is Phase 1 of the roadmap and the project's top priority.
 
 ---
 
-## 프로젝트 구조
+## Roadmap
+
+The goal is a tool people actually use to develop x86 kernels. Each phase has a
+gate that must pass before the next begins.
+
+**Phase 1 — run other people's kernels** *(in progress)*
+ELF32/64 loader, Multiboot 1 and 2, VGA text buffer rendered to the terminal,
+and real 8259 PIC / 8254 PIT / RTC / PS/2 keyboard emulation.
+*Gate: three third-party hobby kernels boot unmodified, pinned in CI.*
+
+**Phase 2 — boot Linux**
+Finish the 64-bit entry path. An initramfs avoids needing virtio.
+*Gate: a busybox shell prompt, pinned in CI.*
+
+**Phase 3 — the diagnostics that justify the project**
+`--explain` for post-mortem fault analysis, `inspect` for decoding live
+GDT/IDT/page tables, mode-transition tracing, and pre-boot validation of guest
+descriptor tables. Target output:
 
 ```
-mini-kvm/
-├── kvm-vmm-x86/              # 핵심 VMM 프로젝트 (C 기반)
-│   ├── src/                  # VMM 소스코드
-│   ├── guest/                # 리얼 모드 게스트 프로그램
-│   └── os-1k/                # 1K OS (보호 모드 게스트)
-├── docs/                     # 모든 문서
-│   ├── 최종보고서.md
-│   ├── 데모가이드.md
-│   └── ...
-├── experimental/             # 실험적/부가적 프로젝트
-│   ├── hypervisor/           # [실험] Rust 기반 RISC-V 하이퍼바이저
-│   ├── HLeOs/                # [실험] Rust 기반 64비트 OS
-│   └── linux-guest/          # [실험] Linux 게스트 부팅 관련 파일
-└── research/                 # 주간 연구 노트
+Triple fault at CS:EIP = 0x08:0x00100234
+  Fault chain: #PF (CR2=0xdeadbeef) → #GP → #DF → reset
+  Cause: IDT entry 14 (#PF) has P=0 — no handler installed.
+  Your IDT at 0x00009000 has 3 valid entries of 256.
+  Page tables (CR3=0x00100000): 0xdeadbeef is not mapped.
+    PDE[891] = 0x00000000 (not present)
 ```
+
+**Phase 4 — workflow**
+A kernel test runner (boot, assert on output, exit code) and a GitHub Action.
+
+Deliberately out of scope: virtio-blk/net, microVM and AI-sandbox use cases,
+and ARM/RISC-V ports.
 
 ---
 
-## 문서
+## How it works
 
-### 주요 문서
-- **[README.md](README.md)** (현재 파일): 빠른 시작 및 프로젝트 개요
-- **[최종보고서.md](docs/최종보고서.md)**: 포괄적인 프로젝트 보고서
-- **[데모가이드.md](docs/데모가이드.md)**: 단계별 시연 가이드
+```
+┌──────────────────────────────────────────────────┐
+│  Host userspace                                  │
+│    Mini-KVM                                      │
+│      cli.c        argv → config                  │
+│      vm.c         /dev/kvm, the VM, memory slots │
+│      vcpu.c       one pthread per vCPU, KVM_RUN  │
+│      cpu_modes.c  real → protected → long        │
+│      devices.c    16550 UART, legacy ports       │
+│      hypercall.c  port 0x500                     │
+│      console.c    terminal, input, output        │
+│                    ↕ ioctl()                     │
+├──────────────────────────────────────────────────┤
+│  Host kernel — KVM (hardware virtualization)     │
+├──────────────────────────────────────────────────┤
+│  Guest                                           │
+│    a real-mode program, or the 1K OS,            │
+│    or a 64-bit long-mode program                 │
+└──────────────────────────────────────────────────┘
+```
 
-### 연구 노트
-- **[research/week1-12/](research/)**: 주간 진행 상황 보고서
+Two design choices are worth knowing before reading the code:
+
+**The VMM enters protected mode, not the guest.** Before the first `KVM_RUN`,
+Mini-KVM builds the GDT, IDT, and page tables in guest memory and hands the vCPU
+over with paging already live. A guest kernel starts executing in its target
+mode and must not reload its segment registers.
+
+**vCPUs are independent guests, not an SMP system.** Each vCPU gets its own
+memory mapping at guest physical address `vcpu_id * mem_size` and runs a
+different program. This is a teaching decision, not a virtualization one.
 
 ---
 
-## 라이선스
+## Repository layout
 
-이 프로젝트는 MIT 라이선스 하에 배포됩니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참고하세요.
+```
+kvm-vmm-x86/          The hypervisor — this is the project
+  src/                VMM source, one module per concern
+    linux/            Experimental bzImage boot, quarantined
+  guest/              Real-mode guest programs (assembly)
+  os-1k/              The bundled 32-bit teaching OS
+  tools/smoke.sh      Verification harness (make test)
+docs/  research/  meetings/    Reports and notes, mostly Korean
+experimental/         Unrelated Rust experiments, not built here
+```
+
+`AGENTS.md` documents the architecture invariants and is the best starting point
+for contributors.
+
+## Contributing
+
+Issues and pull requests are welcome — especially from anyone trying to boot
+their own kernel and hitting the gaps above. Please run `make test` before
+submitting; it must stay green, and any intended output change should be
+re-baselined deliberately with `./tools/smoke.sh --update` and called out in the
+commit message.
+
+## Acknowledgements
+
+Started as a self-directed university project (Ajou University, 2025-2) and
+received an Encouragement Award in the SoftCon research division. The 1K OS
+guest is an x86 port of the RISC-V kernel from
+*[Operating System in 1,000 Lines](https://operating-system-in-1000-lines.vercel.app/)*.
