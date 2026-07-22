@@ -1,0 +1,21 @@
+[no-idt.elf]
+[no-idt.elf] Guest triple-faulted (the CPU gave up and reset).
+[no-idt.elf]   Last instruction before the fault, at step 4:
+[no-idt.elf]     CS:EIP = 0x0008:0x0010001a, in protected mode, paging off
+[no-idt.elf]     bytes: f7 f1 f4 00 00 00 04 00
+[no-idt.elf]   That instruction raises #DE divide error - the divisor register is zero.
+[no-idt.elf]
+[no-idt.elf]   IDT at 0x528, limit 0x7ff: 0 of 256 entries present.
+[no-idt.elf]   Not one entry is present, so no exception of any kind can
+[no-idt.elf]   be dispatched. The guest needs to build an IDT and lidt it
+[no-idt.elf]   before it can survive a fault.
+[no-idt.elf]
+[no-idt.elf]   Stack pointer 0x105000 is mapped, so pushing a fault frame
+[no-idt.elf]   would have worked.
+[no-idt.elf]
+[no-idt.elf]   CR0=0x11 CR2=0x0 CR3=0x0 CR4=0x0 EFER=0x0
+[no-idt.elf]   EFLAGS=0x46 (IF=0)  ESP=0x105000  EBP=0x80000
+[no-idt.elf]   EAX=0x1 EBX=0x7000 ECX=0x0 EDX=0x0
+[no-idt.elf]   CS=0x8 DS=0x10 SS=0x10  GDT at 0x500 limit 0x27
+[no-idt.elf]   Instruction bytes: f7 f1 f4 00 00 00 04 00
+[no-idt.elf]

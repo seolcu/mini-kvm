@@ -25,6 +25,23 @@
  * produces a register trace to compare against a known-good boot; none of it
  * is used by the real-mode, paging, or long-mode paths.
  */
+/*
+ * The last instruction the guest executed, captured while single-stepping.
+ *
+ * A triple fault resets the CPU before KVM tells us about it, so the live
+ * register state at KVM_EXIT_SHUTDOWN describes the reset vector and nothing
+ * about the fault. Recording each step is the only way to still have the
+ * state that mattered, which is why --explain trades speed for it.
+ */
+typedef struct {
+    bool enabled;
+    bool valid;                 /* a snapshot has been taken */
+    unsigned long steps;
+    struct kvm_regs regs;
+    struct kvm_sregs sregs;
+    uint8_t bytes[16];
+} trace_state_t;
+
 typedef struct {
     int remaining;          /* step budget; 0 disables single-step */
     bool paused;            /* temporarily off, e.g. across a REP loop */
@@ -69,6 +86,9 @@ typedef struct {
     linux_entry_mode_t linux_entry;
     linux_rsi_mode_t linux_rsi;
     singlestep_state_t singlestep;
+
+    /* Populated by --explain; consulted by explain_shutdown(). */
+    trace_state_t trace;
 } vcpu_context_t;
 
 /*
@@ -91,6 +111,14 @@ int vcpu_load_guest_binary(const char *filename, void *mem, size_t mem_size,
 
 /* Create the vCPU and put it in its target CPU mode, ready for KVM_RUN. */
 int vcpu_setup(vcpu_context_t *ctx);
+
+/*
+ * Single-step this vCPU, recording the state before each instruction so that
+ * explain_shutdown() has something to work with after a triple fault resets
+ * the CPU. Costs a VM exit per instruction, hence --explain rather than
+ * always on.
+ */
+void vcpu_enable_trace(vcpu_context_t *ctx);
 
 /* pthread entry point: run KVM_RUN until the guest stops. */
 void *vcpu_thread(void *arg);

@@ -29,12 +29,15 @@
 #include "long_mode.h"
 #include "linux_boot.h"
 #include "linux/linux_entry.h"
+#include "explain.h"
 #include <pthread.h>
 #include <signal.h>
 #include <time.h>
 
 /* Guests enter real mode at physical 0; paging mode overrides this. */
 #define GUEST_LOAD_ADDR 0x0
+
+static void trace_capture(vcpu_context_t *ctx);
 
 /* Diagnostic options, supplied once by main(). */
 static bool dump_regs_on_exit = false;
@@ -431,11 +434,15 @@ static int handle_vm_exit(vcpu_context_t *ctx)
         return handle_io(ctx);
 
     case KVM_EXIT_DEBUG:
+        if (ctx->trace.enabled)
+        {
+            trace_capture(ctx);
+            return 0;
+        }
         return linux_handle_debug_exit(ctx);
 
     case KVM_EXIT_FAIL_ENTRY:
-        vcpu_printf(ctx, "FAIL_ENTRY: reason 0x%llx\n",
-                    ctx->kvm_run->fail_entry.hardware_entry_failure_reason);
+        explain_failed_entry(ctx, ctx->kvm_run->fail_entry.hardware_entry_failure_reason);
         return -1;
 
     case KVM_EXIT_MMIO:
@@ -476,40 +483,13 @@ static int handle_vm_exit(vcpu_context_t *ctx)
         return -1;
 
     case KVM_EXIT_SHUTDOWN:
-    {
-        struct kvm_regs regs;
-        struct kvm_sregs sregs;
-        struct kvm_vcpu_events events;
-
-        vcpu_printf(ctx, "SHUTDOWN - Attempting to get exception info...\n");
+        /* On x86 this is a triple fault: the guest faulted while handling a
+         * fault while handling a fault, and the CPU gave up. Explaining it is
+         * the single most useful thing this VMM does. */
+        explain_shutdown(ctx);
         linux_report_shutdown(ctx);
-        if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) == 0)
-        {
-            vcpu_printf(ctx, "SHUTDOWN at RIP=0x%llx, RSP=0x%llx\n", regs.rip, regs.rsp);
-            vcpu_printf(ctx, "  RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
-                        regs.rax, regs.rbx, regs.rcx, regs.rdx);
-        }
-        if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) == 0)
-        {
-            vcpu_printf(ctx, "  CR0=0x%llx CR3=0x%llx CR4=0x%llx\n",
-                        sregs.cr0, sregs.cr3, sregs.cr4);
-            vcpu_printf(ctx, "  CS=0x%x DS=0x%x SS=0x%x\n",
-                        sregs.cs.selector, sregs.ds.selector, sregs.ss.selector);
-        }
-        // Try to get exception info
-        if (ioctl(ctx->vcpu_fd, KVM_GET_VCPU_EVENTS, &events) == 0)
-        {
-            vcpu_printf(ctx, "  Exception: injected=%d nr=%d has_error=%d error=0x%x\n",
-                        events.exception.injected, events.exception.nr,
-                        events.exception.has_error_code, events.exception.error_code);
-            vcpu_printf(ctx, "  Interrupt: injected=%d nr=%d soft=%d\n",
-                        events.interrupt.injected, events.interrupt.nr, events.interrupt.soft);
-            vcpu_printf(ctx, "  NMI: injected=%d pending=%d masked=%d\n",
-                        events.nmi.injected, events.nmi.pending, events.nmi.masked);
-        }
         ctx->running = false;
         return 0;
-    }
 
     default:
         vcpu_printf(ctx, "Unknown exit reason: %d\n", ctx->kvm_run->exit_reason);
@@ -531,6 +511,56 @@ static int handle_vm_exit(vcpu_context_t *ctx)
  * a kernel says it is finished, so this has to be recognised rather than hung
  * on.
  */
+/* Turn KVM single-step on or off for this vCPU. */
+static int set_singlestep(vcpu_context_t *ctx, bool enable)
+{
+    struct kvm_guest_debug dbg;
+    memset(&dbg, 0, sizeof(dbg));
+    if (enable) {
+        dbg.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
+    }
+    if (ioctl(ctx->vcpu_fd, KVM_SET_GUEST_DEBUG, &dbg) < 0) {
+        perror("KVM_SET_GUEST_DEBUG");
+        return -1;
+    }
+    return 0;
+}
+
+void vcpu_enable_trace(vcpu_context_t *ctx)
+{
+    ctx->trace.enabled = true;
+    ctx->trace.valid = false;
+    ctx->trace.steps = 0;
+    if (set_singlestep(ctx, true) < 0) {
+        ctx->trace.enabled = false;
+        vcpu_printf(ctx, "Warning: --explain unavailable; single-step was refused.\n");
+    }
+}
+
+/*
+ * Record the state before each instruction. Only the most recent is kept:
+ * the fault happens on the very next one, so that is the state that explains
+ * it, and keeping a history would cost memory for no extra insight.
+ */
+static void trace_capture(vcpu_context_t *ctx)
+{
+    trace_state_t *t = &ctx->trace;
+
+    if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &t->regs) < 0 ||
+        ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &t->sregs) < 0) {
+        return;
+    }
+
+    memset(t->bytes, 0, sizeof(t->bytes));
+    uint64_t linear = t->sregs.cs.base + t->regs.rip;
+    if (linear + sizeof(t->bytes) <= ctx->mem_size) {
+        memcpy(t->bytes, (const char *)ctx->guest_mem + linear, sizeof(t->bytes));
+    }
+
+    t->valid = true;
+    t->steps++;
+}
+
 static bool vcpu_is_permanently_halted(vcpu_context_t *ctx)
 {
     struct kvm_mp_state mp;

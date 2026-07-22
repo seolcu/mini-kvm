@@ -47,6 +47,7 @@ typedef struct {
     bool verbose;
     debug_level_t debug_level;
     bool dump_regs;             /* dump registers on every VM exit */
+    bool explain;               /* single-step so a fault can be explained */
     const char *dump_mem_path;  /* dump guest memory here on exit, or NULL */
 
     /* Linux boot (experimental) */

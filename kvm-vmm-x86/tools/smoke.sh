@@ -76,6 +76,7 @@ check_stale "${vmm}" src || stale_found=1
 check_stale os-1k/kernel os-1k || stale_found=1
 check_stale examples/multiboot-barebones/kernel.elf examples/multiboot-barebones || stale_found=1
 check_stale examples/multiboot-keyboard/kernel.elf examples/multiboot-keyboard || stale_found=1
+check_stale examples/faults/no-idt.elf examples/faults || stale_found=1
 for g in guest/hello guest/vgademo; do
     check_stale "$g" guest || stale_found=1
 done
@@ -192,6 +193,14 @@ run_case multiboot    ''            -- --vga examples/multiboot-barebones/kernel
 # a completely different device path from the barebones case.
 run_case multiboot_kbd 'help\necho hi\nnope\nhalt\n' \
     -- --vga examples/multiboot-keyboard/kernel.elf
+
+# --- Fault analysis --------------------------------------------------------
+# Deliberately broken kernels. These check that --explain names the actual
+# cause, not merely that the guest died.
+run_case explain_no_idt    '' -- --explain examples/faults/no-idt.elf
+run_case explain_bad_stack '' -- --explain examples/faults/bad-stack.elf
+# Without --explain the state is gone, and saying so is the correct answer.
+run_case explain_absent    '' -- examples/faults/no-idt.elf
 
 # --- Long mode -------------------------------------------------------------
 run_case long_mode    ''            -- --long-mode guest/hello_64

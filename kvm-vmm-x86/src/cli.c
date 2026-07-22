@@ -30,6 +30,8 @@ void cli_usage(const char *argv0, FILE *out)
         "Diagnostics:\n"
         "  -v, --verbose         log VM exits, hypercalls, and setup detail\n"
         "  --debug LEVEL         verbosity 0-3 (0=none 1=basic 2=detailed 3=all)\n"
+        "  --explain             single-step the guest so that a crash can be\n"
+        "                        explained in detail (much slower)\n"
         "  --dump-regs           dump registers on every VM exit\n"
         "  --dump-mem FILE       write guest memory to FILE when the guest exits\n"
         "  -h, --help            this message\n"
@@ -165,6 +167,9 @@ int cli_parse(int argc, char **argv, vmm_config_t *cfg)
         }
         else if (is_option(arg, "--dump-regs")) {
             cfg->dump_regs = true;
+        }
+        else if (is_option(arg, "--explain")) {
+            cfg->explain = true;
         }
         else if (is_option(arg, "--entry")) {
             if (!(value = option_value(arg, "--entry", argc, argv, &i, &inlined))) return 1;

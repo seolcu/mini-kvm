@@ -1,0 +1,6 @@
+[no-idt.elf]
+[no-idt.elf] Guest triple-faulted (the CPU gave up and reset).
+[no-idt.elf]   The CPU reset before KVM reported this, so the state below is
+[no-idt.elf]   the reset vector, not the fault. Re-run with --explain to
+[no-idt.elf]   single-step and capture the state that caused it.
+[no-idt.elf]

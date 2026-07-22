@@ -134,6 +134,10 @@ static int prepare_vcpus(const vmm_config_t *cfg)
             return -1;
         }
 
+        if (cfg->explain) {
+            vcpu_enable_trace(ctx);
+        }
+
         if (verbose_enabled()) {
             printf("\n");
         }
