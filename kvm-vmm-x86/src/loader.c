@@ -24,6 +24,13 @@
 #define MB_INFO_MODS      (1u << 3)
 #define MB_INFO_MMAP      (1u << 6)
 #define MB_INFO_LOADER    (1u << 9)     /* boot_loader_name */
+#define MB_INFO_FRAMEBUFFER (1u << 12)
+
+/* Multiboot header flag: the kernel is asking for a video mode. */
+#define MB_HEADER_FLAG_VIDEO (1u << 2)
+
+/* framebuffer_type values. */
+#define MB_FRAMEBUFFER_EGA_TEXT 2
 
 /*
  * Where the boot information block goes. Low memory below the traditional
@@ -51,6 +58,20 @@ struct multiboot_info {
     uint32_t drives_addr;
     uint32_t config_table;
     uint32_t boot_loader_name;
+    uint32_t apm_table;
+    uint32_t vbe_control_info;
+    uint32_t vbe_mode_info;
+    uint16_t vbe_mode;
+    uint16_t vbe_interface_seg;
+    uint16_t vbe_interface_off;
+    uint16_t vbe_interface_len;
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t  framebuffer_bpp;
+    uint8_t  framebuffer_type;
+    uint8_t  color_info[6];
 } __attribute__((packed));
 
 /*
@@ -382,7 +403,7 @@ static int load_modules(void *mem, size_t mem_size, const char *const *modules,
 
 static void build_multiboot_info(void *mem, size_t mem_size,
                                  const char *cmdline, int num_modules,
-                                 guest_image_t *out)
+                                 bool wants_video, guest_image_t *out)
 {
     /* Memory map. Mirrors a conventional PC: low memory, the EBDA and BIOS
      * areas carved out as reserved, then everything above 1MB. */
@@ -417,6 +438,24 @@ static void build_multiboot_info(void *mem, size_t mem_size,
     info.mmap_addr = MB_MMAP_ADDR;
     info.mmap_length = cursor - MB_MMAP_ADDR;
     info.boot_loader_name = MB_LOADER_ADDR;
+
+    /*
+     * A kernel that sets the video flag is asking to be told what display it
+     * has. Mini-KVM renders text, not graphics, so it is answered with the
+     * EGA text framebuffer the specification provides for exactly this case:
+     * a bootloader may supply text mode when it cannot supply the graphics
+     * mode requested. A kernel that insists on a linear framebuffer will
+     * still not get one.
+     */
+    if (wants_video) {
+        info.flags |= MB_INFO_FRAMEBUFFER;
+        info.framebuffer_addr = 0xB8000;
+        info.framebuffer_pitch = 80 * 2;
+        info.framebuffer_width = 80;
+        info.framebuffer_height = 25;
+        info.framebuffer_bpp = 16;
+        info.framebuffer_type = MB_FRAMEBUFFER_EGA_TEXT;
+    }
 
     if (cmdline) {
         size_t n = strlen(cmdline);
@@ -459,10 +498,12 @@ int loader_load(const char *path, void *mem, size_t mem_size,
 
     long mb_off = find_multiboot_header(file, file_size);
     out->format = (mb_off >= 0) ? GUEST_MULTIBOOT : GUEST_ELF;
+    bool wants_video = false;
 
     if (mb_off >= 0) {
         uint32_t flags;
         memcpy(&flags, file + mb_off + 4, 4);
+        wants_video = (flags & MB_HEADER_FLAG_VIDEO) != 0;
         if (flags & MB_HEADER_FLAG_AOUT_KLUDGE) {
             /* The kludge supplies its own load addresses for non-ELF images.
              * Refusing is better than loading it to the wrong place. */
@@ -504,7 +545,7 @@ int loader_load(const char *path, void *mem, size_t mem_size,
             }
             out->load_high = modules_end;
         }
-        build_multiboot_info(mem, mem_size, cmdline, loaded, out);
+        build_multiboot_info(mem, mem_size, cmdline, loaded, wants_video, out);
     } else if (num_modules > 0) {
         fprintf(stderr, "Warning: --module is only meaningful for Multiboot "
                         "kernels; ignored.\n");
