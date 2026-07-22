@@ -162,6 +162,42 @@ check_case() {
     fi
 }
 
+# linux_case NAME -- feeds the guest shell after it has had time to start.
+#   Skipped unless a kernel and initramfs are present, since neither belongs
+#   in the repository. Provide them with:
+#     cp /boot/vmlinuz-$(uname -r) kvm-vmm-x86/bzImage
+#     ./tools/mkinitramfs.sh initramfs.cpio
+linux_case() {
+    local name="$1"
+    if (( ${#only[@]} )) && [[ ! " ${only[*]} " == *" ${name} "* ]]; then
+        return
+    fi
+    if [[ ! -f bzImage || ! -f initramfs.cpio ]]; then
+        echo "SKIP ${name}: no bzImage/initramfs.cpio (see tools/smoke.sh)"
+        ((skip++)); return
+    fi
+
+    # The kernel probes the UART during boot, and those probe reads consume
+    # anything already waiting -- exactly as they would on real hardware. So
+    # the commands are sent only once the shell is up.
+    local out
+    out="$( { sleep 6; printf 'uname -s\nls /bin\nexit\n'; sleep 3; } \
+            | timeout 90 "${vmm}" --linux bzImage --initrd initramfs.cpio \
+                --cmdline "console=ttyS0 rdinit=/init" 2>&1 | normalize )"
+
+    if [[ "$out" == *"Run /init as init process"* ]] &&
+       [[ "$out" == *"userspace init started"* ]] &&
+       [[ "$out" == *"sh-"* ]] &&
+       [[ "$out" == *"miniutils"* ]]; then
+        echo "PASS ${name}"
+        ((pass++))
+    else
+        echo "FAIL ${name}: expected Linux to reach a shell and run 'ls /bin'"
+        printf '%s\n' "$out" | tail -20 | sed 's/^/    /'
+        failed+=("${name}"); ((fail++))
+    fi
+}
+
 echo "=== Mini-KVM smoke tests ==="
 
 # --- Real mode -------------------------------------------------------------
@@ -233,6 +269,9 @@ run_case os1k_fib      '4\n0\n'                   -- --paging os-1k/kernel
 # NB: the calculator quits on 'q' (not 'quit') and its parser wants spaces
 # around the operator. AGENTS.md documents '6\n10+5\nquit\n0\n', which hangs.
 run_case os1k_calc     '6\n10 + 5\nq\n0\n'        -- --paging os-1k/kernel
+
+# --- Linux ----------------------------------------------------------------
+linux_case linux_shell
 
 echo
 echo "=== ${pass} passed, ${fail} failed, ${skip} skipped ==="

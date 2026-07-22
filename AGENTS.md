@@ -20,14 +20,15 @@ Mini-KVM is an educational x86 hypervisor (~4,000 lines of C) built directly on 
 | `vm.c` | `/dev/kvm`, the VM, TSS/IRQCHIP, guest memory slots |
 | `vcpu.c` | vCPU setup, the `KVM_RUN` loop, VM-exit handling |
 | `cpu_modes.c` | GDT/IDT/page tables and real/protected/long/flat32 mode entry |
-| `loader.c` | image format detection, ELF loading, Multiboot boot info |
 | `hypercall.c` | the port `0x500` ABI |
 | `devices.c` | 16550 UART, VGA CRTC, legacy PC port stubs |
 | `ps2.c` | i8042 keyboard: characters → set 1 scancodes |
 | `vga.c` | the 0xB8000 text buffer, rendered under `--vga` |
 | `console.c` | terminal, keyboard ring, vCPU-tagged output |
 | `debug.c` | register/memory dumps behind `--dump-regs` / `--dump-mem` |
-| `linux/` | **quarantined** experimental bzImage boot + single-step tracing |
+| `loader.c` | format detection; ELF, Multiboot 1 and 2, modules |
+| `explain.c` | `--explain`: why a guest triple-faulted |
+| `linux/` | **quarantined** bzImage boot; reaches a shell with an initramfs |
 
 Keep it that way: no `linux_guest` special cases outside `src/linux/`, and no new globals shared across modules.
 
@@ -52,7 +53,8 @@ Flags are fixed at `gcc -Wall -Wextra -Wshadow -O2 -std=gnu11 -pthread`; match t
 ./kvm-vmm guest/counter guest/hello guest/multiplication   # 1 arg per vCPU, max 4
 ./kvm-vmm --paging os-1k/kernel             # 1K OS interactive shell
 ./kvm-vmm --long-mode guest/hello_64        # 64-bit (implies --paging)
-./kvm-vmm --linux bzImage --cmdline "console=ttyS0"   # experimental, incomplete
+./kvm-vmm --linux bzImage --initrd initramfs.cpio \
+          --cmdline "console=ttyS0 rdinit=/init"    # boots a stock kernel to a shell
 ```
 
 Debug flags: `--verbose`/`-v`, `--debug 0|1|2|3`, `--dump-regs`, `--dump-mem FILE`, `--entry ADDR`, `--load OFFSET`. All options accept `--flag value` or `--flag=value` and may appear before or after the guest binaries.
@@ -67,7 +69,7 @@ There are no unit tests. Verification is running guests and diffing stdout again
 make test          # == make all && ./tools/smoke.sh
 ```
 
-`tools/smoke.sh` runs all 17 cases (real mode, multi-vCPU, long mode, VGA text mode, two Multiboot kernels, the full hypercall ABI, and six 1K OS programs) and diffs normalized output against `tools/baseline/`. It refuses to run against stale artifacts — each is compared against the sources that actually build it — so a failed build cannot masquerade as a pass. `./tools/smoke.sh --update` re-baselines — do that only when you have *intended* an output change, and say so in the commit.
+`tools/smoke.sh` runs all 24 cases (real mode, multi-vCPU, long mode, VGA text mode, four Multiboot kernels, fault analysis, Linux to a shell, the full hypercall ABI, and six 1K OS programs) and diffs normalized output against `tools/baseline/`. It refuses to run against stale artifacts — each is compared against the sources that actually build it — so a failed build cannot masquerade as a pass. `./tools/smoke.sh --update` re-baselines — do that only when you have *intended* an output change, and say so in the commit.
 
 `/dev/kvm` is required — guests depend on Mini-KVM hypercalls, there is no QEMU/TCG fallback. The script exits 77 and says so rather than pretending; if KVM is unavailable, report that instead of substituting another runner.
 

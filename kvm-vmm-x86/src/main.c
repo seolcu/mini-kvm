@@ -162,7 +162,9 @@ int main(int argc, char **argv)
     report_configuration(&cfg);
 
     if (cfg.linux_boot) {
-        fprintf(stderr, "Warning: --linux is experimental and does not boot to a shell.\n");
+        fprintf(stderr, "Note: --linux is experimental. It boots a stock kernel to a "
+                        "shell with an initramfs,\n      but has no virtio, so there "
+                        "is no disk or network.\n");
     }
 
     console_install_signal_handlers();

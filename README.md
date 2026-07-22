@@ -11,8 +11,8 @@ with headers), small enough to read in an afternoon.
 
 > **Status: early but real.** Mini-KVM boots stock Multiboot and ELF kernels,
 > renders VGA text mode, and runs its own real-mode guests and a bundled 32-bit
-> teaching OS, with working timer and keyboard interrupts, and it can explain
-> why a guest triple-faulted. Its Linux boot support is incomplete. See
+> teaching OS, boots a stock Linux kernel to a shell, and can explain why a
+> guest triple-faulted. See
 > [Current state](#current-state) for exactly what works and
 > [Roadmap](#roadmap) for where it is going. Nothing below is aspirational: if
 > it is listed as working, `make test` covers it.
@@ -98,7 +98,7 @@ Hello from 64-bit!
 
 ## Current state
 
-Everything in this section is exercised by `make test` (20 cases diffed against
+Everything in this section is exercised by `make test` (24 cases diffed against
 stored baselines in `kvm-vmm-x86/tools/baseline/`).
 
 **Working**
@@ -118,7 +118,10 @@ stored baselines in `kvm-vmm-x86/tools/baseline/`).
 | 1K OS | Bundled teaching OS with a 9-program interactive shell |
 | Hypercall interface | Port `0x500`; `EXIT`, `PUTCHAR`, blocking `GETCHAR` |
 | 16550 UART (COM1) | `0x3f8`–`0x3ff`, forwarded to stdout |
-| **Fault analysis** | `--explain` names the cause of a triple fault |
+| **Multiboot 2** | Tag-based information block, modules, EGA text framebuffer |
+| **Multiboot modules** | `--module FILE`, which is how a kernel gets an initrd |
+| **Fault analysis** | `--explain` names the cause; 32-bit, PAE and long-mode walks |
+| **Linux** | A stock distribution kernel boots to a shell with an initramfs |
 | Diagnostics | `--verbose`, `--debug 0..3`, `--dump-regs`, `--dump-mem` |
 
 A stock Multiboot kernel that knows nothing about Mini-KVM boots and runs:
@@ -187,11 +190,9 @@ presenting reset-vector registers as if they meant something.
 | Gap | Consequence |
 |---|---|
 | No RTC / CMOS | A kernel cannot read the wall clock |
-| No Multiboot 2 | Only the original 0x1BADB002 protocol is recognised |
 | No a.out kludge | Multiboot images that are not ELF are rejected |
-| Linux boot incomplete | `--linux` loads a bzImage but does not reach a shell |
-| No virtio | No block or network devices |
-| Fault analysis is 32-bit only | PAE and long-mode page walks are not decoded |
+| No virtio | Linux has no disk or network; an initramfs is the only root filesystem |
+| Serial input races early boot | The kernel's UART probe eats anything typed before the shell starts, as on real hardware |
 | No live inspection | `inspect` for dumping a running guest's tables is not written |
 
 ---
@@ -202,20 +203,33 @@ The goal is a tool people actually use to develop x86 kernels. Each phase has a
 gate that must pass before the next begins.
 
 **Phase 1 — run other people's kernels** *(in progress)*
-Done: ELF32/64 loader, Multiboot 1, VGA text buffer and cursor, PIC and PIT
-interrupts, PS/2 keyboard.
-Remaining: RTC, Multiboot 2, and the gate itself.
+Done: ELF32/64 loader, Multiboot 1 and 2, modules, VGA text buffer and cursor,
+PIC and PIT interrupts, PS/2 keyboard.
+Remaining: RTC, and the gate itself.
 *Gate: three third-party hobby kernels boot unmodified, pinned in CI.* The two
 kernels under `examples/` use no Mini-KVM facilities and would boot under
 GRUB, but they were written here — the gate means kernels written by other
 people, which is a stronger claim and is not met yet.
 
-**Phase 2 — boot Linux**
-Finish the 64-bit entry path. An initramfs avoids needing virtio.
-*Gate: a busybox shell prompt, pinned in CI.*
+**Phase 2 — boot Linux** *(gate met)*
+A stock Fedora kernel boots to an interactive shell on an initramfs. Pinned in
+`make test`, which skips the case unless a kernel and initramfs are present —
+neither belongs in the repository:
+
+```bash
+cd kvm-vmm-x86
+cp /boot/vmlinuz-$(uname -r) bzImage
+./tools/mkinitramfs.sh initramfs.cpio
+./kvm-vmm --linux bzImage --initrd initramfs.cpio --cmdline "console=ttyS0 rdinit=/init"
+...
+[    1.254616] Run /init as init process
+[mini-kvm] userspace init started
+sh-5.3# uname -s
+Linux
+```
 
 **Phase 3 — the diagnostics that justify the project** *(started)*
-Done: `--explain` post-mortem fault analysis.
+Done: `--explain` post-mortem fault analysis, 32-bit, PAE and long mode.
 Remaining: `inspect` for decoding a live guest's GDT/IDT/page tables,
 mode-transition tracing, and pre-boot validation of descriptor tables.
 
