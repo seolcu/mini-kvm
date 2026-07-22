@@ -19,9 +19,12 @@ Mini-KVM is an educational x86 hypervisor (~4,000 lines of C) built directly on 
 | `cli.c` | argv → `vmm_config_t`; usage text |
 | `vm.c` | `/dev/kvm`, the VM, TSS/IRQCHIP, guest memory slots |
 | `vcpu.c` | vCPU setup, the `KVM_RUN` loop, VM-exit handling |
-| `cpu_modes.c` | GDT/IDT/page tables and real/protected/long mode entry |
+| `cpu_modes.c` | GDT/IDT/page tables and real/protected/long/flat32 mode entry |
+| `loader.c` | image format detection, ELF loading, Multiboot boot info |
 | `hypercall.c` | the port `0x500` ABI |
-| `devices.c` | 16550 UART, legacy PC port stubs |
+| `devices.c` | 16550 UART, VGA CRTC, legacy PC port stubs |
+| `ps2.c` | i8042 keyboard: characters → set 1 scancodes |
+| `vga.c` | the 0xB8000 text buffer, rendered under `--vga` |
 | `console.c` | terminal, keyboard ring, vCPU-tagged output |
 | `debug.c` | register/memory dumps behind `--dump-regs` / `--dump-mem` |
 | `linux/` | **quarantined** experimental bzImage boot + single-step tracing |
@@ -37,6 +40,8 @@ Everything runs from `kvm-vmm-x86/`. Bare `make` prints help (`.DEFAULT_GOAL := 
 cd kvm-vmm-x86
 make all          # vmm + guests + 1k-os;  or make vmm | guests | 1k-os | clean
 ```
+
+`examples/` holds stock Multiboot kernels that use no Mini-KVM facilities; they are the real test of whether the VMM can run someone else's work, and both are pinned in `make test`.
 
 Flags are fixed at `gcc -Wall -Wextra -Wshadow -O2 -std=gnu11 -pthread`; match them for experiments. Objects land in `build/` with `-MMD -MP` header dependency tracking, so incremental builds are correct — do not reintroduce a hand-maintained header list.
 
@@ -62,7 +67,7 @@ There are no unit tests. Verification is running guests and diffing stdout again
 make test          # == make all && ./tools/smoke.sh
 ```
 
-`tools/smoke.sh` runs all 14 cases (real mode, multi-vCPU, long mode, the full hypercall ABI, and six 1K OS programs) and diffs normalized output against `tools/baseline/`. It refuses to run against a binary older than the sources, so a failed build cannot masquerade as a pass. `./tools/smoke.sh --update` re-baselines — do that only when you have *intended* an output change, and say so in the commit.
+`tools/smoke.sh` runs all 17 cases (real mode, multi-vCPU, long mode, VGA text mode, two Multiboot kernels, the full hypercall ABI, and six 1K OS programs) and diffs normalized output against `tools/baseline/`. It refuses to run against stale artifacts — each is compared against the sources that actually build it — so a failed build cannot masquerade as a pass. `./tools/smoke.sh --update` re-baselines — do that only when you have *intended* an output change, and say so in the commit.
 
 `/dev/kvm` is required — guests depend on Mini-KVM hypercalls, there is no QEMU/TCG fallback. The script exits 77 and says so rather than pretending; if KVM is unavailable, report that instead of substituting another runner.
 
@@ -82,7 +87,30 @@ One VM (`vm_fd`), up to `MAX_VCPUS = 4` vCPUs, each a pthread with its own `vcpu
 
 There is no follow-up `IN` and no `pending_getchar` state machine. `HC_GETCHAR` parks the vCPU thread on a condvar in `console.c` until a key arrives, so an idle prompt costs no host CPU — never reintroduce a guest-side polling loop. Unknown call numbers return -1 rather than tearing the VM down. The numbers are duplicated as `SYS_*` in `os-1k/common.h` and hand-encoded in the guest assembly; every guest breaks if they change. UART COM1 (`0x3f8`–`0x3ff`) is separately emulated and forwarded to host stdout.
 
-**IRQCHIP is created only in Linux mode.** Real-mode guests deliberately run without an interrupt controller — an unwanted IRQ0 makes `HLT`-terminated real-mode guests hang. Terminal raw mode is enabled only in paging/Linux mode. The stdin reader thread, by contrast, runs in *every* mode, because `HC_GETCHAR` is available to real-mode guests too.
+**The guest image chooses its own entry mode.** `loader_probe()` runs before
+guest memory is allocated, because the format determines the size (128MB for
+ELF/Multiboot, which load at 1MB; 4MB with `--paging`; 256KB real mode). A
+Multiboot image is entered in 32-bit protected mode with paging **off**
+(`cpu_mode_enter_flat32`), because the specification says the kernel enables
+paging itself — `--paging` and `--long-mode` do not apply to it. ELF and
+Multiboot guests are restricted to one vCPU: memory is mapped at
+`vcpu_id * mem_size`, so only vCPU 0 sees its kernel where the image was
+linked for.
+
+**Interrupt delivery has three non-obvious constraints.**
+- With an in-kernel IRQCHIP, KVM stops reporting `KVM_EXIT_HLT` and blocks
+  the vCPU inside `KVM_RUN` instead. After `cli; hlt` no interrupt can ever
+  arrive, so the watchdog in `vcpu.c` nudges each vCPU with `SIGUSR1` and
+  `vcpu_is_permanently_halted()` recognises the wedge. Without that the
+  process cannot be terminated by anything short of `SIGKILL`.
+- The PC's 8259 is **edge-triggered**. Holding a line high while the guest
+  still has it masked delivers nothing later; `devices.c` drops and re-raises
+  IRQ1, and `devices_tick()` keeps re-asserting until the queue drains. Piped
+  input arrives before the guest has an IDT, so this is the normal path.
+- Scancodes are generated **lazily**, one key at a time, from the console
+  ring. Converting eagerly overflows any fixed queue on a scripted run.
+
+**IRQCHIP is created only for kernel images and Linux mode.** Real-mode guests deliberately run without an interrupt controller — an unwanted IRQ0 makes `HLT`-terminated real-mode guests hang. Terminal raw mode is enabled only in paging/Linux mode. The stdin reader thread, by contrast, runs in *every* mode, because `HC_GETCHAR` is available to real-mode guests too.
 
 **Protected mode is entered by the VMM, not the guest.** Before the first `KVM_RUN` the VMM builds the GDT at guest `0x500` (5 descriptors, `gdt_setup()`), the IDT (`idt_setup()`), and page tables (`page_tables_setup32()`: page directory at GPA `0x00100000`, 4KB pages, **PSE deliberately disabled for AMD Zen 5 compatibility**), then sets CR0/CR3 and jumps to the entry point — all in `src/cpu_modes.c`. Consequently `os-1k/boot.S` must **not** reload segment registers — doing so triple-faults. Paging defaults: entry `0x80001000`, load offset `0x1000` (kernel.ld links at `0x80001000`).
 
