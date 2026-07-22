@@ -80,7 +80,20 @@ int vm_init(bool need_irqchip)
             perror("KVM_CREATE_IRQCHIP");
             fprintf(stderr, "Warning: interrupts will be unavailable.\n");
         } else if (verbose_enabled()) {
-            printf("Created interrupt controller (IRQCHIP)\n");
+            printf("Created interrupt controller (8259 PIC, IOAPIC, LAPIC)\n");
+        }
+
+        /*
+         * The 8254 PIT drives IRQ0. KVM emulates it in-kernel, so a guest's
+         * timer ticks without any userspace involvement and without a VM exit
+         * per tick.
+         */
+        struct kvm_pit_config pit = { .flags = 0 };
+        if (ioctl(vm_fd, KVM_CREATE_PIT2, &pit) < 0) {
+            perror("KVM_CREATE_PIT2");
+            fprintf(stderr, "Warning: no timer interrupt.\n");
+        } else if (verbose_enabled()) {
+            printf("Created programmable interval timer (8254 PIT)\n");
         }
     }
 

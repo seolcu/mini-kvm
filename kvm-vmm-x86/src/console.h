@@ -30,9 +30,15 @@ void console_enable_raw_mode(void);
 void console_restore(void);
 
 /*
- * Install SIGINT/SIGTERM handlers that restore the terminal and unblock any
- * vCPU waiting in console_wait_char(). Without this, raw mode (which clears
- * ISIG) makes an interactive guest impossible to interrupt.
+ * Install SIGINT/SIGTERM/SIGHUP handlers that restore the terminal and record
+ * that shutdown was requested. Without this, raw mode (which clears ISIG)
+ * makes an interactive guest impossible to interrupt.
+ *
+ * Also installs a no-op SIGUSR1 handler. Setting the flag is not by itself
+ * enough to stop a vCPU: it may be blocked inside KVM_RUN, which returns only
+ * when a signal is actually delivered to that thread. vcpu.c sends SIGUSR1
+ * for exactly that purpose, so the handler must exist and must not restart
+ * the interrupted call.
  */
 void console_install_signal_handlers(void);
 

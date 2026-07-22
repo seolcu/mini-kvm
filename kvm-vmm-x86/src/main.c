@@ -17,7 +17,6 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <pthread.h>
 
 #include "cli.h"
 #include "vm.h"
@@ -136,45 +135,6 @@ static int prepare_vcpus(const vmm_config_t *cfg)
     return 0;
 }
 
-/* Run every vCPU to completion, one pthread each. */
-static int run_vcpus(int num_vcpus)
-{
-    pthread_t threads[MAX_VCPUS];
-    int started = 0;
-    int ret = 0;
-
-    if (verbose_enabled()) {
-        printf("=== Starting VM execution (%d vCPUs) ===\n\n", num_vcpus);
-    }
-
-    /* The legend explains the colors, so print it whenever output is
-     * actually color-tagged -- that is, for more than one vCPU. */
-    const char *legend_names[MAX_VCPUS];
-    for (int i = 0; i < num_vcpus; i++) {
-        legend_names[i] = vcpus[i].name;
-    }
-    console_print_legend(num_vcpus, legend_names);
-
-    for (int i = 0; i < num_vcpus; i++) {
-        if (pthread_create(&threads[i], NULL, vcpu_thread, &vcpus[i]) != 0) {
-            fprintf(stderr, "Failed to create thread for vCPU %d\n", i);
-            ret = -1;
-            break;
-        }
-        started++;
-    }
-
-    /* Join whatever did start, so a partial failure still tears down cleanly. */
-    for (int i = 0; i < started; i++) {
-        pthread_join(threads[i], NULL);
-    }
-
-    if (verbose_enabled()) {
-        printf("\n=== All vCPUs completed ===\n");
-    }
-    return ret;
-}
-
 int main(int argc, char **argv)
 {
     vmm_config_t cfg;
@@ -201,9 +161,20 @@ int main(int argc, char **argv)
         console_enable_raw_mode();
     }
 
-    /* Only Linux mode gets an interrupt controller; real-mode guests
-     * deliberately run without one (see vm_init). */
-    if (vm_init(cfg.linux_boot) < 0) {
+    /*
+     * Kernel images and Linux get an interrupt controller and a timer; a
+     * kernel's scheduler is useless without one. Real-mode guests must not
+     * have one, so probe the first image to find out which we are running.
+     */
+    guest_format_t first_format = GUEST_FLAT;
+    if (!cfg.linux_boot && cfg.num_guests > 0) {
+        (void)loader_probe(cfg.guests[0], &first_format);
+    }
+    bool wants_interrupts = cfg.linux_boot ||
+                            first_format == GUEST_ELF ||
+                            first_format == GUEST_MULTIBOOT;
+
+    if (vm_init(wants_interrupts) < 0) {
         ret = 1;
         goto cleanup_early;
     }
@@ -232,8 +203,24 @@ int main(int argc, char **argv)
         devices_set_irq_hook(NULL);
     }
 
-    if (run_vcpus(cfg.num_guests) < 0) {
+    if (verbose_enabled()) {
+        printf("=== Starting VM execution (%d vCPUs) ===\n\n", cfg.num_guests);
+    }
+
+    /* The legend explains the colors, so print it whenever output is actually
+     * color-tagged -- that is, for more than one vCPU. */
+    const char *legend_names[MAX_VCPUS];
+    for (int i = 0; i < cfg.num_guests; i++) {
+        legend_names[i] = vcpus[i].name;
+    }
+    console_print_legend(cfg.num_guests, legend_names);
+
+    if (vcpu_run_all(vcpus, cfg.num_guests) < 0) {
         ret = 1;
+    }
+
+    if (verbose_enabled()) {
+        printf("\n=== All vCPUs completed ===\n");
     }
 
     vga_stop();

@@ -50,15 +50,35 @@ if [[ ! -x "${vmm}" ]]; then
     exit 1
 fi
 
-# Refuse to "verify" a stale binary: a failed build would otherwise leave the
-# previous kvm-vmm in place and every case would pass against old code.
-stale="$(find src os-1k guest examples -newer "${vmm}" \
-         \( -name '*.c' -o -name '*.h' -o -name '*.S' -o -name '*.ld' \) 2>/dev/null)"
-if [[ -n "${stale}" ]]; then
-    echo "ERROR: these sources are newer than ${vmm##*/} - rebuild first (make all):" >&2
-    printf '  %s\n' ${stale} >&2
-    exit 1
-fi
+# Refuse to "verify" a stale build: a failed build leaves the previous
+# artifacts in place and every case passes against old code. Each artifact is
+# compared against the sources that actually produce it -- comparing
+# everything against kvm-vmm would flag guest sources that cannot affect it.
+check_stale() {
+    local artifact="$1"; shift
+    if [[ ! -e "${artifact}" ]]; then
+        echo "ERROR: ${artifact} is missing - run 'make all'." >&2
+        return 1
+    fi
+    local newer
+    newer="$(find "$@" -newer "${artifact}" \
+             \( -name '*.c' -o -name '*.h' -o -name '*.S' -o -name '*.ld' \) 2>/dev/null)"
+    if [[ -n "${newer}" ]]; then
+        echo "ERROR: these sources are newer than ${artifact} - run 'make all':" >&2
+        printf '  %s\n' ${newer} >&2
+        return 1
+    fi
+    return 0
+}
+
+stale_found=0
+check_stale "${vmm}" src || stale_found=1
+check_stale os-1k/kernel os-1k || stale_found=1
+check_stale examples/multiboot-barebones/kernel.elf examples/multiboot-barebones || stale_found=1
+for g in guest/hello guest/vgademo; do
+    check_stale "$g" guest || stale_found=1
+done
+(( stale_found )) && exit 1
 
 mkdir -p "${baseline_dir}"
 

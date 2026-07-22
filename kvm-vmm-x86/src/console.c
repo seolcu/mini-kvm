@@ -128,17 +128,26 @@ static void on_terminate_signal(int signo)
     }
 }
 
+/* Exists only so that delivering SIGUSR1 breaks a thread out of KVM_RUN. */
+static void on_nudge_signal(int signo)
+{
+    (void)signo;
+}
+
 void console_install_signal_handlers(void)
 {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = on_terminate_signal;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;            /* no SA_RESTART: let blocking reads return EINTR */
+    sa.sa_flags = 0;            /* no SA_RESTART: let blocking calls return EINTR */
 
+    sa.sa_handler = on_terminate_signal;
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
+
+    sa.sa_handler = on_nudge_signal;
+    sigaction(SIGUSR1, &sa, NULL);
 }
 
 /* ====================================================================== */

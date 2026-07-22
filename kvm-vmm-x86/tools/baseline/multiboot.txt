@@ -12,4 +12,7 @@ Memory map:
   0x000F0000 + 0x00010000  reserved
   0x00100000 + 0x07F00000  available
 
+Enabling interrupts...
+Timer interrupts received: 10
+
 Kernel reached the end of main. Halting.

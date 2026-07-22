@@ -19,9 +19,12 @@
  * Open /dev/kvm, check the API version, create the VM, and set the TSS
  * address.
  *
- * need_irqchip creates an in-kernel interrupt controller. Pass false for
- * real-mode guests: they deliberately run without one, because an unwanted
- * IRQ0 leaves a HLT-terminated guest hung.
+ * need_irqchip creates KVM's in-kernel 8259 PIC / IOAPIC / LAPIC and the 8254
+ * PIT, so a guest gets real timer and device interrupts without Mini-KVM
+ * emulating any of it in userspace.
+ *
+ * Pass false for real-mode guests: they deliberately run without an interrupt
+ * controller, because an unwanted IRQ0 leaves a HLT-terminated guest hung.
  */
 int vm_init(bool need_irqchip);
 

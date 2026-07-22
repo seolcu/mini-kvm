@@ -29,6 +29,9 @@
 #include "long_mode.h"
 #include "linux_boot.h"
 #include "linux/linux_entry.h"
+#include <pthread.h>
+#include <signal.h>
+#include <time.h>
 
 /* Guests enter real mode at physical 0; paging mode overrides this. */
 #define GUEST_LOAD_ADDR 0x0
@@ -502,6 +505,45 @@ static int handle_vm_exit(vcpu_context_t *ctx)
 /*
  * vCPU thread entry point
  */
+/*
+ * True when the guest has executed HLT with interrupts disabled.
+ *
+ * Without an in-kernel interrupt controller KVM reports this as
+ * KVM_EXIT_HLT, but once one exists KVM blocks the vCPU inside KVM_RUN
+ * waiting for an interrupt instead -- and with IF clear no interrupt can ever
+ * arrive, so the call would never return. `cli; hlt` is the conventional way
+ * a kernel says it is finished, so this has to be recognised rather than hung
+ * on.
+ */
+static bool vcpu_is_permanently_halted(vcpu_context_t *ctx)
+{
+    struct kvm_mp_state mp;
+    struct kvm_regs regs;
+
+    if (ioctl(ctx->vcpu_fd, KVM_GET_MP_STATE, &mp) < 0 ||
+        mp.mp_state != KVM_MP_STATE_HALTED)
+    {
+        return false;
+    }
+    if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0)
+    {
+        return false;
+    }
+    if (regs.rflags & (1u << 9))        /* IF set: an interrupt could wake it */
+    {
+        return false;
+    }
+
+    if (verbose_enabled())
+    {
+        vcpu_printf(ctx, "Halted with interrupts disabled at RIP=0x%llx; "
+                         "no interrupt can wake it.\n",
+                    (unsigned long long)regs.rip);
+    }
+    ctx->running = false;
+    return true;
+}
+
 void *vcpu_thread(void *arg)
 {
     vcpu_context_t *ctx = (vcpu_context_t *)arg;
@@ -547,6 +589,20 @@ void *vcpu_thread(void *arg)
         ret = ioctl(ctx->vcpu_fd, KVM_RUN, 0);
         if (ret < 0)
         {
+            if (errno == EINTR)
+            {
+                /* The watchdog nudged us (see vcpu_run_all). Either we are
+                 * shutting down, or the guest may have wedged. */
+                if (console_shutdown_requested() || !ctx->running)
+                {
+                    break;
+                }
+                if (vcpu_is_permanently_halted(ctx))
+                {
+                    break;
+                }
+                continue;
+            }
             vcpu_printf(ctx, "KVM_RUN failed: %s\n", strerror(errno));
             break;
         }
@@ -623,4 +679,68 @@ const char *vcpu_extract_name(const char *filename)
     }
 
     return name_buf;
+}
+
+/* --- Running the vCPUs ------------------------------------------------- */
+
+static pthread_t vcpu_threads[MAX_VCPUS];
+static int running_vcpus = 0;
+static volatile bool watchdog_running = false;
+static pthread_t watchdog;
+
+/*
+ * Periodically interrupt every vCPU so that a thread blocked inside KVM_RUN
+ * gets a chance to notice a shutdown request or a wedged guest. KVM resumes
+ * the guest transparently afterwards, so this costs a few interruptions a
+ * second and changes nothing the guest can observe.
+ */
+static void *watchdog_loop(void *arg)
+{
+    (void)arg;
+
+    while (watchdog_running) {
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 200 * 1000 * 1000L };
+        nanosleep(&ts, NULL);
+
+        for (int i = 0; i < running_vcpus; i++) {
+            pthread_kill(vcpu_threads[i], SIGUSR1);
+        }
+    }
+    return NULL;
+}
+
+int vcpu_run_all(vcpu_context_t *ctxs, int count)
+{
+    int started = 0;
+    int ret = 0;
+
+    running_vcpus = 0;
+    for (int i = 0; i < count; i++) {
+        if (pthread_create(&vcpu_threads[i], NULL, vcpu_thread, &ctxs[i]) != 0) {
+            fprintf(stderr, "Failed to create thread for vCPU %d\n", i);
+            ret = -1;
+            break;
+        }
+        started++;
+        running_vcpus = started;
+    }
+
+    watchdog_running = true;
+    if (pthread_create(&watchdog, NULL, watchdog_loop, NULL) != 0) {
+        /* Not fatal: guests that exit on their own still work, but a wedged
+         * one will have to be killed. */
+        fprintf(stderr, "Warning: no watchdog; a halted guest may not exit.\n");
+        watchdog_running = false;
+    }
+
+    for (int i = 0; i < started; i++) {
+        pthread_join(vcpu_threads[i], NULL);
+    }
+
+    if (watchdog_running) {
+        watchdog_running = false;
+        pthread_join(watchdog, NULL);
+    }
+
+    return ret;
 }

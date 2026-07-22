@@ -123,6 +123,73 @@ static void term_write_hex(uint32_t value)
     }
 }
 
+/* --- Interrupts: 8259 PIC and the 8254 timer ---------------------------- */
+
+static inline void outb(uint16_t port, uint8_t val)
+{
+    __asm__ volatile("outb %0, %1" :: "a"(val), "Nd"(port));
+}
+
+struct idt_entry {
+    uint16_t offset_low;
+    uint16_t selector;
+    uint8_t  zero;
+    uint8_t  flags;
+    uint16_t offset_high;
+} __attribute__((packed));
+
+struct idt_ptr {
+    uint16_t limit;
+    uint32_t base;
+} __attribute__((packed));
+
+static struct idt_entry idt[256];
+static volatile uint32_t ticks;
+
+/* Assembly stub: acknowledge the PIC and return. */
+extern void timer_isr(void);
+__asm__(
+    ".global timer_isr\n"
+    "timer_isr:\n"
+    "  pusha\n"
+    "  incl ticks\n"
+    "  movb $0x20, %al\n"        /* end-of-interrupt to the master PIC */
+    "  outb %al, $0x20\n"
+    "  popa\n"
+    "  iret\n");
+
+static void idt_set(int vec, void (*handler)(void))
+{
+    uint32_t addr = (uint32_t)handler;
+    idt[vec].offset_low  = addr & 0xFFFF;
+    idt[vec].selector    = 0x08;    /* the flat code segment we were given */
+    idt[vec].zero        = 0;
+    idt[vec].flags       = 0x8E;    /* present, ring 0, 32-bit interrupt gate */
+    idt[vec].offset_high = (addr >> 16) & 0xFFFF;
+}
+
+/*
+ * Remap the PIC so hardware IRQs land on vectors 0x20-0x2F rather than
+ * colliding with the CPU's own exception vectors, then unmask IRQ0 only.
+ */
+static void pic_remap(void)
+{
+    outb(0x20, 0x11); outb(0xA0, 0x11);     /* start initialisation */
+    outb(0x21, 0x20); outb(0xA1, 0x28);     /* vector offsets */
+    outb(0x21, 0x04); outb(0xA1, 0x02);     /* master/slave wiring */
+    outb(0x21, 0x01); outb(0xA1, 0x01);     /* 8086 mode */
+    outb(0x21, 0xFE);                       /* mask all but IRQ0 */
+    outb(0xA1, 0xFF);
+}
+
+static void timer_init(uint32_t hz)
+{
+    uint32_t divisor = 1193182 / hz;
+    outb(0x43, 0x36);                        /* channel 0, rate generator */
+    outb(0x40, (uint8_t)(divisor & 0xFF));
+    outb(0x40, (uint8_t)(divisor >> 8));
+}
+
 /* --- Entry point -------------------------------------------------------- */
 
 void kernel_main(uint32_t magic, uint32_t info_addr)
@@ -186,6 +253,28 @@ void kernel_main(uint32_t magic, uint32_t info_addr)
             addr += e->size + sizeof(uint32_t);
         }
     }
+
+    /* Set up interrupts and wait for the timer to prove it ticks. */
+    term_setcolor(VGA_LIGHT_GREY, VGA_BLACK);
+    term_write("\nEnabling interrupts...\n");
+
+    idt_set(0x20, timer_isr);
+    struct idt_ptr idtp = { .limit = sizeof(idt) - 1, .base = (uint32_t)idt };
+    __asm__ volatile("lidt %0" :: "m"(idtp));
+
+    pic_remap();
+    timer_init(100);
+    __asm__ volatile("sti");
+
+    /* Wait for 10 ticks at 100Hz, i.e. about a tenth of a second. */
+    while (ticks < 10) {
+        __asm__ volatile("hlt");
+    }
+
+    __asm__ volatile("cli");
+    term_write("Timer interrupts received: ");
+    term_write_dec(ticks);
+    term_write("\n");
 
     term_setcolor(VGA_LIGHT_GREEN, VGA_BLACK);
     term_write("\nKernel reached the end of main. Halting.\n");

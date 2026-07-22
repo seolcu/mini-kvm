@@ -95,6 +95,14 @@ int vcpu_setup(vcpu_context_t *ctx);
 /* pthread entry point: run KVM_RUN until the guest stops. */
 void *vcpu_thread(void *arg);
 
+/*
+ * Run every vCPU to completion, one thread each, and join them.
+ * Also runs a watchdog that periodically interrupts the threads so a guest
+ * blocked in KVM_RUN can still be stopped. Returns -1 if a thread failed to
+ * start.
+ */
+int vcpu_run_all(vcpu_context_t *ctxs, int count);
+
 /* Dump memory if requested, then release this vCPU's resources. */
 void vcpu_cleanup(vcpu_context_t *ctx);
 
