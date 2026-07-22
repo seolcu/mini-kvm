@@ -117,6 +117,71 @@ static bool walk32(vcpu_context_t *ctx, const struct kvm_sregs *s,
     return true;
 }
 
+/* Safe read of a 64-bit entry from guest physical memory. */
+static bool read_phys64(vcpu_context_t *ctx, uint64_t pa, uint64_t *out)
+{
+    if (pa + 8 > ctx->mem_size) {
+        return false;
+    }
+    memcpy(out, (const char *)ctx->guest_mem + pa, 8);
+    return true;
+}
+
+/*
+ * Walk PAE or 4-level (long mode) page tables.
+ *
+ * Both use 64-bit entries and differ only in how many levels there are and
+ * how the virtual address is split, so one walk covers them: long mode starts
+ * at PML4 with four levels, PAE starts at the PDPT with three. A large-page
+ * entry ends the walk early at whatever level it appears.
+ */
+static bool walk64(vcpu_context_t *ctx, const struct kvm_sregs *s,
+                   uint64_t va, uint64_t *pa_out, char *why, size_t why_len)
+{
+    bool long_mode = (s->efer & EFER_LMA_BIT) != 0;
+    int level = long_mode ? 4 : 3;
+    uint64_t table = s->cr3 & 0x000FFFFFFFFFF000ull;
+
+    /* PAE's top level is a 4-entry PDPT selected by bits 31:30, and CR3
+     * points at it directly rather than at a 512-entry table. */
+    static const char *const level_name[5] = { "", "PTE", "PDE", "PDPTE", "PML4E" };
+
+    while (level > 0) {
+        unsigned index;
+        if (level == 3 && !long_mode) {
+            index = (unsigned)((va >> 30) & 0x3);
+        } else {
+            index = (unsigned)((va >> (12 + 9 * (level - 1))) & 0x1FF);
+        }
+
+        uint64_t entry;
+        if (!read_phys64(ctx, table + (uint64_t)index * 8, &entry)) {
+            snprintf(why, why_len, "%s table at 0x%llx is outside guest memory",
+                     level_name[level], (unsigned long long)table);
+            return false;
+        }
+        if (!(entry & PTE_PRESENT)) {
+            snprintf(why, why_len, "%s[%u] = 0x%llx (not present)",
+                     level_name[level], index, (unsigned long long)entry);
+            return false;
+        }
+
+        /* PS at level 2 or 3 means a 2MB or 1GB page ends the walk here. */
+        if (level > 1 && (entry & PTE_PSE)) {
+            uint64_t page_size = 1ull << (12 + 9 * (level - 1));
+            *pa_out = (entry & 0x000FFFFFFFFFF000ull & ~(page_size - 1)) |
+                      (va & (page_size - 1));
+            return true;
+        }
+
+        table = entry & 0x000FFFFFFFFFF000ull;
+        level--;
+    }
+
+    *pa_out = table | (va & 0xFFF);
+    return true;
+}
+
 /*
  * Resolve a guest virtual address to a physical one, honouring the current
  * mode. With paging off the two are the same.
@@ -137,9 +202,7 @@ static bool translate(vcpu_context_t *ctx, const struct kvm_sregs *s,
     }
 
     if (s->cr4 & CR4_PAE) {
-        /* PAE and long mode use a different walk; not decoded yet. */
-        snprintf(why, why_len, "PAE paging is enabled; this walk is not implemented");
-        return false;
+        return walk64(ctx, s, va, pa_out, why, why_len);
     }
 
     uint32_t pa32;

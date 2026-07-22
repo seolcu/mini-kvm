@@ -14,7 +14,7 @@ GUESTS    := minimal hello counter multiplication multiplication_short \
 # 32-bit protected-mode guests, linked at the paging entry point
 GUESTS_32 := vgademo
 # 64-bit long-mode guests (different assembler/linker flags)
-GUESTS_64 := hello_64
+GUESTS_64 := hello_64 fault64
 
 .PHONY: all clean
 

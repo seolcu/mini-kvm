@@ -36,6 +36,7 @@ kvm-vmm-x86/guest/hctest
 kvm-vmm-x86/guest/matrix
 kvm-vmm-x86/guest/hello_64
 kvm-vmm-x86/guest/vgademo
+kvm-vmm-x86/guest/fault64
 
 # 1K OS kernel binary
 kvm-vmm-x86/os-1k/kernel

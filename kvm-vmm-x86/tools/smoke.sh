@@ -212,6 +212,9 @@ run_case explain_no_idt    '' -- --explain examples/faults/no-idt.elf
 run_case explain_bad_stack '' -- --explain examples/faults/bad-stack.elf
 # Without --explain the state is gone, and saying so is the correct answer.
 run_case explain_absent    '' -- examples/faults/no-idt.elf
+# Long mode resolves addresses through 4-level page tables, a different walk
+# from the 32-bit one every other case uses.
+run_case explain_long64    '' -- --long-mode --explain guest/fault64
 
 # --- Long mode -------------------------------------------------------------
 run_case long_mode    ''            -- --long-mode guest/hello_64
