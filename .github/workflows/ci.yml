@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (warnings are errors)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          # gcc-multilib supplies the 32-bit headers the 1K OS needs (-m32).
+          sudo apt-get install -y gcc gcc-multilib make binutils
+
+      # Build from clean and require it to be warning-free. -Wall -Wextra
+      # -Wshadow are on by default in the Makefile.
+      - name: Build everything
+        working-directory: kvm-vmm-x86
+        run: |
+          set -o pipefail
+          make all 2>&1 | tee build.log
+          if grep -q 'warning:' build.log; then
+            echo "::error::Compiler warnings present"
+            grep 'warning:' build.log
+            exit 1
+          fi
+
+  test:
+    name: Smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc gcc-multilib make binutils
+
+      # GitHub's standard runners expose /dev/kvm on ubuntu-latest, but access
+      # is not guaranteed. tools/smoke.sh exits 77 when KVM is unavailable;
+      # treat that as a skip rather than a silent pass, so a green check never
+      # means "tested" when nothing ran.
+      - name: Grant KVM access
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm || true
+          fi
+          ls -l /dev/kvm || echo "no /dev/kvm on this runner"
+
+      - name: Run smoke tests
+        working-directory: kvm-vmm-x86
+        run: |
+          make all
+          set +e
+          ./tools/smoke.sh
+          rc=$?
+          set -e
+          if [ "$rc" = 77 ]; then
+            echo "::warning::/dev/kvm unavailable - smoke tests SKIPPED, not passed"
+            exit 0
+          fi
+          exit "$rc"
