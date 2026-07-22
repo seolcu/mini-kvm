@@ -1,0 +1,3 @@
+hypercall test: putchar 0123456789
+echo (ends at EOF): abc
+exit

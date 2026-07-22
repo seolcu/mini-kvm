@@ -1,0 +1,39 @@
+
+
+=== 1K OS x86 ===
+Booting in Protected Mode with Paging...
+
+Interrupt handlers registered
+  Timer (IRQ 0, vector 0x20)
+  Syscalls via hypercall (port 0x500, IOPL=3 allows user I/O)
+Created idle process (pid=0)
+Created shell process (pid=2)
+
+=== Kernel Initialization Complete ===
+Starting shell process (PID 2)...
+
+
+======================================
+   Welcome to 1K OS Shell!
+   Mini-KVM Educational Hypervisor
+======================================
+
+Type '1-9' to run demos, '0' to exit
+
+=== 1K OS Menu ===
+
+  1. Multiplication Table (2x1 ~ 9x9)
+  2. Counter (0-9)
+  3. Echo (interactive)
+  4. Fibonacci Sequence
+  5. Prime Numbers (up to 100)
+  6. Calculator
+  7. Factorial (0! ~ 12!)
+  8. GCD (Greatest Common Divisor)
+  9. About 1K OS
+  0. Exit
+
+Select: 0
+
+Exiting shell...
+Thank you for using 1K OS!
