@@ -11,9 +11,9 @@ with headers), small enough to read in an afternoon.
 
 > **Status: early but real.** Mini-KVM boots stock Multiboot and ELF kernels,
 > renders VGA text mode, and runs its own real-mode guests and a bundled 32-bit
-> teaching OS. It has **no interrupt controller yet**, so a kernel's timer will
-> not tick, and its Linux boot support is incomplete. The diagnostics that are
-> the whole point of the project are still ahead. See
+> teaching OS, with working timer interrupts. Its Linux boot support is
+> incomplete, and the diagnostics that are the whole point of the project are
+> still ahead. See
 > [Current state](#current-state) for exactly what works and
 > [Roadmap](#roadmap) for where it is going. Nothing below is aspirational: if
 > it is listed as working, `make test` covers it.
@@ -113,6 +113,7 @@ stored baselines in `kvm-vmm-x86/tools/baseline/`).
 | **ELF kernels** | Program headers loaded at their physical addresses |
 | **Multiboot kernels** | 0x1BADB002 header, boot info structure, memory map |
 | **VGA text mode** | 0xB8000 rendered to the terminal with `--vga` |
+| **Interrupts** | In-kernel 8259 PIC, IOAPIC, LAPIC and 8254 PIT for kernel guests |
 | 1K OS | Bundled teaching OS with a 9-program interactive shell |
 | Hypercall interface | Port `0x500`; `EXIT`, `PUTCHAR`, blocking `GETCHAR` |
 | 16550 UART (COM1) | `0x3f8`–`0x3ff`, forwarded to stdout |
@@ -136,6 +137,11 @@ Memory map:
   0x0009FC00 + 0x00000400  reserved
   0x000F0000 + 0x00010000  reserved
   0x00100000 + 0x07F00000  available
+
+Enabling interrupts...
+Timer interrupts received: 10
+
+Kernel reached the end of main. Halting.
 ```
 
 That example uses no Mini-KVM headers and no hypercalls; the same binary
@@ -145,7 +151,7 @@ boots under GRUB.
 
 | Gap | Consequence |
 |---|---|
-| No PIC / PIT / RTC / keyboard | Ports are accepted and discarded; no interrupt delivery, so a kernel's scheduler will not tick |
+| No PS/2 keyboard or RTC | A kernel cannot read the clock or take keyboard input |
 | No Multiboot 2 | Only the original 0x1BADB002 protocol is recognised |
 | No a.out kludge | Multiboot images that are not ELF are rejected |
 | Linux boot incomplete | `--linux` loads a bzImage but does not reach a shell |
@@ -160,8 +166,8 @@ The goal is a tool people actually use to develop x86 kernels. Each phase has a
 gate that must pass before the next begins.
 
 **Phase 1 — run other people's kernels** *(in progress)*
-Done: ELF32/64 loader, Multiboot 1, VGA text buffer.
-Remaining: 8259 PIC, 8254 PIT, RTC, PS/2 keyboard, and Multiboot 2.
+Done: ELF32/64 loader, Multiboot 1, VGA text buffer, PIC and PIT interrupts.
+Remaining: PS/2 keyboard, RTC, and Multiboot 2.
 *Gate: three third-party hobby kernels boot unmodified, pinned in CI.*
 
 **Phase 2 — boot Linux**
