@@ -1,0 +1,18 @@
+[fault64]
+[fault64] Guest triple-faulted (the CPU gave up and reset).
+[fault64]   Last instruction before the fault, at step 1:
+[fault64]     CS:EIP = 0x0008:0x0000100a, in long mode
+[fault64]     bytes: 48 8b 18 f4 00 00 00 00
+[fault64]
+[fault64]   No IDT: IDTR limit is 0. The guest has not installed an
+[fault64]   interrupt descriptor table, so any exception is fatal.
+[fault64]
+[fault64]   Stack pointer 0x8000 is mapped, so pushing a fault frame
+[fault64]   would have worked.
+[fault64]
+[fault64]   CR0=0x80000031 CR2=0x0 CR3=0x2000 CR4=0x20 EFER=0xd01
+[fault64]   EFLAGS=0x2 (IF=0)  ESP=0x8000  EBP=0x0
+[fault64]   EAX=0x700000000000 EBX=0x0 ECX=0x0 EDX=0x0
+[fault64]   CS=0x8 DS=0x10 SS=0x10  GDT at 0x5000 limit 0x27
+[fault64]   Instruction bytes: 48 8b 18 f4 00 00 00 00
+[fault64]

@@ -78,8 +78,11 @@ check_stale examples/multiboot-barebones/kernel.elf examples/multiboot-barebones
 check_stale examples/multiboot-keyboard/kernel.elf examples/multiboot-keyboard || stale_found=1
 check_stale examples/multiboot2/kernel.elf examples/multiboot2 || stale_found=1
 check_stale examples/faults/no-idt.elf examples/faults || stale_found=1
-for g in guest/hello guest/vgademo; do
-    check_stale "$g" guest || stale_found=1
+# Each guest is built from exactly one source, so compare it against that
+# rather than against the whole directory.
+for g in hello vgademo hctest fault64; do
+    check_stale "guest/$g" "guest/$g.S" guest/guest.ld guest/guest32.ld \
+        guest/guest_64.ld || stale_found=1
 done
 (( stale_found )) && exit 1
 
