@@ -395,3 +395,11 @@ void console_putchar_raw(char ch)
     fflush(stdout);
     pthread_mutex_unlock(&stdout_mutex);
 }
+
+void console_write_raw(const char *data, size_t len)
+{
+    pthread_mutex_lock(&stdout_mutex);
+    fwrite(data, 1, len, stdout);
+    fflush(stdout);
+    pthread_mutex_unlock(&stdout_mutex);
+}

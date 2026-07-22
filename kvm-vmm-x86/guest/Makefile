@@ -11,15 +11,17 @@ LDFLAGS  := -m elf_i386 -T guest.ld --oformat=binary
 # 16-bit real-mode guests
 GUESTS    := minimal hello counter multiplication multiplication_short \
              fibonacci hctest matrix
+# 32-bit protected-mode guests, linked at the paging entry point
+GUESTS_32 := vgademo
 # 64-bit long-mode guests (different assembler/linker flags)
 GUESTS_64 := hello_64
 
 .PHONY: all clean
 
-all: $(GUESTS) $(GUESTS_64)
+all: $(GUESTS) $(GUESTS_32) $(GUESTS_64)
 	@echo
 	@echo "=== Guest binaries ==="
-	@for g in $(GUESTS) $(GUESTS_64); do \
+	@for g in $(GUESTS) $(GUESTS_32) $(GUESTS_64); do \
 		printf "  %-22s %6d bytes\n" "$$g" $$(stat -c%s $$g); \
 	done
 
@@ -30,9 +32,13 @@ $(GUESTS): %: %.S guest.ld
 	@$(AS) $(ASFLAGS) $< -o $*.o
 	@$(LD) $(LDFLAGS) -o $@ $*.o
 
+$(GUESTS_32): %: %.S guest32.ld
+	@$(AS) $(ASFLAGS) $< -o $*.o
+	@$(LD) -m elf_i386 -T guest32.ld --oformat=binary -o $@ $*.o
+
 $(GUESTS_64): %: %.S guest_64.ld
 	@$(AS) --64 $< -o $*.o
 	@$(LD) -m elf_x86_64 -T guest_64.ld --oformat=binary -o $@ $*.o
 
 clean:
-	@rm -f *.o *.elf $(GUESTS) $(GUESTS_64)
+	@rm -f *.o *.elf $(GUESTS) $(GUESTS_32) $(GUESTS_64)

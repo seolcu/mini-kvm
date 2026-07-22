@@ -40,6 +40,9 @@ typedef struct {
     uint32_t entry_point;   /* guest EIP in paging mode */
     uint32_t load_offset;   /* where the binary lands in guest memory */
 
+    /* Display */
+    bool vga;               /* render the 0xB8000 text buffer */
+
     /* Diagnostics */
     bool verbose;
     debug_level_t debug_level;

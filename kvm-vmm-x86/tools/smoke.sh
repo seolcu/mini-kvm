@@ -158,6 +158,11 @@ check_case multi_vcpu \
      [[ "$(printf "%s" "$out" | grep -o "H.*!" | tr -d "0-9")" == *"Hello, KVM!"* ]]' \
     -- guest/counter guest/hello
 
+# --- VGA text mode ---------------------------------------------------------
+# With stdout redirected the renderer emits no escape sequences, just the
+# final screen as plain text -- which is what makes this diffable.
+run_case vga          ''            -- --paging --vga guest/vgademo
+
 # --- Long mode -------------------------------------------------------------
 run_case long_mode    ''            -- --long-mode guest/hello_64
 

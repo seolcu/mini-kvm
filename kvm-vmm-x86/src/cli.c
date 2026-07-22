@@ -24,6 +24,9 @@ void cli_usage(const char *argv0, FILE *out)
         "  --entry ADDR          guest entry point in paging mode (default 0x80001000)\n"
         "  --load OFFSET         where to load the binary (default 0x1000 with paging)\n"
         "\n"
+        "Display:\n"
+        "  --vga                 render the VGA text buffer at 0xB8000 (needs --paging)\n"
+        "\n"
         "Diagnostics:\n"
         "  -v, --verbose         log VM exits, hypercalls, and setup detail\n"
         "  --debug LEVEL         verbosity 0-3 (0=none 1=basic 2=detailed 3=all)\n"
@@ -146,6 +149,9 @@ int cli_parse(int argc, char **argv, vmm_config_t *cfg)
         }
         else if (is_option(arg, "--paging")) {
             cfg->paging = true;
+        }
+        else if (is_option(arg, "--vga")) {
+            cfg->vga = true;
         }
         else if (is_option(arg, "--long-mode")) {
             cfg->long_mode = true;

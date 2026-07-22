@@ -25,6 +25,7 @@
 #include "console.h"
 #include "devices.h"
 #include "debug.h"
+#include "vga.h"
 #include "linux/linux_entry.h"
 
 static vcpu_context_t vcpus[MAX_VCPUS];
@@ -181,6 +182,13 @@ int main(int argc, char **argv)
 
     console_init_colors(cfg.num_guests);
 
+    /* VGA rendering reads the guest's text buffer through our own mapping, so
+     * it needs the vCPU memory to exist. vCPU 0 owns the display. */
+    if (cfg.vga && vga_start(vcpus[0].guest_mem, vcpus[0].mem_size) < 0) {
+        ret = 1;
+        goto cleanup_vcpus;
+    }
+
     /* Every mode gets a stdin reader: HC_GETCHAR is available to real-mode
      * guests too, and without one they would block on input that never
      * arrives. The IRQ hook stays NULL outside Linux mode, because an
@@ -194,6 +202,7 @@ int main(int argc, char **argv)
         ret = 1;
     }
 
+    vga_stop();
     console_stop_input_thread();
     devices_set_irq_hook(NULL);
 

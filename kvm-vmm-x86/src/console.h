@@ -15,6 +15,7 @@
 #define CONSOLE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 /* --- Terminal -------------------------------------------------------- */
 
@@ -88,5 +89,12 @@ void console_vcpu_putchar(int vcpu_id, const char *name, char ch);
 
 /* Emit one character with no vCPU tagging (UART pass-through). */
 void console_putchar_raw(char ch);
+
+/*
+ * Emit a block of bytes atomically with respect to other console output.
+ * Used by the VGA renderer, which must not have a frame interleaved with
+ * guest character output.
+ */
+void console_write_raw(const char *data, size_t len);
 
 #endif /* CONSOLE_H */

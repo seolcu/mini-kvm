@@ -1,0 +1,8 @@
+
+  Mini-KVM VGA text mode
+
+Written directly to 0xB8000 by the guest.
+
+
+
+No VM exits were involved in rendering this screen.
