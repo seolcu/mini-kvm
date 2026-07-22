@@ -28,7 +28,7 @@ USER_LDFLAGS = -m elf_i386 -T user.ld \
                --build-id=none \
                -z norelro
 
-.PHONY: all clean test info disasm run
+.PHONY: all clean info disasm run
 
 all: kernel
 
@@ -100,12 +100,7 @@ disasm: kernel.elf
 	objdump -d -M intel kernel.elf > kernel.asm
 	@echo "Disassembly written to kernel.asm"
 
-# Run kernel in VMM
+# Run the kernel under the VMM.
+# --entry/--load match kernel.ld, which links at 0x80001000.
 run: kernel
-	@echo "=== Running kernel in VMM ==="
-	cd .. && ./kvm-vmm --paging --entry=0x80001000 --load=0x1000 os-1k/kernel
-
-# Test with simple kernel
-test: test_kernel
-	@echo "=== Running test kernel in VMM ==="
-	cd .. && ./kvm-vmm --paging --entry=0x80001000 --load=0x1000 os-1k/test_kernel
+	@cd .. && ./kvm-vmm --paging --entry=0x80001000 --load=0x1000 os-1k/kernel

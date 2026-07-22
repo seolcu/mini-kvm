@@ -1,82 +1,93 @@
 # Makefile for Mini-KVM (x86)
-# Build system only - run binaries directly
+#
+# Builds the VMM, the real-mode guest programs, and the 1K OS.
+# Run the resulting binaries directly; see `make help`.
 
 # --- Configuration ---
-CC = gcc
-CFLAGS = -Wall -Wextra -O2 -std=gnu11
-LDFLAGS = -pthread
-VMM = kvm-vmm
+CC       := gcc
+CFLAGS   := -Wall -Wextra -Wshadow -O2 -std=gnu11
+CPPFLAGS := -MMD -MP
+LDFLAGS  := -pthread
+VMM      := kvm-vmm
+BUILDDIR := build
 
-# --- Default Goal: Show help ---
+# Every .c under src/, including the quarantined Linux boot support.
+SRCS := $(wildcard src/*.c) $(wildcard src/linux/*.c)
+OBJS := $(patsubst src/%.c,$(BUILDDIR)/%.o,$(SRCS))
+DEPS := $(OBJS:.o=.d)
+
 .DEFAULT_GOAL := help
+.PHONY: all clean help vmm guests 1k-os test
 
-# --- Phony Targets ---
-.PHONY: all clean help vmm guests 1k-os
+# --- Build targets ---
 
-# --- Build Targets ---
-
-# Build everything
 all: vmm guests 1k-os
 	@echo
-	@echo "--- All components built successfully! ---"
-	@echo "Run binaries directly:"
-	@echo "  ./kvm-vmm guest/<name>"
+	@echo "--- All components built ---"
+	@echo "  ./kvm-vmm guest/hello"
 	@echo "  ./kvm-vmm --paging os-1k/kernel"
 
-# Build the VMM
 vmm: $(VMM)
 
-$(VMM): src/main.c src/debug.c src/cpuid.c src/msr.c src/paging_64.c src/linux_boot.c \
-        src/protected_mode.h src/long_mode.h src/debug.h src/cpuid.h src/msr.h src/paging_64.h src/linux_boot.h
-	@echo "=> Building VMM..."
-	$(CC) $(CFLAGS) -o $(VMM) src/main.c src/debug.c src/cpuid.c src/msr.c src/paging_64.c src/linux_boot.c $(LDFLAGS)
+# Link. Object files carry their own header dependencies via -MMD, so there
+# is no hand-maintained header list to fall out of date.
+$(VMM): $(OBJS)
+	@echo "=> Linking $@"
+	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build all real-mode guest binaries
+$(BUILDDIR)/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	@echo "=> Compiling $<"
+	@$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
+
 guests:
-	@echo "=> Building all real-mode guests..."
-	@$(MAKE) -C guest > /dev/null
+	@echo "=> Building real-mode guests..."
+	@$(MAKE) --no-print-directory -C guest
 
-# Build the 1K OS
 1k-os:
 	@echo "=> Building 1K OS..."
-	@$(MAKE) -C os-1k > /dev/null
+	@$(MAKE) --no-print-directory -C os-1k
+
+# --- Verification ---
+
+# There is no unit test suite: tools/smoke.sh runs every guest path and diffs
+# the output against a stored baseline. Requires /dev/kvm.
+test: all
+	@./tools/smoke.sh
 
 # --- Cleanup ---
+
 clean:
-	@echo "=> Cleaning build artifacts..."
-	@rm -f $(VMM)
-	@$(MAKE) -C guest clean > /dev/null
-	@$(MAKE) -C os-1k clean > /dev/null
-	@echo "Cleanup complete."
+	@echo "=> Cleaning..."
+	@rm -rf $(BUILDDIR) $(VMM)
+	@$(MAKE) --no-print-directory -C guest clean
+	@$(MAKE) --no-print-directory -C os-1k clean
+	@echo "Done."
 
 # --- Help ---
+
 help:
-	@echo "Mini-KVM Build System"
+	@echo "Mini-KVM build system"
 	@echo
-	@echo "Usage: make <target>"
+	@echo "Targets:"
+	@echo "  all        Build the VMM, guests, and 1K OS"
+	@echo "  vmm        Build only the VMM"
+	@echo "  guests     Build only the real-mode guests"
+	@echo "  1k-os      Build only the 1K OS"
+	@echo "  test       Build, then run tools/smoke.sh (needs /dev/kvm)"
+	@echo "  clean      Remove all build artifacts"
 	@echo
-	@echo "--- Build Targets ---"
-	@echo "  all                    Build all components (VMM, guests, 1K OS)"
-	@echo "  vmm                    Build only the VMM"
-	@echo "  guests                 Build all real-mode guests"
-	@echo "  1k-os                  Build only the 1K OS"
-	@echo "  clean                  Remove all build artifacts"
+	@echo "Running:"
+	@echo "  ./kvm-vmm guest/hello                     Real mode, one vCPU"
+	@echo "  ./kvm-vmm guest/counter guest/hello       One guest per vCPU (max 4)"
+	@echo "  ./kvm-vmm --paging os-1k/kernel           1K OS interactive shell"
+	@echo "  ./kvm-vmm --long-mode guest/hello_64      64-bit long mode"
+	@echo "  ./kvm-vmm --help                          All options"
 	@echo
-	@echo "--- Running Programs ---"
-	@echo "Real Mode Guests:"
-	@echo "  ./kvm-vmm guest/minimal"
-	@echo "  ./kvm-vmm guest/hello"
-	@echo "  ./kvm-vmm guest/counter"
-	@echo "  ./kvm-vmm guest/multiplication"
-	@echo "  ./kvm-vmm guest/fibonacci"
-	@echo "  ./kvm-vmm guest/hctest"
-	@echo
-	@echo "Multi-vCPU (2-4 guests):"
-	@echo "  ./kvm-vmm guest/multiplication guest/counter"
-	@echo "  ./kvm-vmm guest/counter guest/hello guest/multiplication guest/minimal"
-	@echo
-	@echo "1K OS (Protected Mode):"
-	@echo "  ./kvm-vmm --paging os-1k/kernel"
-	@echo "  printf '1\\n0\\n' | ./kvm-vmm --paging os-1k/kernel  # Run multiplication"
-	@echo "  printf '3\\nHello\\nquit\\n0\\n' | ./kvm-vmm --paging os-1k/kernel  # Run echo"
-	@echo
+	@echo "Scripted 1K OS runs (piped stdin skips raw mode, so these are"
+	@echo "deterministic; input ends the guest at EOF):"
+	@echo "  printf '1\\n0\\n'             | ./kvm-vmm --paging os-1k/kernel"
+	@echo "  printf '6\\n10 + 5\\nq\\n0\\n' | ./kvm-vmm --paging os-1k/kernel"
+
+# Header dependencies generated by -MMD.
+-include $(DEPS)
