@@ -87,4 +87,17 @@ int cpu_mode_enter_protected(vcpu_context_t *ctx);
 /* Same, for 64-bit long mode: PAE page tables, EFER.LME/LMA, CS.L. */
 int cpu_mode_enter_long(vcpu_context_t *ctx);
 
+/*
+ * Enter 32-bit protected mode with paging OFF, which is the state the
+ * Multiboot specification requires: flat 4GB code and data segments, CR0.PE
+ * set and CR0.PG clear, interrupts disabled. eax and ebx are placed in those
+ * registers for the Multiboot handshake; pass 0 for a plain ELF guest.
+ *
+ * The guest is expected to install its own stack, but gets
+ * PROT_MODE_DEFAULT_STACK so that a missing one produces a comprehensible
+ * failure rather than a reset.
+ */
+int cpu_mode_enter_flat32(vcpu_context_t *ctx, uint32_t entry,
+                          uint32_t eax, uint32_t ebx);
+
 #endif /* CPU_MODES_H */

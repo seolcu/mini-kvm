@@ -246,15 +246,24 @@ int vcpu_setup(vcpu_context_t *ctx)
     // Skip paging/long-mode setup for Linux real-mode entry
     if (!ctx->linux_guest)
     {
-        // If long mode is enabled, use 64-bit setup
-        if (ctx->long_mode)
+        // An ELF or Multiboot image dictates its own entry state: 32-bit
+        // protected mode with paging off, which is what those kernels expect
+        // to enable themselves. --paging and --long-mode do not apply.
+        if (ctx->image.format == GUEST_ELF || ctx->image.format == GUEST_MULTIBOOT)
+        {
+            if (cpu_mode_enter_flat32(ctx, ctx->image.entry,
+                                      ctx->image.boot_eax, ctx->image.boot_ebx) < 0)
+            {
+                return -1;
+            }
+        }
+        else if (ctx->long_mode)
         {
             if (cpu_mode_enter_long(ctx) < 0)
             {
                 return -1;
             }
         }
-        // Otherwise, if paging is enabled, switch to Protected Mode (32-bit)
         else if (ctx->use_paging)
         {
             if (cpu_mode_enter_protected(ctx) < 0)

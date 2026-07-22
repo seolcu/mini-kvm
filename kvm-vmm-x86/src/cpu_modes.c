@@ -403,3 +403,61 @@ int cpu_mode_enter_protected(vcpu_context_t *ctx)
 
     return 0;
 }
+
+int cpu_mode_enter_flat32(vcpu_context_t *ctx, uint32_t entry,
+                          uint32_t eax, uint32_t ebx)
+{
+    struct kvm_sregs sregs;
+    struct kvm_regs regs;
+
+    /* The descriptor tables still have to exist even though a Multiboot
+     * kernel is expected to replace them: KVM validates the segment state we
+     * hand it, and a fault before the guest installs an IDT must land
+     * somewhere defined. */
+    gdt_setup(ctx->guest_mem, verbose_enabled());
+    idt_setup(ctx->guest_mem, verbose_enabled());
+
+    if (ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
+        perror("KVM_GET_SREGS (flat32)");
+        return -1;
+    }
+
+    sregs.gdt.base = GDT_ADDR;
+    sregs.gdt.limit = GDT_TOTAL_SIZE - 1;
+    sregs.idt.base = GDT_ADDR + GDT_TOTAL_SIZE;
+    sregs.idt.limit = (256 * sizeof(idt_entry_t)) - 1;
+
+    /* PE and ET, but deliberately not PG: Multiboot hands the kernel a
+     * machine with paging disabled, and it enables paging itself. */
+    sregs.cr0 = 0x00000011;
+    sregs.cr3 = 0;
+    sregs.cr4 = 0;
+    sregs.efer = 0;
+
+    segments_set_flat32(&sregs);
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_SREGS, &sregs) < 0) {
+        perror("KVM_SET_SREGS (flat32)");
+        return -1;
+    }
+
+    memset(&regs, 0, sizeof(regs));
+    regs.rip = entry;
+    regs.rax = eax;
+    regs.rbx = ebx;
+    regs.rflags = 0x2;      /* IF clear, VM clear, bit 1 always set */
+    regs.rsp = PROT_MODE_DEFAULT_STACK;
+    regs.rbp = regs.rsp;
+
+    if (ioctl(ctx->vcpu_fd, KVM_SET_REGS, &regs) < 0) {
+        perror("KVM_SET_REGS (flat32)");
+        return -1;
+    }
+
+    if (verbose_enabled()) {
+        vcpu_printf(ctx, "Protected mode, paging off: EIP=0x%x EAX=0x%x EBX=0x%x\n",
+                    entry, eax, ebx);
+    }
+
+    return 0;
+}

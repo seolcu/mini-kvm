@@ -17,11 +17,11 @@ OBJS := $(patsubst src/%.c,$(BUILDDIR)/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
 
 .DEFAULT_GOAL := help
-.PHONY: all clean help vmm guests 1k-os test
+.PHONY: all clean help vmm guests 1k-os examples test
 
 # --- Build targets ---
 
-all: vmm guests 1k-os
+all: vmm guests 1k-os examples
 	@echo
 	@echo "--- All components built ---"
 	@echo "  ./kvm-vmm guest/hello"
@@ -48,6 +48,12 @@ guests:
 	@echo "=> Building 1K OS..."
 	@$(MAKE) --no-print-directory -C os-1k
 
+# Third-party-style guests that use no Mini-KVM facilities. These are the
+# real test of whether the VMM can run someone else's kernel.
+examples:
+	@echo "=> Building examples..."
+	@$(MAKE) --no-print-directory -C examples/multiboot-barebones
+
 # --- Verification ---
 
 # There is no unit test suite: tools/smoke.sh runs every guest path and diffs
@@ -62,6 +68,7 @@ clean:
 	@rm -rf $(BUILDDIR) $(VMM)
 	@$(MAKE) --no-print-directory -C guest clean
 	@$(MAKE) --no-print-directory -C os-1k clean
+	@$(MAKE) --no-print-directory -C examples/multiboot-barebones clean
 	@echo "Done."
 
 # --- Help ---
@@ -74,6 +81,7 @@ help:
 	@echo "  vmm        Build only the VMM"
 	@echo "  guests     Build only the real-mode guests"
 	@echo "  1k-os      Build only the 1K OS"
+	@echo "  examples   Build the example Multiboot kernel"
 	@echo "  test       Build, then run tools/smoke.sh (needs /dev/kvm)"
 	@echo "  clean      Remove all build artifacts"
 	@echo
@@ -82,6 +90,8 @@ help:
 	@echo "  ./kvm-vmm guest/counter guest/hello       One guest per vCPU (max 4)"
 	@echo "  ./kvm-vmm --paging os-1k/kernel           1K OS interactive shell"
 	@echo "  ./kvm-vmm --long-mode guest/hello_64      64-bit long mode"
+	@echo "  ./kvm-vmm --vga examples/multiboot-barebones/kernel.elf"
+	@echo "                                            A stock Multiboot kernel"
 	@echo "  ./kvm-vmm --help                          All options"
 	@echo
 	@echo "Scripted 1K OS runs (piped stdin skips raw mode, so these are"

@@ -1,0 +1,192 @@
+/*
+ * A minimal Multiboot kernel, in the style of the OSDev "Bare Bones"
+ * tutorial: write to the VGA text buffer and inspect what the bootloader
+ * handed us.
+ *
+ * This exists to prove that Mini-KVM can run an ordinary hobby kernel that
+ * knows nothing about Mini-KVM. It uses no hypercalls and no Mini-KVM
+ * headers; the same binary boots under GRUB or QEMU.
+ */
+
+#include <stdint.h>
+#include <stddef.h>
+
+#define MULTIBOOT_BOOTLOADER_MAGIC 0x2BADB002
+
+/* Boot information structure, through the fields this example reads. */
+struct multiboot_info {
+    uint32_t flags;
+    uint32_t mem_lower;
+    uint32_t mem_upper;
+    uint32_t boot_device;
+    uint32_t cmdline;
+    uint32_t mods_count;
+    uint32_t mods_addr;
+    uint32_t syms[4];
+    uint32_t mmap_length;
+    uint32_t mmap_addr;
+    uint32_t drives_length;
+    uint32_t drives_addr;
+    uint32_t config_table;
+    uint32_t boot_loader_name;
+} __attribute__((packed));
+
+struct multiboot_mmap_entry {
+    uint32_t size;
+    uint64_t base_addr;
+    uint64_t length;
+    uint32_t type;
+} __attribute__((packed));
+
+/* --- VGA text terminal -------------------------------------------------- */
+
+#define VGA_WIDTH  80
+#define VGA_HEIGHT 25
+
+enum vga_color {
+    VGA_BLACK = 0, VGA_BLUE = 1, VGA_GREEN = 2, VGA_CYAN = 3,
+    VGA_LIGHT_GREY = 7, VGA_LIGHT_GREEN = 10, VGA_LIGHT_RED = 12,
+    VGA_YELLOW = 14, VGA_WHITE = 15,
+};
+
+static uint16_t *const vga_buffer = (uint16_t *)0xB8000;
+static size_t term_row;
+static size_t term_col;
+static uint8_t term_color;
+
+static uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg)
+{
+    return (uint8_t)fg | (uint8_t)(bg << 4);
+}
+
+static void term_setcolor(enum vga_color fg, enum vga_color bg)
+{
+    term_color = vga_entry_color(fg, bg);
+}
+
+static void term_init(void)
+{
+    term_row = 0;
+    term_col = 0;
+    term_setcolor(VGA_LIGHT_GREY, VGA_BLACK);
+    for (size_t i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++) {
+        vga_buffer[i] = (uint16_t)' ' | (uint16_t)term_color << 8;
+    }
+}
+
+static void term_putchar(char c)
+{
+    if (c == '\n') {
+        term_col = 0;
+        term_row++;
+        return;
+    }
+    vga_buffer[term_row * VGA_WIDTH + term_col] =
+        (uint16_t)c | (uint16_t)term_color << 8;
+    if (++term_col == VGA_WIDTH) {
+        term_col = 0;
+        term_row++;
+    }
+}
+
+static void term_write(const char *s)
+{
+    while (*s) {
+        term_putchar(*s++);
+    }
+}
+
+static void term_write_dec(uint32_t value)
+{
+    char buf[11];
+    int i = 0;
+
+    if (value == 0) {
+        term_putchar('0');
+        return;
+    }
+    while (value > 0 && i < (int)sizeof(buf)) {
+        buf[i++] = (char)('0' + value % 10);
+        value /= 10;
+    }
+    while (i-- > 0) {
+        term_putchar(buf[i]);
+    }
+}
+
+static void term_write_hex(uint32_t value)
+{
+    static const char digits[] = "0123456789ABCDEF";
+    term_write("0x");
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        term_putchar(digits[(value >> shift) & 0xF]);
+    }
+}
+
+/* --- Entry point -------------------------------------------------------- */
+
+void kernel_main(uint32_t magic, uint32_t info_addr)
+{
+    term_init();
+
+    term_setcolor(VGA_WHITE, VGA_BLUE);
+    term_write(" Multiboot bare bones kernel                                   \n");
+    term_setcolor(VGA_LIGHT_GREY, VGA_BLACK);
+    term_write("\n");
+
+    /* Did a Multiboot-compliant loader actually start us? */
+    term_write("Bootloader magic: ");
+    term_write_hex(magic);
+    if (magic == MULTIBOOT_BOOTLOADER_MAGIC) {
+        term_setcolor(VGA_LIGHT_GREEN, VGA_BLACK);
+        term_write("  OK\n");
+    } else {
+        term_setcolor(VGA_LIGHT_RED, VGA_BLACK);
+        term_write("  BAD\n");
+        term_setcolor(VGA_LIGHT_GREY, VGA_BLACK);
+        return;
+    }
+    term_setcolor(VGA_LIGHT_GREY, VGA_BLACK);
+
+    const struct multiboot_info *mbi = (const struct multiboot_info *)info_addr;
+
+    term_write("Info structure:   ");
+    term_write_hex(info_addr);
+    term_write("\n");
+
+    if (mbi->flags & (1 << 0)) {
+        term_write("Lower memory:     ");
+        term_write_dec(mbi->mem_lower);
+        term_write(" KB\n");
+        term_write("Upper memory:     ");
+        term_write_dec(mbi->mem_upper / 1024);
+        term_write(" MB\n");
+    }
+
+    if (mbi->flags & (1 << 9)) {
+        term_write("Booted by:        ");
+        term_write((const char *)mbi->boot_loader_name);
+        term_write("\n");
+    }
+
+    if (mbi->flags & (1 << 6)) {
+        term_write("\nMemory map:\n");
+        uint32_t addr = mbi->mmap_addr;
+        uint32_t end = mbi->mmap_addr + mbi->mmap_length;
+        while (addr < end) {
+            const struct multiboot_mmap_entry *e =
+                (const struct multiboot_mmap_entry *)addr;
+
+            term_write("  ");
+            term_write_hex((uint32_t)e->base_addr);
+            term_write(" + ");
+            term_write_hex((uint32_t)e->length);
+            term_write(e->type == 1 ? "  available\n" : "  reserved\n");
+
+            addr += e->size + sizeof(uint32_t);
+        }
+    }
+
+    term_setcolor(VGA_LIGHT_GREEN, VGA_BLACK);
+    term_write("\nKernel reached the end of main. Halting.\n");
+}

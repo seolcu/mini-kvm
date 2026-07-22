@@ -18,6 +18,7 @@
 
 #include "cli.h"
 #include "console.h"
+#include "loader.h"
 
 /*
  * Debug state for the experimental Linux bring-up. Single-stepping a kernel
@@ -59,6 +60,9 @@ typedef struct {
     bool long_mode;
     uint32_t entry_point;
     uint32_t load_offset;
+
+    /* How the guest image was loaded, and the state it wants at entry. */
+    guest_image_t image;
 
     /* Linux boot (experimental) */
     bool linux_guest;

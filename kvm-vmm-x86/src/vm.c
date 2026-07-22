@@ -17,6 +17,7 @@
 /* Guest memory sizes per mode. */
 #define MEM_SIZE_REAL   (256 * 1024)            /* fits 4 vCPUs under 1MB */
 #define MEM_SIZE_PAGING (4 * 1024 * 1024)
+#define MEM_SIZE_KERNEL (128 * 1024 * 1024)     /* ELF/Multiboot guests */
 #define MEM_SIZE_LINUX  (256 * 1024 * 1024)
 
 /* TSS scratch area, well clear of the kernel and page tables. */
@@ -114,6 +115,11 @@ int vm_map_vcpu_memory(vcpu_context_t *ctx)
 {
     if (ctx->linux_guest) {
         ctx->mem_size = MEM_SIZE_LINUX;
+    } else if (ctx->image.format == GUEST_ELF ||
+               ctx->image.format == GUEST_MULTIBOOT) {
+        /* These load at 1MB and expect to allocate above it. 4MB would leave
+         * a kernel almost no usable memory. */
+        ctx->mem_size = MEM_SIZE_KERNEL;
     } else if (ctx->use_paging) {
         ctx->mem_size = MEM_SIZE_PAGING;
     } else {

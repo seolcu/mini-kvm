@@ -52,7 +52,7 @@ fi
 
 # Refuse to "verify" a stale binary: a failed build would otherwise leave the
 # previous kvm-vmm in place and every case would pass against old code.
-stale="$(find src os-1k guest -newer "${vmm}" \
+stale="$(find src os-1k guest examples -newer "${vmm}" \
          \( -name '*.c' -o -name '*.h' -o -name '*.S' -o -name '*.ld' \) 2>/dev/null)"
 if [[ -n "${stale}" ]]; then
     echo "ERROR: these sources are newer than ${vmm##*/} - rebuild first (make all):" >&2
@@ -162,6 +162,11 @@ check_case multi_vcpu \
 # With stdout redirected the renderer emits no escape sequences, just the
 # final screen as plain text -- which is what makes this diffable.
 run_case vga          ''            -- --paging --vga guest/vgademo
+
+# --- Third-party kernel formats --------------------------------------------
+# A stock Multiboot kernel that uses no Mini-KVM facilities at all. This is
+# the case that decides whether the VMM can run someone else's work.
+run_case multiboot    ''            -- --vga examples/multiboot-barebones/kernel.elf
 
 # --- Long mode -------------------------------------------------------------
 run_case long_mode    ''            -- --long-mode guest/hello_64

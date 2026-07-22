@@ -26,6 +26,7 @@
 #include "devices.h"
 #include "debug.h"
 #include "vga.h"
+#include "loader.h"
 #include "linux/linux_entry.h"
 
 static vcpu_context_t vcpus[MAX_VCPUS];
@@ -65,8 +66,8 @@ static void report_configuration(const vmm_config_t *cfg)
 }
 
 /*
- * Build one vCPU per guest binary: allocate its memory, load the flat binary,
- * and enter the requested CPU mode.
+ * Build one vCPU per guest image: work out the format, allocate memory sized
+ * for it, load it, and enter the CPU mode the image expects.
  */
 static int prepare_vcpus(const vmm_config_t *cfg)
 {
@@ -84,14 +85,47 @@ static int prepare_vcpus(const vmm_config_t *cfg)
         ctx->entry_point = cfg->entry_point;
         ctx->load_offset = cfg->load_offset;
 
-        if (verbose_enabled()) {
-            printf("[Setup vCPU %d: %s]\n", i, ctx->name);
+        /* The image decides how much memory it needs, so identify it before
+         * allocating anything. */
+        if (loader_probe(ctx->guest_binary, &ctx->image.format) < 0) {
+            return -1;
         }
 
-        if (vm_map_vcpu_memory(ctx) < 0 ||
-            vcpu_load_guest_binary(ctx->guest_binary, ctx->guest_mem,
-                                   ctx->mem_size, ctx->load_offset) < 0 ||
-            vcpu_setup(ctx) < 0) {
+        bool is_kernel_image = (ctx->image.format == GUEST_ELF ||
+                                ctx->image.format == GUEST_MULTIBOOT);
+
+        /* Each vCPU's memory is mapped at guest physical vcpu_id * mem_size,
+         * so only vCPU 0 sees its kernel at the physical addresses the image
+         * was linked for. Refusing is better than silently misplacing it. */
+        if (is_kernel_image && cfg->num_guests > 1) {
+            fprintf(stderr,
+                    "Error: %s is a %s image, which must be loaded at its own "
+                    "physical addresses.\n"
+                    "       Only one such guest can run at a time; run it alone.\n",
+                    ctx->guest_binary, loader_format_name(ctx->image.format));
+            return -1;
+        }
+
+        if (verbose_enabled()) {
+            printf("[Setup vCPU %d: %s (%s)]\n", i, ctx->name,
+                   loader_format_name(ctx->image.format));
+        }
+
+        if (vm_map_vcpu_memory(ctx) < 0) {
+            return -1;
+        }
+
+        if (is_kernel_image) {
+            if (loader_load(ctx->guest_binary, ctx->guest_mem, ctx->mem_size,
+                            cfg->linux_cmdline, &ctx->image) < 0) {
+                return -1;
+            }
+        } else if (vcpu_load_guest_binary(ctx->guest_binary, ctx->guest_mem,
+                                          ctx->mem_size, ctx->load_offset) < 0) {
+            return -1;
+        }
+
+        if (vcpu_setup(ctx) < 0) {
             return -1;
         }
 

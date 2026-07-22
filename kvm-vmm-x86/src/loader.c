@@ -1,0 +1,414 @@
+/*
+ * loader.c - guest image loading and format detection
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <elf.h>
+
+#include "loader.h"
+#include "debug.h"
+
+/* --- Multiboot 1 ------------------------------------------------------- */
+
+#define MB_HEADER_MAGIC   0x1BADB002u   /* in the kernel image */
+#define MB_BOOTLOADER_MAGIC 0x2BADB002u /* handed to the kernel in EAX */
+#define MB_HEADER_SEARCH  8192          /* spec: within the first 8KB */
+
+#define MB_HEADER_FLAG_AOUT_KLUDGE (1u << 16)
+
+/* Boot information flags we populate. */
+#define MB_INFO_MEMORY    (1u << 0)     /* mem_lower / mem_upper */
+#define MB_INFO_CMDLINE   (1u << 2)
+#define MB_INFO_MMAP      (1u << 6)
+#define MB_INFO_LOADER    (1u << 9)     /* boot_loader_name */
+
+/*
+ * Where the boot information block goes. Low memory below the traditional
+ * 1MB kernel load address, clear of the GDT and IDT the VMM builds at 0x500.
+ */
+#define MB_INFO_ADDR      0x00007000u
+#define MB_MMAP_ADDR      0x00007100u
+#define MB_CMDLINE_ADDR   0x00007400u
+#define MB_LOADER_ADDR    0x00007600u
+
+/* Multiboot 1 boot information structure, through the fields we set. */
+struct multiboot_info {
+    uint32_t flags;
+    uint32_t mem_lower;
+    uint32_t mem_upper;
+    uint32_t boot_device;
+    uint32_t cmdline;
+    uint32_t mods_count;
+    uint32_t mods_addr;
+    uint32_t syms[4];
+    uint32_t mmap_length;
+    uint32_t mmap_addr;
+    uint32_t drives_length;
+    uint32_t drives_addr;
+    uint32_t config_table;
+    uint32_t boot_loader_name;
+} __attribute__((packed));
+
+/*
+ * One memory map entry. `size` counts the bytes that follow it, so an entry
+ * occupies size + 4 bytes -- a quirk of the specification that exists so the
+ * structure can grow.
+ */
+struct multiboot_mmap_entry {
+    uint32_t size;
+    uint64_t base_addr;
+    uint64_t length;
+    uint32_t type;
+} __attribute__((packed));
+
+#define MB_MEMORY_AVAILABLE 1
+#define MB_MEMORY_RESERVED  2
+
+const char *loader_format_name(guest_format_t format)
+{
+    switch (format) {
+    case GUEST_FLAT:      return "flat binary";
+    case GUEST_ELF:       return "ELF";
+    case GUEST_MULTIBOOT: return "Multiboot";
+    default:              return "unknown";
+    }
+}
+
+/* Read a whole file into memory. Caller frees. */
+static unsigned char *read_file(const char *path, size_t *size_out)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "Error: cannot open '%s': ", path);
+        perror(NULL);
+        return NULL;
+    }
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        perror("fseek");
+        fclose(f);
+        return NULL;
+    }
+    long len = ftell(f);
+    if (len < 0) {
+        perror("ftell");
+        fclose(f);
+        return NULL;
+    }
+    rewind(f);
+
+    unsigned char *buf = malloc((size_t)len ? (size_t)len : 1);
+    if (!buf) {
+        fprintf(stderr, "Error: out of memory reading '%s'\n", path);
+        fclose(f);
+        return NULL;
+    }
+
+    if (len > 0 && fread(buf, 1, (size_t)len, f) != (size_t)len) {
+        fprintf(stderr, "Error: short read on '%s'\n", path);
+        free(buf);
+        fclose(f);
+        return NULL;
+    }
+
+    fclose(f);
+    *size_out = (size_t)len;
+    return buf;
+}
+
+static bool is_elf(const unsigned char *buf, size_t size)
+{
+    return size >= EI_NIDENT && memcmp(buf, ELFMAG, SELFMAG) == 0;
+}
+
+/*
+ * Find a Multiboot 1 header: magic, 4-byte aligned, within the first 8KB,
+ * with magic + flags + checksum summing to zero in 32-bit arithmetic.
+ * Returns its offset, or -1.
+ */
+static long find_multiboot_header(const unsigned char *buf, size_t size)
+{
+    size_t limit = size < MB_HEADER_SEARCH ? size : MB_HEADER_SEARCH;
+
+    for (size_t off = 0; off + 12 <= limit; off += 4) {
+        uint32_t magic, flags, checksum;
+        memcpy(&magic, buf + off, 4);
+        if (magic != MB_HEADER_MAGIC) {
+            continue;
+        }
+        memcpy(&flags, buf + off + 4, 4);
+        memcpy(&checksum, buf + off + 8, 4);
+
+        if ((uint32_t)(magic + flags + checksum) == 0) {
+            return (long)off;
+        }
+    }
+    return -1;
+}
+
+int loader_probe(const char *path, guest_format_t *format)
+{
+    size_t size = 0;
+    unsigned char *buf = read_file(path, &size);
+    if (!buf) {
+        return -1;
+    }
+
+    if (!is_elf(buf, size)) {
+        *format = GUEST_FLAT;
+    } else if (find_multiboot_header(buf, size) >= 0) {
+        *format = GUEST_MULTIBOOT;
+    } else {
+        *format = GUEST_ELF;
+    }
+
+    free(buf);
+    return 0;
+}
+
+/*
+ * Copy one PT_LOAD segment to its physical address, zeroing the tail that is
+ * present in memory but not in the file (.bss).
+ */
+static int load_segment(void *mem, size_t mem_size, const unsigned char *file,
+                        size_t file_size, uint64_t offset, uint64_t filesz,
+                        uint64_t memsz, uint64_t paddr, guest_image_t *out)
+{
+    if (memsz == 0) {
+        return 0;
+    }
+    if (filesz > memsz) {
+        fprintf(stderr, "Error: malformed segment (file size %llu > memory size %llu)\n",
+                (unsigned long long)filesz, (unsigned long long)memsz);
+        return -1;
+    }
+    if (offset > file_size || filesz > file_size - offset) {
+        fprintf(stderr, "Error: segment at file offset %llu+%llu runs past end of file\n",
+                (unsigned long long)offset, (unsigned long long)filesz);
+        return -1;
+    }
+    if (paddr > mem_size || memsz > mem_size - paddr) {
+        fprintf(stderr,
+                "Error: segment wants physical 0x%llx..0x%llx but guest memory is only %zu MB.\n",
+                (unsigned long long)paddr, (unsigned long long)(paddr + memsz),
+                mem_size / (1024 * 1024));
+        return -1;
+    }
+
+    memcpy((char *)mem + paddr, file + offset, (size_t)filesz);
+    memset((char *)mem + paddr + filesz, 0, (size_t)(memsz - filesz));
+
+    if ((uint32_t)paddr < out->load_low) {
+        out->load_low = (uint32_t)paddr;
+    }
+    if ((uint32_t)(paddr + memsz) > out->load_high) {
+        out->load_high = (uint32_t)(paddr + memsz);
+    }
+
+    DEBUG_PRINT(DEBUG_DETAILED, "  segment -> 0x%08llx  %llu bytes (+%llu zeroed)",
+                (unsigned long long)paddr, (unsigned long long)filesz,
+                (unsigned long long)(memsz - filesz));
+    return 0;
+}
+
+static int load_elf32(void *mem, size_t mem_size, const unsigned char *file,
+                      size_t file_size, guest_image_t *out)
+{
+    const Elf32_Ehdr *eh = (const Elf32_Ehdr *)file;
+
+    if (file_size < sizeof(*eh) ||
+        eh->e_phoff > file_size ||
+        (uint64_t)eh->e_phnum * eh->e_phentsize > file_size - eh->e_phoff) {
+        fprintf(stderr, "Error: ELF program headers are out of bounds\n");
+        return -1;
+    }
+
+    for (unsigned i = 0; i < eh->e_phnum; i++) {
+        const Elf32_Phdr *ph =
+            (const Elf32_Phdr *)(file + eh->e_phoff + (size_t)i * eh->e_phentsize);
+        if (ph->p_type != PT_LOAD) {
+            continue;
+        }
+        if (load_segment(mem, mem_size, file, file_size, ph->p_offset,
+                         ph->p_filesz, ph->p_memsz, ph->p_paddr, out) < 0) {
+            return -1;
+        }
+    }
+
+    out->entry = eh->e_entry;
+    return 0;
+}
+
+static int load_elf64(void *mem, size_t mem_size, const unsigned char *file,
+                      size_t file_size, guest_image_t *out)
+{
+    const Elf64_Ehdr *eh = (const Elf64_Ehdr *)file;
+
+    if (file_size < sizeof(*eh) ||
+        eh->e_phoff > file_size ||
+        (uint64_t)eh->e_phnum * eh->e_phentsize > file_size - eh->e_phoff) {
+        fprintf(stderr, "Error: ELF program headers are out of bounds\n");
+        return -1;
+    }
+
+    for (unsigned i = 0; i < eh->e_phnum; i++) {
+        const Elf64_Phdr *ph =
+            (const Elf64_Phdr *)(file + eh->e_phoff + (size_t)i * eh->e_phentsize);
+        if (ph->p_type != PT_LOAD) {
+            continue;
+        }
+        if (load_segment(mem, mem_size, file, file_size, ph->p_offset,
+                         ph->p_filesz, ph->p_memsz, ph->p_paddr, out) < 0) {
+            return -1;
+        }
+    }
+
+    if (eh->e_entry > 0xFFFFFFFFull) {
+        fprintf(stderr, "Error: 64-bit entry point 0x%llx is out of range; Mini-KVM "
+                        "enters ELF guests in 32-bit protected mode.\n",
+                (unsigned long long)eh->e_entry);
+        return -1;
+    }
+    out->entry = (uint32_t)eh->e_entry;
+    return 0;
+}
+
+/*
+ * Write one memory map entry and return the bytes consumed.
+ */
+static size_t write_mmap_entry(void *mem, uint32_t addr, uint64_t base,
+                               uint64_t length, uint32_t type)
+{
+    struct multiboot_mmap_entry e = {
+        .size = sizeof(struct multiboot_mmap_entry) - sizeof(uint32_t),
+        .base_addr = base,
+        .length = length,
+        .type = type,
+    };
+    memcpy((char *)mem + addr, &e, sizeof(e));
+    return sizeof(e);
+}
+
+/*
+ * Build the Multiboot boot information block: memory sizes, a memory map, the
+ * command line, and our name.
+ */
+static void build_multiboot_info(void *mem, size_t mem_size,
+                                 const char *cmdline, guest_image_t *out)
+{
+    /* Memory map. Mirrors a conventional PC: low memory, the EBDA and BIOS
+     * areas carved out as reserved, then everything above 1MB. */
+    uint32_t cursor = MB_MMAP_ADDR;
+    cursor += (uint32_t)write_mmap_entry(mem, cursor, 0x00000000, 0x0009FC00,
+                                         MB_MEMORY_AVAILABLE);
+    cursor += (uint32_t)write_mmap_entry(mem, cursor, 0x0009FC00, 0x00000400,
+                                         MB_MEMORY_RESERVED);   /* EBDA */
+    cursor += (uint32_t)write_mmap_entry(mem, cursor, 0x000F0000, 0x00010000,
+                                         MB_MEMORY_RESERVED);   /* BIOS ROM */
+    cursor += (uint32_t)write_mmap_entry(mem, cursor, 0x00100000,
+                                         (uint64_t)mem_size - 0x00100000,
+                                         MB_MEMORY_AVAILABLE);
+
+    const char *loader_name = "Mini-KVM";
+    strcpy((char *)mem + MB_LOADER_ADDR, loader_name);
+
+    struct multiboot_info info;
+    memset(&info, 0, sizeof(info));
+    info.flags = MB_INFO_MEMORY | MB_INFO_MMAP | MB_INFO_LOADER;
+
+    /* Both are in kilobytes; upper memory is measured from 1MB. */
+    info.mem_lower = 640;
+    info.mem_upper = (uint32_t)((mem_size - 0x100000) / 1024);
+
+    info.mmap_addr = MB_MMAP_ADDR;
+    info.mmap_length = cursor - MB_MMAP_ADDR;
+    info.boot_loader_name = MB_LOADER_ADDR;
+
+    if (cmdline) {
+        size_t n = strlen(cmdline);
+        if (n > 0x200 - 1) {
+            n = 0x200 - 1;
+        }
+        memcpy((char *)mem + MB_CMDLINE_ADDR, cmdline, n);
+        ((char *)mem)[MB_CMDLINE_ADDR + n] = '\0';
+        info.cmdline = MB_CMDLINE_ADDR;
+        info.flags |= MB_INFO_CMDLINE;
+    }
+
+    memcpy((char *)mem + MB_INFO_ADDR, &info, sizeof(info));
+
+    out->boot_eax = MB_BOOTLOADER_MAGIC;
+    out->boot_ebx = MB_INFO_ADDR;
+}
+
+int loader_load(const char *path, void *mem, size_t mem_size,
+                const char *cmdline, guest_image_t *out)
+{
+    size_t file_size = 0;
+    unsigned char *file = read_file(path, &file_size);
+    if (!file) {
+        return -1;
+    }
+
+    memset(out, 0, sizeof(*out));
+    out->load_low = UINT32_MAX;
+
+    int rc = 0;
+
+    if (!is_elf(file, file_size)) {
+        /* Flat binary: the caller places it; nothing to interpret. */
+        out->format = GUEST_FLAT;
+        free(file);
+        return 0;
+    }
+
+    long mb_off = find_multiboot_header(file, file_size);
+    out->format = (mb_off >= 0) ? GUEST_MULTIBOOT : GUEST_ELF;
+
+    if (mb_off >= 0) {
+        uint32_t flags;
+        memcpy(&flags, file + mb_off + 4, 4);
+        if (flags & MB_HEADER_FLAG_AOUT_KLUDGE) {
+            /* The kludge supplies its own load addresses for non-ELF images.
+             * Refusing is better than loading it to the wrong place. */
+            fprintf(stderr, "Error: this kernel uses the Multiboot a.out kludge, "
+                            "which Mini-KVM does not implement yet.\n");
+            free(file);
+            return -1;
+        }
+        DEBUG_PRINT(DEBUG_BASIC, "Multiboot header at file offset %ld", mb_off);
+    }
+
+    if (file[EI_CLASS] == ELFCLASS32) {
+        rc = load_elf32(mem, mem_size, file, file_size, out);
+    } else if (file[EI_CLASS] == ELFCLASS64) {
+        rc = load_elf64(mem, mem_size, file, file_size, out);
+    } else {
+        fprintf(stderr, "Error: unrecognised ELF class %u\n", file[EI_CLASS]);
+        rc = -1;
+    }
+
+    free(file);
+    if (rc < 0) {
+        return -1;
+    }
+
+    if (out->load_low == UINT32_MAX) {
+        fprintf(stderr, "Error: ELF image contains no loadable segments\n");
+        return -1;
+    }
+
+    if (out->format == GUEST_MULTIBOOT) {
+        build_multiboot_info(mem, mem_size, cmdline, out);
+    }
+
+    if (verbose_enabled()) {
+        printf("Loaded %s: entry 0x%08x, physical 0x%08x-0x%08x\n",
+               loader_format_name(out->format), out->entry,
+               out->load_low, out->load_high);
+    }
+
+    return 0;
+}
