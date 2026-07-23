@@ -1,0 +1,120 @@
+name: 'Boot a kernel with Mini-KVM'
+description: >-
+  Build Mini-KVM, boot your kernel under it, and fail the job if the output is
+  not what you expected. Intended for x86 kernel projects that want a real boot
+  in CI rather than only a successful compile.
+author: 'Mini-KVM'
+
+branding:
+  icon: 'cpu'
+  color: 'blue'
+
+inputs:
+  kernel:
+    description: 'Path to the kernel to boot (ELF, Multiboot, Multiboot 2, or flat binary).'
+    required: true
+  expect:
+    description: >-
+      Text the guest must print. One assertion per line; all must hold.
+    required: false
+    default: ''
+  forbid:
+    description: >-
+      Text the guest must NOT print, one per line. "panic" and "triple-faulted"
+      are good defaults for a kernel that is supposed to boot cleanly.
+    required: false
+    default: ''
+  input:
+    description: 'Text to feed the guest on stdin. \n is understood.'
+    required: false
+    default: ''
+  input-delay:
+    description: >-
+      Seconds to wait before sending input. A guest whose console comes up
+      late needs this, or its first characters are consumed by driver probing.
+    required: false
+    default: '0'
+  timeout:
+    description: 'Seconds to allow before giving up.'
+    required: false
+    default: '30'
+  allow-timeout:
+    description: >-
+      Set to true when the guest is meant to keep running. The assertions are
+      then the only contract, and reaching the timeout is not a failure.
+    required: false
+    default: 'false'
+  vmm-args:
+    description: >-
+      Extra arguments for Mini-KVM, for example "--vga" or "--explain".
+    required: false
+    default: ''
+  ref:
+    description: 'Mini-KVM git ref to build.'
+    required: false
+    default: 'main'
+
+outputs:
+  guest-output:
+    description: 'Everything the guest printed.'
+    value: ${{ steps.run.outputs.guest-output }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check for KVM
+      shell: bash
+      run: |
+        # Without KVM nothing can be verified. Fail loudly rather than
+        # reporting a green check for a test that never ran.
+        if [[ ! -e /dev/kvm ]]; then
+          echo "::error::/dev/kvm is not present. Mini-KVM needs hardware" \
+               "virtualization; use a runner that provides it."
+          exit 1
+        fi
+        sudo chmod 666 /dev/kvm || true
+
+    - name: Build Mini-KVM
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc gcc-multilib make binutils
+        git clone --depth 1 --branch "${{ inputs.ref }}" \
+          https://github.com/seolcu/mini-kvm.git "${RUNNER_TEMP}/mini-kvm"
+        make -C "${RUNNER_TEMP}/mini-kvm/kvm-vmm-x86" vmm
+
+    - name: Boot the kernel
+      id: run
+      shell: bash
+      run: |
+        args=()
+        while IFS= read -r line; do
+          [[ -n "${line// }" ]] && args+=(--expect "$line")
+        done <<< "${{ inputs.expect }}"
+        while IFS= read -r line; do
+          [[ -n "${line// }" ]] && args+=(--forbid "$line")
+        done <<< "${{ inputs.forbid }}"
+
+        [[ -n "${{ inputs.input }}" ]] && args+=(--input "${{ inputs.input }}")
+        [[ "${{ inputs.input-delay }}" != "0" ]] && args+=(--input-delay "${{ inputs.input-delay }}")
+        [[ "${{ inputs.allow-timeout }}" == "true" ]] && args+=(--allow-timeout)
+        args+=(--timeout "${{ inputs.timeout }}" --show)
+
+        # shellcheck disable=SC2206
+        vmm_args=(${{ inputs.vmm-args }})
+
+        out_file="${RUNNER_TEMP}/guest-output.txt"
+        set +e
+        "${RUNNER_TEMP}/mini-kvm/kvm-vmm-x86/tools/ktest" \
+          "${args[@]}" "${{ inputs.kernel }}" \
+          ${vmm_args:+-- "${vmm_args[@]}"} 2>&1 | tee "${out_file}"
+        rc=${PIPESTATUS[0]}
+        set -e
+
+        {
+          echo 'guest-output<<KTEST_EOF'
+          cat "${out_file}"
+          echo 'KTEST_EOF'
+        } >> "$GITHUB_OUTPUT"
+
+        exit "$rc"

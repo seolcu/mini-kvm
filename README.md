@@ -98,7 +98,7 @@ Hello from 64-bit!
 
 ## Current state
 
-Everything in this section is exercised by `make test` (24 cases diffed against
+Everything in this section is exercised by `make test` (27 cases diffed against
 stored baselines in `kvm-vmm-x86/tools/baseline/`).
 
 **Working**
@@ -123,6 +123,9 @@ stored baselines in `kvm-vmm-x86/tools/baseline/`).
 | **RTC / CMOS** | MC146818 read-only, giving the guest the host wall clock |
 | **Fault analysis** | `--explain` names the cause; 32-bit, PAE and long-mode walks |
 | **Linux** | A stock distribution kernel boots to a shell with an initramfs |
+| **Inspection** | `--inspect` decodes GDT/IDT/page tables; `--trace-modes` follows transitions |
+| **Preflight checks** | Warns before boot when an image's entry point cannot work |
+| **CI integration** | `tools/ktest` and a GitHub Action |
 | Diagnostics | `--verbose`, `--debug 0..3`, `--dump-regs`, `--dump-mem` |
 
 A stock Multiboot kernel that knows nothing about Mini-KVM boots and runs:
@@ -193,7 +196,6 @@ presenting reset-vector registers as if they meant something.
 | No a.out kludge | Multiboot images that are not ELF are rejected |
 | No virtio | Linux has no disk or network; an initramfs is the only root filesystem |
 | Serial input races early boot | The kernel's UART probe eats anything typed before the shell starts, as on real hardware |
-| No live inspection | `inspect` for dumping a running guest's tables is not written |
 
 ---
 
@@ -228,13 +230,44 @@ sh-5.3# uname -s
 Linux
 ```
 
-**Phase 3 — the diagnostics that justify the project** *(started)*
-Done: `--explain` post-mortem fault analysis, 32-bit, PAE and long mode.
-Remaining: `inspect` for decoding a live guest's GDT/IDT/page tables,
-mode-transition tracing, and pre-boot validation of descriptor tables.
+**Phase 3 — the diagnostics that justify the project** *(done)*
+`--explain` post-mortem fault analysis across 32-bit, PAE and long mode;
+`--inspect` for decoding a live guest's GDT, IDT and page tables;
+`--trace-modes` for real → protected → long transitions; and preflight checks
+that catch an unusable entry point before the guest starts.
 
-**Phase 4 — workflow**
-A kernel test runner (boot, assert on output, exit code) and a GitHub Action.
+Using `--inspect` on the bundled 1K OS found a real bug in it on the first
+run: its IDT gate descriptors had the selector and offset fields the wrong way
+round.
+
+**Phase 4 — workflow** *(done)*
+`tools/ktest` boots a kernel, asserts on what it printed, and exits non-zero
+if the assertions do not hold — the piece a kernel project needs to turn "it
+compiles" into "it boots" in CI:
+
+```bash
+tools/ktest --name "my kernel boots" \
+    --expect "Hello from my kernel" --forbid "panic" \
+    build/kernel.elf -- --vga
+```
+
+It takes `--expect`, `--expect-re`, `--forbid` and `--expect-file`, can feed
+the guest stdin (with a delay, for consoles that come up late), and exits 77
+when `/dev/kvm` is unavailable so a skipped run is never mistaken for a pass.
+Anything after `--` goes to Mini-KVM.
+
+`action.yml` wraps it as a GitHub Action:
+
+```yaml
+- uses: seolcu/mini-kvm@main
+  with:
+    kernel: build/kernel.elf
+    expect: |
+      Hello from my kernel
+    forbid: |
+      panic
+    vmm-args: --vga
+```
 
 Deliberately out of scope: virtio-blk/net, microVM and AI-sandbox use cases,
 and ARM/RISC-V ports.

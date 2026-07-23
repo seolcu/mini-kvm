@@ -54,16 +54,39 @@ jobs:
           fi
           ls -l /dev/kvm || echo "no /dev/kvm on this runner"
 
+      - name: Build
+        working-directory: kvm-vmm-x86
+        run: make all
+
       - name: Run smoke tests
         working-directory: kvm-vmm-x86
         run: |
-          make all
           set +e
           ./tools/smoke.sh
           rc=$?
           set -e
           if [ "$rc" = 77 ]; then
             echo "::warning::/dev/kvm unavailable - smoke tests SKIPPED, not passed"
+            exit 0
+          fi
+          exit "$rc"
+
+      # Exercise the kernel test runner the way a downstream project would,
+      # so the tool that other projects depend on is covered here too.
+      - name: Kernel test runner
+        working-directory: kvm-vmm-x86
+        run: |
+          set +e
+          ./tools/ktest --name "barebones" \
+            --expect "Bootloader magic: 0x2BADB002  OK" \
+            --expect "Timer interrupts received: 10" \
+            --forbid "triple-faulted" \
+            examples/multiboot-barebones/kernel.elf -- --vga
+          rc=$?
+          set -e
+          # 77 means /dev/kvm was unavailable; treat it as a skip, not a pass.
+          if [ "$rc" = 77 ]; then
+            echo "::warning::/dev/kvm unavailable - ktest SKIPPED"
             exit 0
           fi
           exit "$rc"

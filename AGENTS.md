@@ -28,6 +28,7 @@ Mini-KVM is an educational x86 hypervisor (~4,000 lines of C) built directly on 
 | `debug.c` | register/memory dumps behind `--dump-regs` / `--dump-mem` |
 | `loader.c` | format detection; ELF, Multiboot 1 and 2, modules |
 | `explain.c` | `--explain`: why a guest triple-faulted |
+| `inspect.c` | `--inspect`, `--trace-modes`, and pre-boot image checks |
 | `linux/` | **quarantined** bzImage boot; reaches a shell with an initramfs |
 
 Keep it that way: no `linux_guest` special cases outside `src/linux/`, and no new globals shared across modules.
@@ -69,7 +70,9 @@ There are no unit tests. Verification is running guests and diffing stdout again
 make test          # == make all && ./tools/smoke.sh
 ```
 
-`tools/smoke.sh` runs all 24 cases (real mode, multi-vCPU, long mode, VGA text mode, four Multiboot kernels, fault analysis, Linux to a shell, the full hypercall ABI, and six 1K OS programs) and diffs normalized output against `tools/baseline/`. It refuses to run against stale artifacts — each is compared against the sources that actually build it — so a failed build cannot masquerade as a pass. `./tools/smoke.sh --update` re-baselines — do that only when you have *intended* an output change, and say so in the commit.
+`tools/smoke.sh` runs all 27 cases (real mode, multi-vCPU, long mode, VGA text mode, four Multiboot kernels, fault analysis, Linux to a shell, the full hypercall ABI, and six 1K OS programs) and diffs normalized output against `tools/baseline/`. It refuses to run against stale artifacts — each is compared against the sources that actually build it — so a failed build cannot masquerade as a pass. `./tools/smoke.sh --update` re-baselines — do that only when you have *intended* an output change, and say so in the commit.
+
+`tools/ktest` is the same idea packaged for other projects: boot a kernel, assert on its output, exit non-zero if the assertions fail. `action.yml` wraps it as a GitHub Action. Both exit 77 when KVM is unavailable, which callers must treat as a skip rather than a pass.
 
 `/dev/kvm` is required — guests depend on Mini-KVM hypercalls, there is no QEMU/TCG fallback. The script exits 77 and says so rather than pretending; if KVM is unavailable, report that instead of substituting another runner.
 

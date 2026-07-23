@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+#
+# ktest - boot a kernel under Mini-KVM, assert on what it printed, exit
+#         non-zero if it did not.
+#
+# This is the piece a kernel project needs in CI: something that runs the
+# kernel it just built and fails the build when the output is wrong. Doing it
+# by hand means wiring up a VMM, a timeout, and output matching every time.
+#
+# Usage:
+#   ktest [options] <kernel> [-- <vmm args>...]
+#
+# Assertions (repeatable, all must hold):
+#   --expect TEXT        output must contain TEXT
+#   --expect-re REGEX    output must match REGEX (extended regular expression)
+#   --forbid TEXT        output must NOT contain TEXT
+#   --expect-file FILE   every non-blank line of FILE must appear, in order
+#
+# Options:
+#   --input TEXT         feed TEXT to the guest on stdin (\n understood)
+#   --input-delay SEC    wait SEC before sending input, for guests whose
+#                        console is not ready at once (Linux needs this)
+#   --timeout SEC        give up after SEC (default 30)
+#   --name NAME          label for the report line (default: the kernel path)
+#   --allow-timeout      do not fail when the timeout is reached. An OS that
+#                        keeps running is behaving correctly; the assertions
+#                        are the contract, not termination
+#   --show               print the guest output even when the test passes
+#   --vmm PATH           which Mini-KVM to use (default: alongside this script)
+#
+# Anything after `--` is passed through to Mini-KVM, so a test can use --vga,
+# --module, --explain and the rest. The kernel is appended as the guest
+# argument, unless the passthrough already names it -- which is how the Linux
+# path works, since there the kernel is given with --linux rather than
+# positionally.
+#
+# Exit status: 0 all assertions held, 1 an assertion failed, 2 usage error,
+# 77 KVM unavailable (the conventional "skipped" status).
+
+set -uo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+vmm="${script_dir}/../kvm-vmm"
+
+timeout_sec=30
+allow_timeout=0
+input=""
+input_delay=0
+name=""
+show=0
+kernel=""
+declare -a expects=() expect_res=() forbids=() vmm_args=()
+
+die() { echo "ktest: $*" >&2; exit 2; }
+
+while (( $# )); do
+    case "$1" in
+        --expect)      [[ $# -ge 2 ]] || die "--expect needs a value";      expects+=("$2"); shift 2 ;;
+        --expect-re)   [[ $# -ge 2 ]] || die "--expect-re needs a value";   expect_res+=("$2"); shift 2 ;;
+        --forbid)      [[ $# -ge 2 ]] || die "--forbid needs a value";      forbids+=("$2"); shift 2 ;;
+        --expect-file)
+            [[ $# -ge 2 ]] || die "--expect-file needs a value"
+            [[ -f "$2" ]] || die "no such file: $2"
+            while IFS= read -r line; do
+                [[ -n "${line// }" ]] && expects+=("$line")
+            done < "$2"
+            shift 2 ;;
+        --input)       [[ $# -ge 2 ]] || die "--input needs a value";       input="$2"; shift 2 ;;
+        --input-delay) [[ $# -ge 2 ]] || die "--input-delay needs a value"; input_delay="$2"; shift 2 ;;
+        --timeout)     [[ $# -ge 2 ]] || die "--timeout needs a value";     timeout_sec="$2"; shift 2 ;;
+        --name)        [[ $# -ge 2 ]] || die "--name needs a value";        name="$2"; shift 2 ;;
+        --vmm)         [[ $# -ge 2 ]] || die "--vmm needs a value";         vmm="$2"; shift 2 ;;
+        --allow-timeout) allow_timeout=1; shift ;;
+        --show)        show=1; shift ;;
+        -h|--help)     sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
+        --)            shift; vmm_args=("$@"); break ;;
+        -*)            die "unknown option $1" ;;
+        *)             [[ -z "$kernel" ]] || die "more than one kernel given"; kernel="$1"; shift ;;
+    esac
+done
+
+[[ -n "$kernel" ]] || die "no kernel given (try --help)"
+[[ -f "$kernel" ]] || die "no such kernel: $kernel"
+[[ -x "$vmm" ]] || die "Mini-KVM not found at $vmm (build it, or pass --vmm)"
+[[ -n "$name" ]] || name="$kernel"
+
+# Without KVM nothing can be verified, and reporting success would be a lie.
+if [[ ! -c /dev/kvm || ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+    echo "SKIP ${name}: /dev/kvm unavailable"
+    exit 77
+fi
+
+# Feed stdin, optionally after a delay. A guest whose console comes up late
+# (Linux probes its UART during boot, and the probe consumes whatever is
+# already waiting) needs the pause or it loses the first characters.
+feed_input() {
+    if [[ -n "$input" ]]; then
+        [[ "$input_delay" != "0" ]] && sleep "$input_delay"
+        printf '%b' "$input"
+        # Hold the pipe open briefly so the guest can act on the input before
+        # it sees EOF.
+        sleep 1
+    fi
+}
+
+# Only append the kernel if the passthrough arguments do not already name it.
+already_named=0
+for a in ${vmm_args+"${vmm_args[@]}"}; do
+    [[ "$a" == "$kernel" ]] && already_named=1
+done
+
+if (( already_named )); then
+    out="$(feed_input | timeout "$timeout_sec" "$vmm" ${vmm_args+"${vmm_args[@]}"} 2>&1)"
+else
+    out="$(feed_input | timeout "$timeout_sec" "$vmm" ${vmm_args+"${vmm_args[@]}"} "$kernel" 2>&1)"
+fi
+rc=$?
+
+# Strip colour so assertions match the text the guest actually printed.
+out="$(printf '%s' "$out" | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g')"
+
+declare -a failures=()
+
+if (( rc == 124 && !allow_timeout )); then
+    failures+=("timed out after ${timeout_sec}s (use --allow-timeout if the guest is meant to keep running)")
+fi
+
+for want in ${expects+"${expects[@]}"}; do
+    [[ "$out" == *"$want"* ]] || failures+=("expected output to contain: $want")
+done
+for re in ${expect_res+"${expect_res[@]}"}; do
+    printf '%s' "$out" | grep -Eq -- "$re" || failures+=("expected output to match: $re")
+done
+for bad in ${forbids+"${forbids[@]}"}; do
+    [[ "$out" != *"$bad"* ]] || failures+=("output must not contain: $bad")
+done
+
+if (( ${#failures[@]} == 0 )); then
+    echo "PASS ${name}"
+    (( show )) && printf '%s\n' "$out" | sed 's/^/  | /'
+    exit 0
+fi
+
+echo "FAIL ${name}"
+printf '  %s\n' "${failures[@]}"
+echo "  --- guest output ---"
+printf '%s\n' "$out" | sed 's/^/  | /'
+exit 1
