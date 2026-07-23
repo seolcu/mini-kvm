@@ -37,12 +37,16 @@ typedef struct {
 
     /* CPU mode */
     bool paging;            /* 32-bit protected mode with paging */
+    bool flat32;            /* 32-bit protected mode, paging off */
     bool long_mode;         /* 64-bit long mode (implies paging) */
     uint32_t entry_point;   /* guest EIP in paging mode */
     uint32_t load_offset;   /* where the binary lands in guest memory */
 
     /* Display */
     bool vga;               /* render the 0xB8000 text buffer */
+    bool framebuffer;       /* offer a linear framebuffer to video-mode kernels */
+    uint32_t fb_width, fb_height, fb_bpp;
+    const char *fb_dump_path;   /* write the framebuffer here as a PPM on exit */
 
     /* Diagnostics */
     bool verbose;

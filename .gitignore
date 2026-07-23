@@ -72,3 +72,9 @@ softcon/past_awards_posters.playwright-mcp/
 # Example kernel build artifacts
 kvm-vmm-x86/examples/**/*.elf
 kvm-vmm-x86/examples/**/*.o
+
+# Third-party kernels fetched by tools/third-party.sh
+kvm-vmm-x86/third-party/
+
+# Linux boot artifacts for the smoke tests (see tools/smoke.sh)
+kvm-vmm-x86/initramfs.cpio

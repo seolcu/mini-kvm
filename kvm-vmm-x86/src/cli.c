@@ -20,6 +20,8 @@ void cli_usage(const char *argv0, FILE *out)
         "\n"
         "CPU mode:\n"
         "  --paging              32-bit protected mode with paging (for the 1K OS)\n"
+        "  --flat32              32-bit protected mode with paging off, for a flat\n"
+        "                        binary whose own bootloader would have done it\n"
         "  --long-mode           64-bit long mode (implies --paging)\n"
         "  --entry ADDR          guest entry point in paging mode (default 0x80001000)\n"
         "  --load OFFSET         where to load the binary (default 0x1000 with paging)\n"
@@ -30,6 +32,11 @@ void cli_usage(const char *argv0, FILE *out)
         "\n"
         "Display:\n"
         "  --vga                 render the VGA text buffer at 0xB8000 (needs --paging)\n"
+        "  --fb [WxHxBPP]        give a kernel that asks for video mode a linear\n"
+        "                        framebuffer (default 1024x768x32). Mini-KVM cannot\n"
+        "                        display graphics; the guest runs and the pixels can\n"
+        "                        be written out with --fb-dump\n"
+        "  --fb-dump FILE        write the framebuffer to FILE as a PPM on exit\n"
         "\n"
         "Diagnostics:\n"
         "  -v, --verbose         log VM exits, hypercalls, and setup detail\n"
@@ -133,6 +140,9 @@ int cli_parse(int argc, char **argv, vmm_config_t *cfg)
     /* Enough for a kernel that dies during early setup, which is the case
      * --explain is for; a longer-lived one needs --explain-steps. */
     cfg->explain_steps = 2000000;
+    cfg->fb_width = 1024;
+    cfg->fb_height = 768;
+    cfg->fb_bpp = 32;
     cfg->linux_entry = LINUX_ENTRY_CODE32;
     cfg->linux_rsi = LINUX_RSI_BASE;
 
@@ -164,8 +174,36 @@ int cli_parse(int argc, char **argv, vmm_config_t *cfg)
         else if (is_option(arg, "--paging")) {
             cfg->paging = true;
         }
+        else if (is_option(arg, "--flat32")) {
+            cfg->flat32 = true;
+        }
         else if (is_option(arg, "--vga")) {
             cfg->vga = true;
+        }
+        else if (is_option(arg, "--fb")) {
+            cfg->framebuffer = true;
+            /* A geometry may follow, but "--fb" alone is the common case, so
+             * only consume a value when it is attached with '='. */
+            if (arg[strlen("--fb")] == '=') {
+                const char *geom = arg + strlen("--fb") + 1;
+                unsigned w, h, bpp;
+                if (sscanf(geom, "%ux%ux%u", &w, &h, &bpp) != 3) {
+                    fprintf(stderr, "Error: --fb expects WIDTHxHEIGHTxBPP, got '%s'\n", geom);
+                    return 1;
+                }
+                if (bpp != 32 && bpp != 24) {
+                    fprintf(stderr, "Error: --fb supports 24 or 32 bits per pixel\n");
+                    return 1;
+                }
+                cfg->fb_width = w;
+                cfg->fb_height = h;
+                cfg->fb_bpp = bpp;
+            }
+        }
+        else if (is_option(arg, "--fb-dump")) {
+            if (!(value = option_value(arg, "--fb-dump", argc, argv, &i, &inlined))) return 1;
+            cfg->fb_dump_path = value;
+            cfg->framebuffer = true;
         }
         else if (is_option(arg, "--module")) {
             if (!(value = option_value(arg, "--module", argc, argv, &i, &inlined))) return 1;
@@ -285,9 +323,22 @@ int cli_parse(int argc, char **argv, vmm_config_t *cfg)
         return 1;
     }
 
-    /* Without paging the binary is loaded at physical 0 and entered in real
-     * mode, so a load offset would just misplace it. */
-    if (!cfg->paging) {
+    if (cfg->flat32 && cfg->paging) {
+        fprintf(stderr, "Error: --flat32 and --paging are different modes; "
+                        "pick one\n");
+        return 1;
+    }
+
+    /* A flat32 guest is loaded where its own bootloader would have put it,
+     * which is also where it is entered. 0x1000 is the usual choice and the
+     * default here; --load and --entry override it. */
+    if (cfg->flat32) {
+        if (cfg->entry_point == 0x80001000) {
+            cfg->entry_point = cfg->load_offset;
+        }
+    } else if (!cfg->paging) {
+        /* Without paging the binary is loaded at physical 0 and entered in
+         * real mode, so a load offset would just misplace it. */
         cfg->load_offset = 0;
     }
 

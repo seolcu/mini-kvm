@@ -48,4 +48,15 @@ void vga_stop(void);
 /* True while the render thread is active. */
 bool vga_active(void);
 
+/*
+ * Write a linear framebuffer out as a binary PPM.
+ *
+ * Mini-KVM cannot display graphics in a terminal, but a kernel that draws
+ * into one should still be checkable: the image can be opened afterwards, and
+ * its contents asserted on in a test. Returns 0 on success.
+ */
+int fb_dump_ppm(const void *guest_mem, size_t mem_size, uint32_t addr,
+                uint32_t width, uint32_t height, uint32_t bpp, uint32_t pitch,
+                uint32_t palette_addr, const char *path);
+
 #endif /* VGA_H */

@@ -28,6 +28,7 @@
 
 /* Where the Multiboot 2 information block goes. */
 #define MB2_INFO_ADDR         0x00008000u
+#define MB_PALETTE_ADDR       0x00009000u   /* 256 x 3 bytes */
 #define MB2_INFO_MAX          0x00001000u
 
 /* --- Multiboot 1 ------------------------------------------------------- */
@@ -50,6 +51,8 @@
 #define MB_HEADER_FLAG_VIDEO (1u << 2)
 
 /* framebuffer_type values. */
+#define MB_FRAMEBUFFER_INDEXED  0
+#define MB_FRAMEBUFFER_RGB      1
 #define MB_FRAMEBUFFER_EGA_TEXT 2
 
 /*
@@ -451,6 +454,62 @@ static int load_modules(void *mem, size_t mem_size, const char *const *modules,
     return count;
 }
 
+/*
+ * Reserve a linear framebuffer near the top of guest memory.
+ *
+ * Mini-KVM cannot display graphics, but a kernel that asks for a framebuffer
+ * usually cannot proceed without one, and giving it real memory to draw into
+ * lets it boot and be inspected. The region is reported as reserved in the
+ * memory map so the kernel does not allocate over its own display.
+ */
+static void place_framebuffer(void *mem, size_t mem_size,
+                              const framebuffer_t *request, framebuffer_t *out)
+{
+    *out = *request;
+    out->pitch = request->width * (request->bpp / 8);
+    out->size = out->pitch * request->height;
+    out->indexed = (request->bpp == 8);
+
+    if (out->indexed) {
+        /*
+         * An indexed mode needs a palette to mean anything. Write the standard
+         * VGA 256-colour layout: 16 EGA colours, a 6x6x6 colour cube, then a
+         * greyscale ramp -- which is what a guest expects to find if it does
+         * not program its own.
+         */
+        uint8_t *pal = (uint8_t *)mem + MB_PALETTE_ADDR;
+        static const uint8_t ega[16][3] = {
+            {0,0,0},{0,0,170},{0,170,0},{0,170,170},{170,0,0},{170,0,170},
+            {170,85,0},{170,170,170},{85,85,85},{85,85,255},{85,255,85},
+            {85,255,255},{255,85,85},{255,85,255},{255,255,85},{255,255,255},
+        };
+        for (int i = 0; i < 16; i++) {
+            pal[i * 3 + 0] = ega[i][0];
+            pal[i * 3 + 1] = ega[i][1];
+            pal[i * 3 + 2] = ega[i][2];
+        }
+        for (int i = 0; i < 216; i++) {
+            static const uint8_t level[6] = { 0, 51, 102, 153, 204, 255 };
+            int n = 16 + i;
+            pal[n * 3 + 0] = level[(i / 36) % 6];
+            pal[n * 3 + 1] = level[(i / 6) % 6];
+            pal[n * 3 + 2] = level[i % 6];
+        }
+        for (int i = 0; i < 24; i++) {
+            int n = 232 + i;
+            uint8_t g = (uint8_t)(8 + i * 10);
+            pal[n * 3 + 0] = pal[n * 3 + 1] = pal[n * 3 + 2] = g;
+        }
+        out->palette_addr = MB_PALETTE_ADDR;
+    }
+
+    /* Page-aligned, one megabyte clear of the end so a kernel that rounds up
+     * its own bookkeeping does not run off the edge. */
+    uint32_t top = (uint32_t)(mem_size - 0x100000);
+    out->addr = (top - out->size) & ~0xFFFu;
+    out->enabled = true;
+}
+
 static void build_multiboot_info(void *mem, size_t mem_size,
                                  const char *cmdline, int num_modules,
                                  bool wants_video, guest_image_t *out)
@@ -464,9 +523,17 @@ static void build_multiboot_info(void *mem, size_t mem_size,
                                          MB_MEMORY_RESERVED);   /* EBDA */
     cursor += (uint32_t)write_mmap_entry(mem, cursor, 0x000F0000, 0x00010000,
                                          MB_MEMORY_RESERVED);   /* BIOS ROM */
-    cursor += (uint32_t)write_mmap_entry(mem, cursor, 0x00100000,
-                                         (uint64_t)mem_size - 0x00100000,
-                                         MB_MEMORY_AVAILABLE);
+    if (out->fb.enabled) {
+        cursor += (uint32_t)write_mmap_entry(mem, cursor, 0x00100000,
+                                             out->fb.addr - 0x00100000,
+                                             MB_MEMORY_AVAILABLE);
+        cursor += (uint32_t)write_mmap_entry(mem, cursor, out->fb.addr,
+                                             out->fb.size, MB_MEMORY_RESERVED);
+    } else {
+        cursor += (uint32_t)write_mmap_entry(mem, cursor, 0x00100000,
+                                             (uint64_t)mem_size - 0x00100000,
+                                             MB_MEMORY_AVAILABLE);
+    }
 
     const char *loader_name = "Mini-KVM";
     strcpy((char *)mem + MB_LOADER_ADDR, loader_name);
@@ -499,12 +566,32 @@ static void build_multiboot_info(void *mem, size_t mem_size,
      */
     if (wants_video) {
         info.flags |= MB_INFO_FRAMEBUFFER;
-        info.framebuffer_addr = 0xB8000;
-        info.framebuffer_pitch = 80 * 2;
-        info.framebuffer_width = 80;
-        info.framebuffer_height = 25;
-        info.framebuffer_bpp = 16;
-        info.framebuffer_type = MB_FRAMEBUFFER_EGA_TEXT;
+        if (out->fb.enabled) {
+            info.framebuffer_addr = out->fb.addr;
+            info.framebuffer_pitch = out->fb.pitch;
+            info.framebuffer_width = out->fb.width;
+            info.framebuffer_height = out->fb.height;
+            info.framebuffer_bpp = (uint8_t)out->fb.bpp;
+            if (out->fb.indexed) {
+                info.framebuffer_type = MB_FRAMEBUFFER_INDEXED;
+                memcpy(&info.color_info[0], &out->fb.palette_addr, 4);
+                uint16_t colors = 256;
+                memcpy(&info.color_info[4], &colors, 2);
+            } else {
+                info.framebuffer_type = MB_FRAMEBUFFER_RGB;
+                /* Field positions and sizes for an XRGB8888 or RGB888 layout. */
+                info.color_info[0] = 16; info.color_info[1] = 8;    /* red */
+                info.color_info[2] = 8;  info.color_info[3] = 8;    /* green */
+                info.color_info[4] = 0;  info.color_info[5] = 8;    /* blue */
+            }
+        } else {
+            info.framebuffer_addr = 0xB8000;
+            info.framebuffer_pitch = 80 * 2;
+            info.framebuffer_width = 80;
+            info.framebuffer_height = 25;
+            info.framebuffer_bpp = 16;
+            info.framebuffer_type = MB_FRAMEBUFFER_EGA_TEXT;
+        }
     }
 
     if (cmdline) {
@@ -600,16 +687,30 @@ static void build_multiboot2_info(void *mem, size_t mem_size,
     }
 
     if (wants_video) {
-        /* Same reasoning as Multiboot 1: answer with the text display we do
-         * have rather than leaving the kernel to guess. */
         TAG_BEGIN(MB2_TAG_FRAMEBUFFER);
-        *(uint64_t *)(base + off) = 0xB8000;    off += 8;   /* addr */
-        *(uint32_t *)(base + off) = 80 * 2;     off += 4;   /* pitch */
-        *(uint32_t *)(base + off) = 80;         off += 4;   /* width */
-        *(uint32_t *)(base + off) = 25;         off += 4;   /* height */
-        *(base + off) = 16;                     off += 1;   /* bpp */
-        *(base + off) = MB_FRAMEBUFFER_EGA_TEXT; off += 1;  /* type */
-        *(uint16_t *)(base + off) = 0;          off += 2;   /* reserved */
+        if (out->fb.enabled) {
+            *(uint64_t *)(base + off) = out->fb.addr;   off += 8;
+            *(uint32_t *)(base + off) = out->fb.pitch;  off += 4;
+            *(uint32_t *)(base + off) = out->fb.width;  off += 4;
+            *(uint32_t *)(base + off) = out->fb.height; off += 4;
+            *(base + off) = (uint8_t)out->fb.bpp;       off += 1;
+            *(base + off) = MB_FRAMEBUFFER_RGB;         off += 1;
+            *(uint16_t *)(base + off) = 0;              off += 2;
+            /* RGB field positions, then sizes. */
+            *(base + off) = 16; off += 1;  *(base + off) = 8; off += 1;
+            *(base + off) = 8;  off += 1;  *(base + off) = 8; off += 1;
+            *(base + off) = 0;  off += 1;  *(base + off) = 8; off += 1;
+        } else {
+            /* Answer with the text display we do have rather than leaving the
+             * kernel to guess. */
+            *(uint64_t *)(base + off) = 0xB8000;    off += 8;
+            *(uint32_t *)(base + off) = 80 * 2;     off += 4;
+            *(uint32_t *)(base + off) = 80;         off += 4;
+            *(uint32_t *)(base + off) = 25;         off += 4;
+            *(base + off) = 16;                     off += 1;
+            *(base + off) = MB_FRAMEBUFFER_EGA_TEXT; off += 1;
+            *(uint16_t *)(base + off) = 0;          off += 2;
+        }
         TAG_END();
     }
 
@@ -635,7 +736,7 @@ static void build_multiboot2_info(void *mem, size_t mem_size,
 
 int loader_load(const char *path, void *mem, size_t mem_size,
                 const char *cmdline, const char *const *modules, int num_modules,
-                guest_image_t *out)
+                const framebuffer_t *fb_request, guest_image_t *out)
 {
     size_t file_size = 0;
     unsigned char *file = read_file(path, &file_size);
@@ -658,6 +759,7 @@ int loader_load(const char *path, void *mem, size_t mem_size,
     long mb2_off = find_multiboot2_header(file, file_size);
     long mb_off = (mb2_off >= 0) ? -1 : find_multiboot_header(file, file_size);
     bool wants_video = false;
+    uint32_t mb_video_width = 0, mb_video_height = 0, mb_video_depth = 0;
 
     if (mb2_off >= 0) {
         out->format = GUEST_MULTIBOOT2;
@@ -690,6 +792,22 @@ int loader_load(const char *path, void *mem, size_t mem_size,
         uint32_t flags;
         memcpy(&flags, file + mb_off + 4, 4);
         wants_video = (flags & MB_HEADER_FLAG_VIDEO) != 0;
+
+        /* The video request sits at header offset 32: mode, width, height,
+         * depth. Zero in any of them means "no preference". */
+        if (wants_video && (size_t)mb_off + 48 <= file_size) {
+            uint32_t mode;
+            memcpy(&mode, file + mb_off + 32, 4);
+            memcpy(&mb_video_width, file + mb_off + 36, 4);
+            memcpy(&mb_video_height, file + mb_off + 40, 4);
+            memcpy(&mb_video_depth, file + mb_off + 44, 4);
+            if (mode != 0) {
+                /* Mode 1 is EGA text, which the text framebuffer answers. */
+                mb_video_width = mb_video_height = mb_video_depth = 0;
+            }
+            DEBUG_PRINT(DEBUG_BASIC, "kernel requests video %ux%ux%u (mode %u)",
+                        mb_video_width, mb_video_height, mb_video_depth, mode);
+        }
         if (flags & MB_HEADER_FLAG_AOUT_KLUDGE) {
             /* The kludge supplies its own load addresses for non-ELF images.
              * Refusing is better than loading it to the wrong place. */
@@ -721,6 +839,30 @@ int loader_load(const char *path, void *mem, size_t mem_size,
     }
 
     if (out->format == GUEST_MULTIBOOT || out->format == GUEST_MULTIBOOT2) {
+        if (wants_video && fb_request && fb_request->enabled) {
+            /*
+             * Honour the geometry the kernel asked for. A kernel that wants
+             * 640x480 at 8 bits and is handed 1024x768 at 32 draws a garbled
+             * screen -- it is not wrong, it was answered wrongly.
+             */
+            framebuffer_t want = *fb_request;
+            if (mb_video_width && mb_video_height && mb_video_depth) {
+                want.width = mb_video_width;
+                want.height = mb_video_height;
+                want.bpp = mb_video_depth;
+            }
+            if (want.bpp != 8 && want.bpp != 24 && want.bpp != 32) {
+                fprintf(stderr, "Warning: kernel asked for %u bits per pixel, "
+                                "which is not supported; using 32.\n", want.bpp);
+                want.bpp = 32;
+            }
+            place_framebuffer(mem, mem_size, &want, &out->fb);
+            if (verbose_enabled()) {
+                printf("Framebuffer: %ux%ux%u at 0x%08x (%u bytes)\n",
+                       out->fb.width, out->fb.height, out->fb.bpp,
+                       out->fb.addr, out->fb.size);
+            }
+        }
         int loaded = 0;
         if (num_modules > 0) {
             uint32_t modules_end = 0;

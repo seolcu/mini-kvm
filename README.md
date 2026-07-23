@@ -11,8 +11,8 @@ with headers), small enough to read in an afternoon.
 
 > **Status: early but real.** Mini-KVM boots stock Multiboot and ELF kernels,
 > renders VGA text mode, and runs its own real-mode guests and a bundled 32-bit
-> teaching OS, boots a stock Linux kernel to a shell, and can explain why a
-> guest triple-faulted. See
+> teaching OS, runs three third-party kernels unmodified, boots a stock Linux
+> kernel to a shell, and can explain why a guest triple-faulted. See
 > [Current state](#current-state) for exactly what works and
 > [Roadmap](#roadmap) for where it is going. Nothing below is aspirational: if
 > it is listed as working, `make test` covers it.
@@ -98,7 +98,7 @@ Hello from 64-bit!
 
 ## Current state
 
-Everything in this section is exercised by `make test` (27 cases diffed against
+Everything in this section is exercised by `make test` (30 cases diffed against
 stored baselines in `kvm-vmm-x86/tools/baseline/`).
 
 **Working**
@@ -121,6 +121,8 @@ stored baselines in `kvm-vmm-x86/tools/baseline/`).
 | **Multiboot 2** | Tag-based information block, modules, EGA text framebuffer |
 | **Multiboot modules** | `--module FILE`, which is how a kernel gets an initrd |
 | **RTC / CMOS** | MC146818 read-only, giving the guest the host wall clock |
+| **Linear framebuffer** | `--fb` honours the mode a kernel asks for; `--fb-dump` writes a PPM |
+| **Flat protected mode** | `--flat32` for kernels whose own bootloader would enter it |
 | **Fault analysis** | `--explain` names the cause; 32-bit, PAE and long-mode walks |
 | **Linux** | A stock distribution kernel boots to a shell with an initramfs |
 | **Inspection** | `--inspect` decodes GDT/IDT/page tables; `--trace-modes` follows transitions |
@@ -194,6 +196,7 @@ presenting reset-vector registers as if they meant something.
 | Gap | Consequence |
 |---|---|
 | No a.out kludge | Multiboot images that are not ELF are rejected |
+| Graphics are not displayed | A framebuffer guest runs and can be dumped to a PPM, but not watched live |
 | No virtio | Linux has no disk or network; an initramfs is the only root filesystem |
 | Serial input races early boot | The kernel's UART probe eats anything typed before the shell starts, as on real hardware |
 
@@ -204,14 +207,22 @@ presenting reset-vector registers as if they meant something.
 The goal is a tool people actually use to develop x86 kernels. Each phase has a
 gate that must pass before the next begins.
 
-**Phase 1 — run other people's kernels** *(in progress)*
-Done: ELF32/64 loader, Multiboot 1 and 2, modules, VGA text buffer and cursor,
-PIC and PIT interrupts, PS/2 keyboard, RTC.
-Remaining: the gate itself.
-*Gate: three third-party hobby kernels boot unmodified, pinned in CI.* The two
-kernels under `examples/` use no Mini-KVM facilities and would boot under
-GRUB, but they were written here — the gate means kernels written by other
-people, which is a stronger claim and is not met yet.
+**Phase 1 — run other people's kernels** *(done)*
+ELF32/64 loader, Multiboot 1 and 2, modules, VGA text buffer and cursor, a
+linear framebuffer for kernels that ask for graphics, PIC and PIT interrupts,
+PS/2 keyboard, and the RTC.
+*Gate met.* Three kernels written by other people run unmodified, pinned in
+`make test` (skipped unless `./tools/third-party.sh` has fetched them):
+
+| Kernel | How it was obtained | Result |
+|---|---|---|
+| [ozkl/soso](https://github.com/ozkl/soso) | built from source, 45 C files | boots, renders 1024×768×32 |
+| [joexbayer/RetrOS-32](https://github.com/joexbayer/RetrOS-32) | taken from the authors' own GRUB ISO | boots, renders 640×480×8 |
+| [cfenollosa/os-tutorial](https://github.com/cfenollosa/os-tutorial) | built from source | interactive; takes keyboard input, halts on command |
+
+No source was modified. Where a build failed on a modern toolchain it was
+given compiler *flags* to restore the older default, which is what any
+distribution does with aging software.
 
 **Phase 2 — boot Linux** *(gate met)*
 A stock Fedora kernel boots to an interactive shell on an initramfs. Pinned in

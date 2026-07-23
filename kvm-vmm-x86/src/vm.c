@@ -138,6 +138,10 @@ int vm_map_vcpu_memory(vcpu_context_t *ctx)
         /* These load at 1MB and expect to allocate above it. 4MB would leave
          * a kernel almost no usable memory. */
         ctx->mem_size = MEM_SIZE_KERNEL;
+    } else if (ctx->use_flat32) {
+        /* Enough for the VGA text buffer and whatever the kernel allocates;
+         * a real-mode-sized 256KB would not even reach 0xB8000. */
+        ctx->mem_size = MEM_SIZE_KERNEL;
     } else if (ctx->use_paging) {
         ctx->mem_size = MEM_SIZE_PAGING;
     } else {

@@ -87,6 +87,7 @@ static int prepare_vcpus(const vmm_config_t *cfg)
         snprintf(ctx->name, sizeof(ctx->name), "%s", vcpu_extract_name(ctx->guest_binary));
 
         ctx->use_paging = cfg->paging;
+        ctx->use_flat32 = cfg->flat32;
         ctx->long_mode = cfg->long_mode;
         ctx->entry_point = cfg->entry_point;
         ctx->load_offset = cfg->load_offset;
@@ -123,9 +124,15 @@ static int prepare_vcpus(const vmm_config_t *cfg)
         }
 
         if (is_kernel_image) {
+            framebuffer_t fb_request = {
+                .enabled = cfg->framebuffer,
+                .width = cfg->fb_width,
+                .height = cfg->fb_height,
+                .bpp = cfg->fb_bpp,
+            };
             if (loader_load(ctx->guest_binary, ctx->guest_mem, ctx->mem_size,
                             cfg->linux_cmdline, cfg->modules, cfg->num_modules,
-                            &ctx->image) < 0) {
+                            &fb_request, &ctx->image) < 0) {
                 return -1;
             }
         } else if (vcpu_load_guest_binary(ctx->guest_binary, ctx->guest_mem,
@@ -165,7 +172,8 @@ int main(int argc, char **argv)
     }
 
     debug_level = cfg.debug_level;
-    vcpu_set_dump_options(cfg.dump_regs, cfg.dump_mem_path, cfg.num_guests);
+    vcpu_set_dump_options(cfg.dump_regs, cfg.dump_mem_path,
+                          cfg.fb_dump_path, cfg.num_guests);
     report_configuration(&cfg);
 
     if (cfg.linux_boot) {
@@ -191,7 +199,10 @@ int main(int argc, char **argv)
     if (!cfg.linux_boot && cfg.num_guests > 0) {
         (void)loader_probe(cfg.guests[0], &first_format);
     }
-    bool wants_interrupts = cfg.linux_boot ||
+    /* Anything that is a kernel gets an interrupt controller and a keyboard.
+     * --flat32 counts: it is a kernel whose own bootloader would have entered
+     * protected mode, not a real-mode toy. */
+    bool wants_interrupts = cfg.linux_boot || cfg.flat32 ||
                             first_format == GUEST_ELF ||
                             first_format == GUEST_MULTIBOOT ||
                             first_format == GUEST_MULTIBOOT2;

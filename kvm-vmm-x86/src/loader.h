@@ -34,6 +34,17 @@ typedef enum {
     GUEST_MULTIBOOT2,   /* ELF with a Multiboot 2 header */
 } guest_format_t;
 
+/* A linear framebuffer offered to a kernel that asks for video mode. */
+typedef struct {
+    bool enabled;
+    uint32_t width, height, bpp;
+    uint32_t addr;          /* guest physical base */
+    uint32_t pitch;         /* bytes per scanline */
+    uint32_t size;
+    bool indexed;           /* 8bpp palette rather than direct colour */
+    uint32_t palette_addr;  /* guest physical, when indexed */
+} framebuffer_t;
+
 typedef struct {
     guest_format_t format;
     uint32_t entry;         /* guest physical entry point */
@@ -41,6 +52,7 @@ typedef struct {
     uint32_t boot_ebx;      /* EBX at entry (boot information structure) */
     uint32_t load_low;      /* lowest physical address written */
     uint32_t load_high;     /* one past the highest */
+    framebuffer_t fb;       /* what was reported, if anything */
 } guest_image_t;
 
 /* Human-readable format name, for diagnostics. */
@@ -59,6 +71,6 @@ int loader_probe(const char *path, guest_format_t *format);
  */
 int loader_load(const char *path, void *mem, size_t mem_size,
                 const char *cmdline, const char *const *modules, int num_modules,
-                guest_image_t *out);
+                const framebuffer_t *fb_request, guest_image_t *out);
 
 #endif /* LOADER_H */

@@ -285,6 +285,50 @@ run_case os1k_fib      '4\n0\n'                   -- --paging os-1k/kernel
 # around the operator. AGENTS.md documents '6\n10+5\nquit\n0\n', which hangs.
 run_case os1k_calc     '6\n10 + 5\nq\n0\n'        -- --paging os-1k/kernel
 
+# --- Third-party kernels ---------------------------------------------------
+# The Phase 1 gate: kernels written by other people, running unmodified.
+# Skipped unless ./tools/third-party.sh has fetched and built them.
+third_party_case() {
+    local name="$1" kernel="$2" want="$3"; shift 3
+    if (( ${#only[@]} )) && [[ ! " ${only[*]} " == *" ${name} "* ]]; then
+        return
+    fi
+    if [[ ! -f "$kernel" ]]; then
+        echo "SKIP ${name}: not fetched (run ./tools/third-party.sh)"
+        ((skip++)); return
+    fi
+
+    local out
+    out="$( { printf 'hello\nend\n'; sleep 1; } \
+            | timeout 40 "${vmm}" "$@" 2>&1 | normalize )"
+
+    if eval "${want}"; then
+        echo "PASS ${name}"
+        ((pass++))
+    else
+        echo "FAIL ${name}"
+        printf '%s\n' "$out" | tail -12 | sed 's/^/    /'
+        failed+=("${name}"); ((fail++))
+    fi
+}
+
+# Renders a full 1024x768x32 screen. Checked through the PPM rather than the
+# terminal, since Mini-KVM cannot display graphics.
+third_party_case soso third-party/soso/kernel.bin \
+    '[[ -s /tmp/smoke-soso.ppm ]] && head -2 /tmp/smoke-soso.ppm | tail -1 | grep -q "1024 768"' \
+    --fb-dump /tmp/smoke-soso.ppm --module tools/testmodule.txt \
+    third-party/soso/kernel.bin
+
+# A binary built by its own authors and taken straight out of their GRUB ISO.
+third_party_case retros third-party/RetrOS-32/extracted/boot/myos.bin \
+    '[[ -s /tmp/smoke-retros.ppm ]] && head -2 /tmp/smoke-retros.ppm | tail -1 | grep -q "640 480"' \
+    --fb-dump /tmp/smoke-retros.ppm third-party/RetrOS-32/extracted/boot/myos.bin
+
+# Interactive: takes keyboard input and halts on command.
+third_party_case os_tutorial third-party/os-tutorial/24-el-capitan/kernel.bin \
+    '[[ "$out" == *"You said: HELLO"* ]] && [[ "$out" == *"Stopping the CPU"* ]]' \
+    --flat32 --load 0x1000 --vga third-party/os-tutorial/24-el-capitan/kernel.bin
+
 # --- Linux ----------------------------------------------------------------
 linux_case linux_shell
 

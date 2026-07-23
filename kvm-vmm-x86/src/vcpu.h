@@ -76,6 +76,7 @@ typedef struct {
 
     /* CPU mode */
     bool use_paging;
+    bool use_flat32;
     bool long_mode;
     uint32_t entry_point;
     uint32_t load_offset;
@@ -111,7 +112,8 @@ typedef struct {
 /* --- vcpu.c ----------------------------------------------------------- */
 
 /* Supply diagnostic options resolved from the command line. Call once. */
-void vcpu_set_dump_options(bool dump_regs, const char *dump_mem_path, int num_vcpus);
+void vcpu_set_dump_options(bool dump_regs, const char *dump_mem_path,
+                           const char *fb_dump_path, int num_vcpus);
 
 /* Read a flat guest binary into guest memory at the given offset. */
 int vcpu_load_guest_binary(const char *filename, void *mem, size_t mem_size,

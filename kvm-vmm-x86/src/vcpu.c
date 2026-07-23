@@ -31,6 +31,7 @@
 #include "linux/linux_entry.h"
 #include "explain.h"
 #include "inspect.h"
+#include "vga.h"
 #include <pthread.h>
 #include <signal.h>
 #include <time.h>
@@ -43,12 +44,15 @@ static void trace_capture(vcpu_context_t *ctx);
 /* Diagnostic options, supplied once by main(). */
 static bool dump_regs_on_exit = false;
 static const char *dump_mem_path = NULL;
+static const char *fb_dump_path = NULL;
 static int total_vcpus = 1;
 
-void vcpu_set_dump_options(bool dump_regs, const char *mem_path, int num_vcpus)
+void vcpu_set_dump_options(bool dump_regs, const char *mem_path,
+                           const char *fb_path, int num_vcpus)
 {
     dump_regs_on_exit = dump_regs;
     dump_mem_path = mem_path;
+    fb_dump_path = fb_path;
     total_vcpus = num_vcpus;
 }
 
@@ -262,6 +266,15 @@ int vcpu_setup(vcpu_context_t *ctx)
         {
             if (cpu_mode_enter_flat32(ctx, ctx->image.entry,
                                       ctx->image.boot_eax, ctx->image.boot_ebx) < 0)
+            {
+                return -1;
+            }
+        }
+        else if (ctx->use_flat32)
+        {
+            /* A flat binary entered the way its own bootloader would have:
+             * protected mode, paging off, at its load address. */
+            if (cpu_mode_enter_flat32(ctx, ctx->entry_point, 0, 0) < 0)
             {
                 return -1;
             }
@@ -694,6 +707,20 @@ void *vcpu_thread(void *arg)
  */
 void vcpu_cleanup(vcpu_context_t *ctx)
 {
+    /* Write the framebuffer out before the mapping goes away. */
+    if (fb_dump_path != NULL && ctx->image.fb.enabled &&
+        ctx->guest_mem != NULL && ctx->guest_mem != MAP_FAILED)
+    {
+        if (fb_dump_ppm(ctx->guest_mem, ctx->mem_size, ctx->image.fb.addr,
+                        ctx->image.fb.width, ctx->image.fb.height,
+                        ctx->image.fb.bpp, ctx->image.fb.pitch,
+                        ctx->image.fb.palette_addr, fb_dump_path) == 0)
+        {
+            vcpu_printf(ctx, "Framebuffer written to %s (%ux%u)\n",
+                        fb_dump_path, ctx->image.fb.width, ctx->image.fb.height);
+        }
+    }
+
     // --dump-mem: snapshot this guest's memory before we unmap it. With
     // several vCPUs each gets its own file, since each has its own memory.
     if (dump_mem_path != NULL && ctx->guest_mem != NULL && ctx->guest_mem != MAP_FAILED)

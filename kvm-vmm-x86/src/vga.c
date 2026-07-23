@@ -218,3 +218,63 @@ void vga_stop(void)
 
     vga_mem = NULL;
 }
+
+int fb_dump_ppm(const void *guest_mem, size_t mem_size, uint32_t addr,
+                uint32_t width, uint32_t height, uint32_t bpp, uint32_t pitch,
+                uint32_t palette_addr, const char *path)
+{
+    if (guest_mem == NULL || width == 0 || height == 0) {
+        return -1;
+    }
+    if ((uint64_t)addr + (uint64_t)pitch * height > mem_size) {
+        fprintf(stderr, "Error: framebuffer at 0x%08x does not fit in guest memory\n",
+                addr);
+        return -1;
+    }
+
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        fprintf(stderr, "Error: cannot write '%s': ", path);
+        perror(NULL);
+        return -1;
+    }
+
+    fprintf(f, "P6\n%u %u\n255\n", width, height);
+
+    const uint8_t *base = (const uint8_t *)guest_mem + addr;
+    unsigned bytes_per_pixel = bpp / 8;
+
+    /* In an indexed mode the pixels are palette entries, so they mean nothing
+     * without the palette the guest was given. */
+    const uint8_t *palette = NULL;
+    if (bpp == 8 && palette_addr != 0 &&
+        (uint64_t)palette_addr + 256 * 3 <= mem_size) {
+        palette = (const uint8_t *)guest_mem + palette_addr;
+    }
+
+    for (uint32_t y = 0; y < height; y++) {
+        const uint8_t *row = base + (size_t)y * pitch;
+        for (uint32_t x = 0; x < width; x++) {
+            const uint8_t *px = row + (size_t)x * bytes_per_pixel;
+            uint8_t rgb[3];
+
+            if (bpp == 8) {
+                if (palette) {
+                    rgb[0] = palette[px[0] * 3 + 0];
+                    rgb[1] = palette[px[0] * 3 + 1];
+                    rgb[2] = palette[px[0] * 3 + 2];
+                } else {
+                    rgb[0] = rgb[1] = rgb[2] = px[0];    /* raw index as grey */
+                }
+            } else {
+                /* Both 24- and 32-bit layouts store blue, green, red in that
+                 * order; PPM wants red first. */
+                rgb[0] = px[2]; rgb[1] = px[1]; rgb[2] = px[0];
+            }
+            fwrite(rgb, 1, 3, f);
+        }
+    }
+
+    fclose(f);
+    return 0;
+}

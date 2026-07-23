@@ -43,7 +43,7 @@ cd kvm-vmm-x86
 make all          # vmm + guests + 1k-os;  or make vmm | guests | 1k-os | clean
 ```
 
-`examples/` holds stock Multiboot kernels that use no Mini-KVM facilities; they are the real test of whether the VMM can run someone else's work, and both are pinned in `make test`.
+`examples/` holds stock Multiboot kernels that use no Mini-KVM facilities. `tools/third-party.sh` fetches and builds three kernels written by other people (soso, RetrOS-32, os-tutorial); `make test` runs them if present and skips them otherwise. Their sources are never modified — a build that fails on a modern toolchain is given compiler *flags* to restore the older default.
 
 Flags are fixed at `gcc -Wall -Wextra -Wshadow -O2 -std=gnu11 -pthread`; match them for experiments. Objects land in `build/` with `-MMD -MP` header dependency tracking, so incremental builds are correct — do not reintroduce a hand-maintained header list.
 
