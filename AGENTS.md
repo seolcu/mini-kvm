@@ -7,9 +7,7 @@ This file provides guidance to coding agents (Claude Code, Codex, and similar) w
 Mini-KVM is an educational x86 hypervisor (~4,000 lines of C) built directly on the Linux KVM ioctl API, developed as a university self-directed project (2025-2 Ajou SoftCon). Only `kvm-vmm-x86/` is the deliverable; everything else is documentation, research notes, or isolated experiments.
 
 - `kvm-vmm-x86/` — the VMM (`src/`), real-mode guest programs (`guest/`), the protected-mode mini OS (`os-1k/`), Linux-guest initramfs sources (`initramfs/`), verification harness (`tools/`).
-- `docs/investigations/` — why several settings that look arbitrary are not: the Arch/Fedora `-march=i686` difference, and the AMD Zen 5 SHUTDOWN that led to PSE being disabled. Read these before changing a build flag that seems pointless.
-
-The university reports, weekly notes and presentation material this project began as were removed from the repository; they remain in git history.
+The university reports and the long-form build investigations this project began with were removed from the repository; they remain in git history. What was load-bearing in them is stated inline below.
 
 `src/` is one module per concern; `main.c` only sequences the phases:
 
@@ -121,7 +119,7 @@ linked for.
 
 **1K OS build is a two-stage embed:** user programs (`shell.c`, `user.c`, `common.c`) link with `user.ld` at `0x01000000` into `shell.bin`, which `objcopy -I binary` wraps into an object linked into the kernel — the final `kernel` is one flat binary containing its own userland. User code issues syscalls as direct `OUT` to `0x500` from ring 3 (IOPL=3), so **there is no in-kernel syscall gate: the VMM is the syscall handler.** Do not add a trap frame or an `INT 0x80` path; an unreachable second dispatch path next to the real one was the most misleading thing in the original code. The kernel also has no filesystem — the old `fs_*`/tar code operated on a zeroed buffer and reported writes that never happened.
 
-**1K OS 32-bit flags are load-bearing:** `-m32 -march=i686 -fno-pie -no-pie --build-id=none -z norelro`. Without `-march=i686` (Arch GCC defaults to i386) the kernel triple-faults immediately — see `docs/investigations/arch_vs_fedora_build_issue.md`. The Zen 5 SHUTDOWN issue in `docs/investigations/INVESTIGATION_1K_OS_SHUTDOWN.md` **no longer reproduces** (verified on Ryzen 5 9600X / 6.12 LTS); switching to 4KB pages with PSE off appears to have fixed it. Keep PSE off.
+**1K OS 32-bit flags are load-bearing:** `-m32 -march=i686 -fno-pie -no-pie --build-id=none -z norelro`. Without `-march=i686` the kernel triple-faults immediately: Arch's GCC defaults its 32-bit target to i386 where Fedora's uses i686, and the resulting code generation shifts function sizes enough to break the memory layout the kernel assumes. An earlier AMD Zen 5 SHUTDOWN on entering paging **no longer reproduces** (verified on Ryzen 5 9600X / 6.12 LTS); moving to 4KB pages with PSE off appears to have fixed it, so keep PSE off.
 
 Real-mode guests are assembled `as --32` and linked `ld -m elf_i386 -T guest.ld --oformat=binary` into flat binaries at address 0. A new guest only needs its name added to `GUESTS` in `guest/Makefile`; a static pattern rule covers the build (a bare `%` implicit rule would also match the `.S` files, which is why the rule names its targets).
 
