@@ -322,7 +322,15 @@ static void setup_idt_entry(int vector, void *handler, int dpl) {
     // Dword 1: [offset 31:16] [flags 15:0]
     // Flags: P=1, DPL=dpl, S=0 (system), Type=0xE (32-bit interrupt gate)
     uint32_t flags = 0x8E00 | ((dpl & 0x3) << 13);  // P=1, DPL=dpl, Type=0xE
-    idt[vector * 2 + 0] = ((handler_addr & 0xFFFF) << 16) | 0x0008;  // Selector = 0x08 (kernel code)
+
+    /* A 32-bit gate descriptor is
+     *   dword 0: [selector 31:16][offset 15:0]
+     *   dword 1: [offset 31:16][flags 15:8][reserved 7:0]
+     * These two fields used to be written the other way round, putting the
+     * handler address where the selector belongs. Nothing caught it because
+     * no interrupt is ever delivered in paging mode -- `./kvm-vmm --paging
+     * --inspect os-1k/kernel` shows the decoded entry. */
+    idt[vector * 2 + 0] = (0x0008 << 16) | (handler_addr & 0xFFFF);
     idt[vector * 2 + 1] = (handler_addr & 0xFFFF0000) | flags;
 }
 #pragma GCC diagnostic pop

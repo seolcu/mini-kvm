@@ -255,6 +255,16 @@ run_case explain_absent    '' -- examples/faults/no-idt.elf
 # from the 32-bit one every other case uses.
 run_case explain_long64    '' -- --long-mode --explain guest/fault64
 
+# Preflight catches an entry point outside the loaded image before the guest
+# runs, and the internal error is explained rather than dumped raw.
+run_case explain_bad_entry '' -- examples/faults/bad-entry.elf
+
+# --- Inspection ------------------------------------------------------------
+# Decoding descriptor and page tables is the other half of the diagnostics:
+# a wrong bit shows up here without needing the guest to crash first.
+run_case inspect_1kos  '0\n' -- --paging --inspect os-1k/kernel
+run_case trace_modes   ''    -- --trace-modes examples/multiboot-barebones/kernel.elf
+
 # --- Long mode -------------------------------------------------------------
 run_case long_mode    ''            -- --long-mode guest/hello_64
 

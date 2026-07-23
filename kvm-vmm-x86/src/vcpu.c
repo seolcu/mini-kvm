@@ -30,6 +30,7 @@
 #include "linux_boot.h"
 #include "linux/linux_entry.h"
 #include "explain.h"
+#include "inspect.h"
 #include <pthread.h>
 #include <signal.h>
 #include <time.h>
@@ -391,6 +392,11 @@ static int handle_vm_exit(vcpu_context_t *ctx)
 {
     ctx->exit_count++;
 
+    if (ctx->trace_modes)
+    {
+        inspect_note_mode(ctx);
+    }
+
     // --dump-regs: full CPU state at every exit.
     if (dump_regs_on_exit)
     {
@@ -475,13 +481,7 @@ static int handle_vm_exit(vcpu_context_t *ctx)
         return 0;
 
     case KVM_EXIT_INTERNAL_ERROR:
-        vcpu_printf(ctx, "INTERNAL_ERROR: suberror 0x%x ndata=%d\n",
-                    ctx->kvm_run->internal.suberror, ctx->kvm_run->internal.ndata);
-        for (uint32_t i = 0; i < ctx->kvm_run->internal.ndata && i < 8; i++)
-        {
-            vcpu_printf(ctx, "  data[%u]=0x%llx\n", i,
-                        (unsigned long long)ctx->kvm_run->internal.data[i]);
-        }
+        explain_internal_error(ctx, ctx->kvm_run->internal.suberror);
         return -1;
 
     case KVM_EXIT_SHUTDOWN:
@@ -676,6 +676,11 @@ void *vcpu_thread(void *arg)
         {
             break;
         }
+    }
+
+    if (ctx->inspect_on_exit)
+    {
+        inspect_dump(ctx);
     }
 
     if (verbose_enabled())

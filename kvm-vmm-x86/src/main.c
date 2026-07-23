@@ -26,6 +26,7 @@
 #include "debug.h"
 #include "vga.h"
 #include "loader.h"
+#include "inspect.h"
 #include "linux/linux_entry.h"
 
 static vcpu_context_t vcpus[MAX_VCPUS];
@@ -135,6 +136,12 @@ static int prepare_vcpus(const vmm_config_t *cfg)
         if (vcpu_setup(ctx) < 0) {
             return -1;
         }
+
+        ctx->inspect_on_exit = cfg->inspect;
+        ctx->trace_modes = cfg->trace_modes;
+
+        /* Catch the mistakes that stop a kernel before it prints anything. */
+        inspect_preflight(ctx);
 
         if (cfg->explain) {
             vcpu_enable_trace(ctx, cfg->explain_steps);

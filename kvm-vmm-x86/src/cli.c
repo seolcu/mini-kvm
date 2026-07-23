@@ -34,6 +34,9 @@ void cli_usage(const char *argv0, FILE *out)
         "Diagnostics:\n"
         "  -v, --verbose         log VM exits, hypercalls, and setup detail\n"
         "  --debug LEVEL         verbosity 0-3 (0=none 1=basic 2=detailed 3=all)\n"
+        "  --inspect             dump the guest's GDT, IDT and page tables,\n"
+        "                        decoded, when it stops\n"
+        "  --trace-modes         report real -> protected -> long transitions\n"
         "  --explain             single-step the guest so that a crash can be\n"
         "                        explained in detail (much slower)\n"
         "  --explain-steps N     how many instructions --explain may trace\n"
@@ -184,6 +187,12 @@ int cli_parse(int argc, char **argv, vmm_config_t *cfg)
         }
         else if (is_option(arg, "--dump-regs")) {
             cfg->dump_regs = true;
+        }
+        else if (is_option(arg, "--inspect")) {
+            cfg->inspect = true;
+        }
+        else if (is_option(arg, "--trace-modes")) {
+            cfg->trace_modes = true;
         }
         else if (is_option(arg, "--explain")) {
             cfg->explain = true;

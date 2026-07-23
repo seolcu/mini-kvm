@@ -53,7 +53,7 @@ static const char *exception_name(unsigned nr)
 }
 
 /* Describes the guest's current addressing mode in one phrase. */
-static const char *mode_name(const struct kvm_sregs *s)
+const char *guest_mode_name(const struct kvm_sregs *s)
 {
     if (s->efer & EFER_LMA_BIT) {
         return "long mode";
@@ -186,8 +186,8 @@ static bool walk64(vcpu_context_t *ctx, const struct kvm_sregs *s,
  * Resolve a guest virtual address to a physical one, honouring the current
  * mode. With paging off the two are the same.
  */
-static bool translate(vcpu_context_t *ctx, const struct kvm_sregs *s,
-                      uint64_t va, uint64_t *pa_out, char *why, size_t why_len)
+bool guest_translate(vcpu_context_t *ctx, const struct kvm_sregs *s,
+                     uint64_t va, uint64_t *pa_out, char *why, size_t why_len)
 {
     why[0] = '\0';
 
@@ -242,7 +242,7 @@ static bool inspect_idt(vcpu_context_t *ctx, const struct kvm_sregs *s,
     for (unsigned i = 0; i < entries; i++) {
         uint64_t va = s->idt.base + (uint64_t)i * sizeof(idt_entry_t);
         uint64_t addr;
-        if (!translate(ctx, s, va, &addr, why, sizeof(why))) {
+        if (!guest_translate(ctx, s, va, &addr, why, sizeof(why))) {
             break;
         }
         if (addr + sizeof(idt_entry_t) > ctx->mem_size) {
@@ -333,7 +333,7 @@ static void show_instruction(vcpu_context_t *ctx, const struct kvm_sregs *s,
     uint64_t pa;
     char why[160];
 
-    if (!translate(ctx, s, linear, &pa, why, sizeof(why))) {
+    if (!guest_translate(ctx, s, linear, &pa, why, sizeof(why))) {
         say(ctx, "  Instruction bytes: unavailable - %s\n", why);
         return;
     }
@@ -387,12 +387,12 @@ void explain_shutdown(vcpu_context_t *ctx)
         say(ctx, "  fault itself. Re-run with a larger --explain-steps.\n");
         say(ctx, "  At that point:\n");
         say(ctx, "    CS:EIP = 0x%04x:0x%08llx, in %s\n",
-            sregs.cs.selector, (unsigned long long)regs.rip, mode_name(&sregs));
+            sregs.cs.selector, (unsigned long long)regs.rip, guest_mode_name(&sregs));
     } else if (from_trace) {
         say(ctx, "  Last instruction before the fault, at step %lu:\n",
             ctx->trace.steps);
         say(ctx, "    CS:EIP = 0x%04x:0x%08llx, in %s\n",
-            sregs.cs.selector, (unsigned long long)regs.rip, mode_name(&sregs));
+            sregs.cs.selector, (unsigned long long)regs.rip, guest_mode_name(&sregs));
         say(ctx, "    bytes: %02x %02x %02x %02x %02x %02x %02x %02x\n",
             ctx->trace.bytes[0], ctx->trace.bytes[1], ctx->trace.bytes[2],
             ctx->trace.bytes[3], ctx->trace.bytes[4], ctx->trace.bytes[5],
@@ -403,7 +403,7 @@ void explain_shutdown(vcpu_context_t *ctx)
         say(ctx, "  single-step and capture the state that caused it.\n");
     } else {
         say(ctx, "  At CS:EIP = 0x%04x:0x%08llx, in %s\n",
-            sregs.cs.selector, (unsigned long long)regs.rip, mode_name(&sregs));
+            sregs.cs.selector, (unsigned long long)regs.rip, guest_mode_name(&sregs));
     }
 
     /* --- What the CPU was trying to deliver ---------------------------- */
@@ -492,7 +492,7 @@ void explain_shutdown(vcpu_context_t *ctx)
     if (know_vector && vector == 14 && sregs.cr2 != 0) {
         uint64_t pa;
         say(ctx, "\n");
-        if (translate(ctx, &sregs, sregs.cr2, &pa, why, sizeof(why))) {
+        if (guest_translate(ctx, &sregs, sregs.cr2, &pa, why, sizeof(why))) {
             say(ctx, "  CR2 = 0x%llx maps to physical 0x%llx, so the fault was a\n",
                 (unsigned long long)sregs.cr2, (unsigned long long)pa);
             say(ctx, "  permission violation rather than a missing mapping.\n");
@@ -512,7 +512,7 @@ void explain_shutdown(vcpu_context_t *ctx)
             say(ctx, "  ESP is 0. The first push wraps to the top of the address\n");
             say(ctx, "  space, which is normally unmapped - a guest must set up a\n");
             say(ctx, "  stack before calling anything.\n");
-        } else if (!translate(ctx, &sregs, sp_linear, &pa, why, sizeof(why))) {
+        } else if (!guest_translate(ctx, &sregs, sp_linear, &pa, why, sizeof(why))) {
             say(ctx, "  Stack pointer 0x%llx is not usable: %s\n",
                 (unsigned long long)sp_linear, why);
             say(ctx, "  The CPU cannot push an exception frame, so any fault\n");
@@ -564,6 +564,42 @@ void explain_failed_entry(vcpu_context_t *ctx, uint64_t reason)
         say(ctx, "  CS base=0x%llx limit=0x%x type=0x%x db=%d l=%d g=%d\n",
             (unsigned long long)sregs.cs.base, sregs.cs.limit,
             sregs.cs.type, sregs.cs.db, sregs.cs.l, sregs.cs.g);
+    }
+    say(ctx, "\n");
+}
+
+void explain_internal_error(vcpu_context_t *ctx, uint32_t suberror)
+{
+    struct kvm_regs regs;
+    struct kvm_sregs sregs;
+    char why[160];
+
+    say(ctx, "\n");
+    say(ctx, "KVM could not emulate what the guest was doing (internal error %u).\n",
+        suberror);
+
+    if (ioctl(ctx->vcpu_fd, KVM_GET_REGS, &regs) < 0 ||
+        ioctl(ctx->vcpu_fd, KVM_GET_SREGS, &sregs) < 0) {
+        say(ctx, "\n");
+        return;
+    }
+
+    uint64_t linear = sregs.cs.base + regs.rip;
+    say(ctx, "  At CS:EIP = 0x%04x:0x%08llx, in %s\n",
+        sregs.cs.selector, (unsigned long long)regs.rip, guest_mode_name(&sregs));
+
+    uint64_t pa;
+    if (!guest_translate(ctx, &sregs, linear, &pa, why, sizeof(why))) {
+        say(ctx, "  There is no memory at that address: %s\n", why);
+        say(ctx, "  The guest jumped somewhere that was never loaded or mapped,\n");
+        say(ctx, "  so there are no instructions for the CPU to run.\n");
+    } else if (pa + 8 <= ctx->mem_size) {
+        const unsigned char *p = (const unsigned char *)ctx->guest_mem + pa;
+        say(ctx, "  Bytes there: %02x %02x %02x %02x %02x %02x %02x %02x\n",
+            p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+        if (p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 0) {
+            say(ctx, "  All zero, so this is unwritten memory rather than code.\n");
+        }
     }
     say(ctx, "\n");
 }

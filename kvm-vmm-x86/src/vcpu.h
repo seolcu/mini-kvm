@@ -91,6 +91,12 @@ typedef struct {
 
     /* Populated by --explain; consulted by explain_shutdown(). */
     trace_state_t trace;
+
+    /* Last reported addressing mode, so transitions can be spotted.
+     * Points at a static string from guest_mode_name(). */
+    const char *last_mode;
+    bool trace_modes;           /* --trace-modes */
+    bool inspect_on_exit;       /* --inspect */
 } vcpu_context_t;
 
 /*

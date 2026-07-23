@@ -48,6 +48,8 @@ typedef struct {
     bool verbose;
     debug_level_t debug_level;
     bool dump_regs;             /* dump registers on every VM exit */
+    bool inspect;               /* dump decoded tables when the guest stops */
+    bool trace_modes;           /* report real -> protected -> long transitions */
     bool explain;               /* single-step so a fault can be explained */
     unsigned long explain_steps; /* step budget; 0 means unlimited */
     const char *dump_mem_path;  /* dump guest memory here on exit, or NULL */
