@@ -22,11 +22,13 @@ ASFLAGS = --32
 KERNEL_LDFLAGS = -m elf_i386 -T kernel.ld \
                  --no-pie \
                  --build-id=none \
-                 -z norelro
+                 -z norelro \
+                 -z noexecstack
 USER_LDFLAGS = -m elf_i386 -T user.ld \
                --no-pie \
                --build-id=none \
-               -z norelro
+               -z norelro \
+               -z noexecstack
 
 .PHONY: all clean info disasm run
 

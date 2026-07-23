@@ -83,12 +83,12 @@ check_stale examples/faults/bad-stack.elf \
     examples/faults/bad-stack.S examples/faults/linker.ld || stale_found=1
 check_stale examples/faults/bad-entry.elf \
     examples/faults/bad-entry.S examples/faults/bad-entry.ld || stale_found=1
-# Each guest is built from exactly one source, so compare it against that
-# rather than against the whole directory.
-for g in hello vgademo hctest fault64; do
-    check_stale "guest/$g" "guest/$g.S" guest/guest.ld guest/guest32.ld \
-        guest/guest_64.ld || stale_found=1
-done
+# Each guest is built from one source and one linker script; pairing them
+# exactly is what keeps an unrelated guest from being reported as stale.
+check_stale guest/hello    guest/hello.S    guest/guest.ld    || stale_found=1
+check_stale guest/hctest   guest/hctest.S   guest/guest.ld    || stale_found=1
+check_stale guest/vgademo  guest/vgademo.S  guest/guest32.ld  || stale_found=1
+check_stale guest/fault64  guest/fault64.S  guest/guest_64.ld || stale_found=1
 (( stale_found )) && exit 1
 
 mkdir -p "${baseline_dir}"
@@ -142,11 +142,14 @@ run_case() {
     rm -f /tmp/smoke.$$.diff
 }
 
-# check_case NAME DESCRIPTION PREDICATE -- ARGV...
-#   For cases whose output is legitimately nondeterministic. PREDICATE is a
-#   shell snippet reading the normalized output from $out; it must return 0.
+# check_case NAME DESCRIPTION PREDICATE STDIN -- ARGV...
+#   For output that must not be pinned byte for byte: either it is genuinely
+#   nondeterministic, or it contains addresses the compiler chooses, which
+#   differ between toolchains and would make the baseline pass only on the
+#   machine that produced it. PREDICATE is a shell snippet reading the
+#   normalized output from $out; it must return 0.
 check_case() {
-    local name="$1" desc="$2" predicate="$3"; shift 4
+    local name="$1" desc="$2" predicate="$3" stdin_data="$4"; shift 5
     if (( ${#only[@]} )) && [[ ! " ${only[*]} " == *" ${name} "* ]]; then
         return
     fi
@@ -156,7 +159,7 @@ check_case() {
     fi
 
     local out
-    out="$(timeout "${TIMEOUT}" "${vmm}" "$@" 2>&1 | normalize)"
+    out="$(printf '%b' "${stdin_data}" | timeout "${TIMEOUT}" "${vmm}" "$@" 2>&1 | normalize)"
     if eval "${predicate}"; then
         echo "PASS ${name}"
         ((pass++))
@@ -223,7 +226,7 @@ check_case multi_vcpu \
     'expected counter digits 0-9 and "Hello, KVM!" interleaved' \
     '[[ "$(printf "%s" "$out" | tr -cd "0-9")" == *"0123456789"* ]] &&
      [[ "$(printf "%s" "$out" | grep -o "H.*!" | tr -d "0-9")" == *"Hello, KVM!"* ]]' \
-    -- guest/counter guest/hello
+    '' -- guest/counter guest/hello
 
 # --- VGA text mode ---------------------------------------------------------
 # With stdout redirected the renderer emits no escape sequences, just the
@@ -252,8 +255,21 @@ run_case multiboot2   '' -- --vga --module tools/testmodule.txt \
 # --- Fault analysis --------------------------------------------------------
 # Deliberately broken kernels. These check that --explain names the actual
 # cause, not merely that the guest died.
-run_case explain_no_idt    '' -- --explain examples/faults/no-idt.elf
-run_case explain_bad_stack '' -- --explain examples/faults/bad-stack.elf
+check_case explain_no_idt \
+    'expected the divide by zero and the empty IDT to be named' \
+    '[[ "$out" == *"raises #DE divide error"* ]] &&
+     [[ "$out" == *"divisor register is zero"* ]] &&
+     [[ "$out" == *"Not one entry is present"* ]]' \
+    '' -- --explain examples/faults/no-idt.elf
+
+check_case explain_bad_stack \
+    'expected the unusable stack to be named as the cause' \
+    '[[ "$out" == *"raises #UD invalid opcode"* ]] &&
+     [[ "$out" == *"Stack pointer"* ]] &&
+     [[ "$out" == *"is not usable"* ]] &&
+     [[ "$out" == *"becomes a triple fault"* ]]' \
+    '' -- --explain examples/faults/bad-stack.elf
+
 # Without --explain the state is gone, and saying so is the correct answer.
 run_case explain_absent    '' -- examples/faults/no-idt.elf
 # Long mode resolves addresses through 4-level page tables, a different walk
@@ -262,12 +278,24 @@ run_case explain_long64    '' -- --long-mode --explain guest/fault64
 
 # Preflight catches an entry point outside the loaded image before the guest
 # runs, and the internal error is explained rather than dumped raw.
-run_case explain_bad_entry '' -- examples/faults/bad-entry.elf
+check_case explain_bad_entry \
+    'expected the entry point to be flagged before boot, then explained' \
+    '[[ "$out" == *"is outside the loaded image"* ]] &&
+     [[ "$out" == *"There is no memory at that address"* ]]' \
+    '' -- examples/faults/bad-entry.elf
 
 # --- Inspection ------------------------------------------------------------
 # Decoding descriptor and page tables is the other half of the diagnostics:
 # a wrong bit shows up here without needing the guest to crash first.
-run_case inspect_1kos  '0\n' -- --paging --inspect os-1k/kernel
+check_case inspect_1kos \
+    'expected the GDT, IDT and page tables to be decoded' \
+    '[[ "$out" == *"GDT at 0x500, limit 0x27 (5 entries)"* ]] &&
+     [[ "$out" == *"32-bit present code, readable, ring 0"* ]] &&
+     [[ "$out" == *"32-bit present data, writable, ring 3"* ]] &&
+     [[ "$out" == *"IRQ0 timer selector 0x08"* ]] &&
+     [[ "$out" == *"1 of 256 entries present"* ]] &&
+     [[ "$out" == *"0x80000000-0x803fffff"* ]]' \
+    '0\n' -- --paging --inspect os-1k/kernel
 run_case trace_modes   ''    -- --trace-modes examples/multiboot-barebones/kernel.elf
 
 # --- Long mode -------------------------------------------------------------

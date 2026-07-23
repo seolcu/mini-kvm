@@ -1,9 +1,0 @@
-[bad-entry.elf] warning: entry point 0x0f000000 is outside the loaded image (0x00100000-0x00100038).
-[bad-entry.elf]          The kernel will start executing whatever happens to be there.
-[bad-entry.elf]
-[bad-entry.elf] KVM could not emulate what the guest was doing (internal error 1).
-[bad-entry.elf]   At CS:EIP = 0x0008:0x0f000000, in protected mode, paging off
-[bad-entry.elf]   There is no memory at that address: 0xf000000 is beyond the 128 MB of guest memory
-[bad-entry.elf]   The guest jumped somewhere that was never loaded or mapped,
-[bad-entry.elf]   so there are no instructions for the CPU to run.
-[bad-entry.elf]

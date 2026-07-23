@@ -2,7 +2,7 @@
 # src/explain.c actually identifies the cause.
 
 ASFLAGS := --32
-LDFLAGS := -m elf_i386 -T linker.ld -nostdlib --build-id=none
+LDFLAGS := -m elf_i386 -T linker.ld -nostdlib --build-id=none -z noexecstack
 
 FAULTS := no-idt bad-stack
 
@@ -16,7 +16,7 @@ all: $(addsuffix .elf,$(FAULTS)) bad-entry.elf
 # Its entry point is set by the linker script, not by the code.
 bad-entry.elf: bad-entry.S bad-entry.ld
 	@as $(ASFLAGS) -o bad-entry.o bad-entry.S
-	@ld -m elf_i386 -T bad-entry.ld -nostdlib --build-id=none -o $@ bad-entry.o
+	@ld -m elf_i386 -T bad-entry.ld -nostdlib --build-id=none -z noexecstack -o $@ bad-entry.o
 
 clean:
 	@rm -f *.o *.elf

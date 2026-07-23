@@ -7,7 +7,7 @@ CC      := gcc
 CFLAGS  := -m32 -std=gnu11 -ffreestanding -O2 -Wall -Wextra \
            -fno-pie -fno-stack-protector -fno-builtin
 ASFLAGS := --32
-LDFLAGS := -m elf_i386 -T linker.ld -nostdlib --build-id=none
+LDFLAGS := -m elf_i386 -T linker.ld -nostdlib --build-id=none -z noexecstack
 
 .PHONY: all clean run
 
