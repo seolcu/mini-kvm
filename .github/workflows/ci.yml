@@ -22,7 +22,6 @@ jobs:
       # Build from clean and require it to be warning-free. -Wall -Wextra
       # -Wshadow are on by default in the Makefile.
       - name: Build everything
-        working-directory: kvm-vmm-x86
         run: |
           set -o pipefail
           make all 2>&1 | tee build.log
@@ -55,11 +54,9 @@ jobs:
           ls -l /dev/kvm || echo "no /dev/kvm on this runner"
 
       - name: Build
-        working-directory: kvm-vmm-x86
         run: make all
 
       - name: Run smoke tests
-        working-directory: kvm-vmm-x86
         run: |
           set +e
           ./tools/smoke.sh
@@ -74,7 +71,6 @@ jobs:
       # Exercise the kernel test runner the way a downstream project would,
       # so the tool that other projects depend on is covered here too.
       - name: Kernel test runner
-        working-directory: kvm-vmm-x86
         run: |
           set +e
           ./tools/ktest --name "barebones" \

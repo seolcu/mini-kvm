@@ -4,9 +4,9 @@ This file provides guidance to coding agents (Claude Code, Codex, and similar) w
 
 ## What this repo is
 
-Mini-KVM is an educational x86 hypervisor (~4,000 lines of C) built directly on the Linux KVM ioctl API, developed as a university self-directed project (2025-2 Ajou SoftCon). Only `kvm-vmm-x86/` is the deliverable; everything else is documentation, research notes, or isolated experiments.
+Mini-KVM is an x86 hypervisor built directly on the Linux KVM ioctl API, aimed at people writing their own kernels: it runs a guest and explains what it did. It began as a university self-directed project (2025-2 Ajou SoftCon).
 
-- `kvm-vmm-x86/` — the VMM (`src/`), real-mode guest programs (`guest/`), the protected-mode mini OS (`os-1k/`), Linux-guest initramfs sources (`initramfs/`), verification harness (`tools/`).
+The project is the repository root: the VMM (`src/`), guest programs (`guest/`), the protected-mode mini OS (`os-1k/`), stock third-party-style kernels (`examples/`), initramfs sources (`initramfs/`), and the verification harness (`tools/`).
 The university reports and the long-form build investigations this project began with were removed from the repository; they remain in git history. What was load-bearing in them is stated inline below.
 
 `src/` is one module per concern; `main.c` only sequences the phases:
@@ -34,10 +34,9 @@ Keep it that way: no `linux_guest` special cases outside `src/linux/`, and no ne
 
 ## Build and run
 
-Everything runs from `kvm-vmm-x86/`. Bare `make` prints help (`.DEFAULT_GOAL := help`).
+Bare `make` prints help (`.DEFAULT_GOAL := help`).
 
 ```bash
-cd kvm-vmm-x86
 make all          # vmm + guests + 1k-os;  or make vmm | guests | 1k-os | clean
 ```
 

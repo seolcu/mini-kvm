@@ -1,6 +1,6 @@
-# Linux kernel source (too large)
-linux-*/
-kvm-vmm-x86/linux/
+# Downloaded Linux kernel source (too large)
+/linux-*/
+/linux/
 *.tar.xz
 *.tar.gz
 *.tar.bz2
@@ -14,29 +14,28 @@ kvm-vmm-x86/linux/
 build/
 
 # VMM executables
-kvm-vmm-x86/kvm-vmm
-kvm-vmm/kvm-vmm
+kvm-vmm
 
 # Local Linux boot artifacts (do not commit)
-kvm-vmm-x86/bzImage
-kvm-vmm-x86/initrd.img
-kvm-vmm-x86/initramfs.cpio*
+bzImage
+initrd.img
+initramfs.cpio*
 
 # Guest binaries (no extension)
-kvm-vmm-x86/guest/minimal
-kvm-vmm-x86/guest/hello
-kvm-vmm-x86/guest/counter
-kvm-vmm-x86/guest/multiplication
-kvm-vmm-x86/guest/multiplication_short
-kvm-vmm-x86/guest/fibonacci
-kvm-vmm-x86/guest/hctest
-kvm-vmm-x86/guest/matrix
-kvm-vmm-x86/guest/hello_64
-kvm-vmm-x86/guest/vgademo
-kvm-vmm-x86/guest/fault64
+guest/minimal
+guest/hello
+guest/counter
+guest/multiplication
+guest/multiplication_short
+guest/fibonacci
+guest/hctest
+guest/matrix
+guest/hello_64
+guest/vgademo
+guest/fault64
 
 # 1K OS kernel binary
-kvm-vmm-x86/os-1k/kernel
+os-1k/kernel
 
 # IDE/Editor
 .vscode/
@@ -62,11 +61,11 @@ __pycache__/
 .playwright-mcp/
 
 # Example kernel build artifacts
-kvm-vmm-x86/examples/**/*.elf
-kvm-vmm-x86/examples/**/*.o
+examples/**/*.elf
+examples/**/*.o
 
 # Third-party kernels fetched by tools/third-party.sh
-kvm-vmm-x86/third-party/
+third-party/
 
 # Linux boot artifacts for the smoke tests (see tools/smoke.sh)
-kvm-vmm-x86/initramfs.cpio
+initramfs.cpio

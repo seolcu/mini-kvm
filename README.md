@@ -63,7 +63,7 @@ ls -l /dev/kvm          # must exist and be accessible
 
 ```bash
 git clone https://github.com/seolcu/mini-kvm.git
-cd mini-kvm/kvm-vmm-x86
+cd mini-kvm
 make all
 ```
 
@@ -101,7 +101,7 @@ Hello from 64-bit!
 ## Current state
 
 Everything in this section is exercised by `make test` (30 cases diffed against
-stored baselines in `kvm-vmm-x86/tools/baseline/`).
+stored baselines in `tools/baseline/`).
 
 **Working**
 
@@ -232,7 +232,6 @@ A stock Fedora kernel boots to an interactive shell on an initramfs. Pinned in
 neither belongs in the repository:
 
 ```bash
-cd kvm-vmm-x86
 cp /boot/vmlinuz-$(uname -r) bzImage
 ./tools/mkinitramfs.sh initramfs.cpio
 ./kvm-vmm --linux bzImage --initrd initramfs.cpio --cmdline "console=ttyS0 rdinit=/init"
@@ -330,13 +329,13 @@ different program. This is a teaching decision, not a virtualization one.
 ## Repository layout
 
 ```
-kvm-vmm-x86/          The hypervisor — this is the project
-  src/                VMM source, one module per concern
-    linux/            Experimental bzImage boot, quarantined
-  guest/              Real-mode and protected-mode guest programs (assembly)
-  os-1k/              The bundled 32-bit teaching OS
-  examples/           Stock kernels that use no Mini-KVM facilities
-  tools/smoke.sh      Verification harness (make test)
+src/          VMM source, one module per concern
+  linux/      bzImage boot, quarantined from the core
+guest/        Real-mode, protected-mode and long-mode guest programs
+os-1k/        The bundled 32-bit teaching OS
+examples/     Stock kernels that use no Mini-KVM facilities
+initramfs/    Sources for the initramfs the Linux guest boots on
+tools/        smoke.sh (make test), ktest, third-party.sh
 ```
 
 `AGENTS.md` documents the architecture invariants and is the best starting point

@@ -16,7 +16,6 @@ is worth more than a guess about what people want. Attach the kernel if you can.
 ## Before you open a pull request
 
 ```bash
-cd kvm-vmm-x86
 make clean && make all      # must build with zero warnings
 make test                   # 14 cases, must stay green
 ```

@@ -81,7 +81,7 @@ runs:
         sudo apt-get install -y gcc gcc-multilib make binutils
         git clone --depth 1 --branch "${{ inputs.ref }}" \
           https://github.com/seolcu/mini-kvm.git "${RUNNER_TEMP}/mini-kvm"
-        make -C "${RUNNER_TEMP}/mini-kvm/kvm-vmm-x86" vmm
+        make -C "${RUNNER_TEMP}/mini-kvm" vmm
 
     - name: Boot the kernel
       id: run
@@ -105,7 +105,7 @@ runs:
 
         out_file="${RUNNER_TEMP}/guest-output.txt"
         set +e
-        "${RUNNER_TEMP}/mini-kvm/kvm-vmm-x86/tools/ktest" \
+        "${RUNNER_TEMP}/mini-kvm/tools/ktest" \
           "${args[@]}" "${{ inputs.kernel }}" \
           ${vmm_args:+-- "${vmm_args[@]}"} 2>&1 | tee "${out_file}"
         rc=${PIPESTATUS[0]}

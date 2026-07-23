@@ -173,7 +173,7 @@ check_case() {
 # linux_case NAME -- feeds the guest shell after it has had time to start.
 #   Skipped unless a kernel and initramfs are present, since neither belongs
 #   in the repository. Provide them with:
-#     cp /boot/vmlinuz-$(uname -r) kvm-vmm-x86/bzImage
+#     cp /boot/vmlinuz-$(uname -r) bzImage
 #     ./tools/mkinitramfs.sh initramfs.cpio
 linux_case() {
     local name="$1"
