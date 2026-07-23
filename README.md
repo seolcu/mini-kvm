@@ -1,5 +1,7 @@
 # Mini-KVM
 
+> 2025-2 Ajou SoftCon 연구부문 장려상 수상
+
 **A small x86 hypervisor for people who write their own kernels.**
 
 Mini-KVM runs a guest directly on Linux KVM and tells you what it did — where it
@@ -7,7 +9,7 @@ faulted, what was in its descriptor tables, what its page tables actually
 mapped. It is built on the raw KVM ioctl API in about 4,200 lines of C (5,300
 with headers), small enough to read in an afternoon.
 
-[한국어 README](README.ko.md) · [License: MIT](LICENSE)
+[License: MIT](LICENSE)
 
 > **Status: early but real.** Mini-KVM boots stock Multiboot and ELF kernels,
 > renders VGA text mode, and runs its own real-mode guests and a bundled 32-bit
@@ -351,7 +353,6 @@ commit message.
 
 ## Acknowledgements
 
-Started as a self-directed university project (Ajou University, 2025-2) and
-received an Encouragement Award in the SoftCon research division. The 1K OS
-guest is an x86 port of the RISC-V kernel from
+Started as a self-directed project at Ajou University. The 1K OS guest is an
+x86 port of the RISC-V kernel from
 *[Operating System in 1,000 Lines](https://operating-system-in-1000-lines.vercel.app/)*.
