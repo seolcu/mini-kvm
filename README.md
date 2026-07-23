@@ -204,8 +204,8 @@ presenting reset-vector registers as if they meant something.
 
 ## Roadmap
 
-The goal is a tool people actually use to develop x86 kernels. Each phase has a
-gate that must pass before the next begins.
+The goal is a tool people actually use to develop x86 kernels. Each phase had a
+gate that must pass before the next begins; all four are now met.
 
 **Phase 1 — run other people's kernels** *(done)*
 ELF32/64 loader, Multiboot 1 and 2, modules, VGA text buffer and cursor, a

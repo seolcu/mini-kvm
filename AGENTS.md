@@ -58,7 +58,7 @@ Flags are fixed at `gcc -Wall -Wextra -Wshadow -O2 -std=gnu11 -pthread`; match t
           --cmdline "console=ttyS0 rdinit=/init"    # boots a stock kernel to a shell
 ```
 
-Debug flags: `--verbose`/`-v`, `--debug 0|1|2|3`, `--dump-regs`, `--dump-mem FILE`, `--entry ADDR`, `--load OFFSET`. All options accept `--flag value` or `--flag=value` and may appear before or after the guest binaries.
+Debug flags: `--verbose`/`-v`, `--debug 0|1|2|3`, `--dump-regs`, `--dump-mem FILE`, `--entry ADDR`, `--load OFFSET`. Diagnostics: `--explain` (single-steps, so a triple fault can be explained), `--explain-steps N`, `--inspect` (decoded GDT/IDT/page tables), `--trace-modes`. Display: `--vga`, `--fb [WxHxBPP]`, `--fb-dump FILE`. All options accept `--flag value` or `--flag=value` and may appear before or after the guest binaries.
 
 **A plain run prints only the guest's output.** All VMM diagnostics are behind `--verbose`/`--debug`. Do not add unconditional prints; `verbose_enabled()` in `debug.h` is the single check (there is no separate `verbose` global any more).
 
@@ -70,7 +70,7 @@ There are no unit tests. Verification is running guests and diffing stdout again
 make test          # == make all && ./tools/smoke.sh
 ```
 
-`tools/smoke.sh` runs all 27 cases (real mode, multi-vCPU, long mode, VGA text mode, four Multiboot kernels, fault analysis, Linux to a shell, the full hypercall ABI, and six 1K OS programs) and diffs normalized output against `tools/baseline/`. It refuses to run against stale artifacts — each is compared against the sources that actually build it — so a failed build cannot masquerade as a pass. `./tools/smoke.sh --update` re-baselines — do that only when you have *intended* an output change, and say so in the commit.
+`tools/smoke.sh` runs all 30 cases (real mode, multi-vCPU, long mode, VGA text mode, four Multiboot kernels, three third-party kernels, fault analysis, inspection, Linux to a shell, the full hypercall ABI, and six 1K OS programs) and diffs normalized output against `tools/baseline/`. It refuses to run against stale artifacts — each is compared against the sources that actually build it — so a failed build cannot masquerade as a pass. `./tools/smoke.sh --update` re-baselines — do that only when you have *intended* an output change, and say so in the commit.
 
 `tools/ktest` is the same idea packaged for other projects: boot a kernel, assert on its output, exit non-zero if the assertions fail. `action.yml` wraps it as a GitHub Action. Both exit 77 when KVM is unavailable, which callers must treat as a skip rather than a pass.
 
