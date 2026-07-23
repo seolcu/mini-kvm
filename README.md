@@ -335,8 +335,7 @@ kvm-vmm-x86/          The hypervisor — this is the project
   os-1k/              The bundled 32-bit teaching OS
   examples/           Stock kernels that use no Mini-KVM facilities
   tools/smoke.sh      Verification harness (make test)
-docs/  research/  meetings/    Reports and notes, mostly Korean
-experimental/         Unrelated Rust experiments, not built here
+docs/investigations/  Why some settings that look arbitrary are not
 ```
 
 `AGENTS.md` documents the architecture invariants and is the best starting point

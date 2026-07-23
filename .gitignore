@@ -5,9 +5,6 @@ kvm-vmm-x86/linux/
 *.tar.gz
 *.tar.bz2
 
-# Busybox (not used in final implementation)
-busybox-*/
-
 # Build artifacts
 *.o
 *.elf
@@ -60,13 +57,8 @@ initramfs/init
 __pycache__/
 *.pyc
 
-# Rust (for future VMM)
-target/
-Cargo.lock
-
 # Editor/IDE metadata
 .obsidian/
-softcon/past_awards_posters.playwright-mcp/
 .playwright-mcp/
 
 # Example kernel build artifacts

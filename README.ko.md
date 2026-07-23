@@ -217,32 +217,28 @@ printf '6\n10+5\nquit\n0\n' | ./kvm-vmm --paging os-1k/kernel.bin
 
 ```
 mini-kvm/
-├── kvm-vmm-x86/              # 핵심 VMM 프로젝트 (C 기반)
-│   ├── src/                  # VMM 소스코드
-│   ├── guest/                # 리얼 모드 게스트 프로그램
-│   └── os-1k/                # 1K OS (보호 모드 게스트)
-├── docs/                     # 모든 문서
-│   ├── 최종보고서.md
-│   ├── 데모가이드.md
-│   └── ...
-├── experimental/             # 실험적/부가적 프로젝트
-│   ├── hypervisor/           # [실험] Rust 기반 RISC-V 하이퍼바이저
-│   ├── HLeOs/                # [실험] Rust 기반 64비트 OS
-│   └── linux-guest/          # [실험] Linux 게스트 부팅 관련 파일
-└── research/                 # 주간 연구 노트
+├── kvm-vmm-x86/              # 하이퍼바이저 본체
+│   ├── src/                  # VMM 소스 (관심사별 모듈)
+│   │   └── linux/            # 격리된 bzImage 부팅 지원
+│   ├── guest/                # 리얼/보호/롱 모드 게스트 프로그램
+│   ├── os-1k/                # 1K OS (내장 32비트 교육용 OS)
+│   ├── examples/             # Mini-KVM 기능을 쓰지 않는 스톡 커널들
+│   └── tools/                # smoke.sh, ktest, third-party.sh
+└── docs/investigations/      # 왜 그 설정이어야 하는지에 대한 기록
 ```
 
 ---
 
 ## 문서
 
-### 주요 문서
-- **[README.md](README.md)** (현재 파일): 빠른 시작 및 프로젝트 개요
-- **[최종보고서.md](docs/최종보고서.md)**: 포괄적인 프로젝트 보고서
-- **[데모가이드.md](docs/데모가이드.md)**: 단계별 시연 가이드
+- **[README.md](README.md)**: 현재 상태, 동작 예시, 로드맵 (기준 문서)
+- **[AGENTS.md](AGENTS.md)**: 아키텍처 불변조건과 모듈 구조
+- **[CONTRIBUTING.md](CONTRIBUTING.md)**: 기여 방법
+- **[docs/investigations/](docs/investigations/)**: `-march=i686`이나 PSE off처럼
+  임의로 보이지만 실은 필수인 설정들의 근거
 
-### 연구 노트
-- **[research/week1-12/](research/)**: 주간 진행 상황 보고서
+대학 과제 시절의 보고서·주간 노트·발표 자료는 저장소에서 제거했습니다.
+git 히스토리에는 남아 있습니다 (`git log --all -- 결과보고서.md`).
 
 ---
 

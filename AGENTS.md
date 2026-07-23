@@ -7,9 +7,9 @@ This file provides guidance to coding agents (Claude Code, Codex, and similar) w
 Mini-KVM is an educational x86 hypervisor (~4,000 lines of C) built directly on the Linux KVM ioctl API, developed as a university self-directed project (2025-2 Ajou SoftCon). Only `kvm-vmm-x86/` is the deliverable; everything else is documentation, research notes, or isolated experiments.
 
 - `kvm-vmm-x86/` — the VMM (`src/`), real-mode guest programs (`guest/`), the protected-mode mini OS (`os-1k/`), Linux-guest initramfs sources (`initramfs/`), verification harness (`tools/`).
-- `docs/`, `research/`, `meetings/`, `연구노트.md`, `결과보고서.md` — reports and weekly logs, mostly Korean. Update `docs/` when user-visible behavior changes; append to `research/` rather than rewriting.
-- `experimental/` — Rust RISC-V H-extension hypervisor and a Rust x86_64 hobby OS. Not built by the main Makefile; keep isolated.
-- `README.md` and `docs/` predate some code changes; where they disagree with this file (`.bin` guest names, 4MB PSE paging), this file is correct.
+- `docs/investigations/` — why several settings that look arbitrary are not: the Arch/Fedora `-march=i686` difference, and the AMD Zen 5 SHUTDOWN that led to PSE being disabled. Read these before changing a build flag that seems pointless.
+
+The university reports, weekly notes and presentation material this project began as were removed from the repository; they remain in git history.
 
 `src/` is one module per concern; `main.c` only sequences the phases:
 
