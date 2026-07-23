@@ -77,7 +77,12 @@ check_stale os-1k/kernel os-1k || stale_found=1
 check_stale examples/multiboot-barebones/kernel.elf examples/multiboot-barebones || stale_found=1
 check_stale examples/multiboot-keyboard/kernel.elf examples/multiboot-keyboard || stale_found=1
 check_stale examples/multiboot2/kernel.elf examples/multiboot2 || stale_found=1
-check_stale examples/faults/no-idt.elf examples/faults || stale_found=1
+check_stale examples/faults/no-idt.elf \
+    examples/faults/no-idt.S examples/faults/linker.ld || stale_found=1
+check_stale examples/faults/bad-stack.elf \
+    examples/faults/bad-stack.S examples/faults/linker.ld || stale_found=1
+check_stale examples/faults/bad-entry.elf \
+    examples/faults/bad-entry.S examples/faults/bad-entry.ld || stale_found=1
 # Each guest is built from exactly one source, so compare it against that
 # rather than against the whole directory.
 for g in hello vgademo hctest fault64; do
