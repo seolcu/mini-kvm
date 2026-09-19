@@ -15,8 +15,10 @@
 // Maps first 'mem_size' bytes as identity mapping (VA = PA)
 // Returns CR3 value (physical address of PML4)
 uint64_t setup_page_tables_64bit(void *guest_mem, size_t mem_size) {
+    char size_str[32];
+    format_mem_size(size_str, sizeof(size_str), mem_size);
     DEBUG_PRINT(DEBUG_DETAILED, "Setting up 64-bit 4-level page tables");
-    DEBUG_PRINT(DEBUG_DETAILED, "Guest memory size: %zu MB", mem_size / (1024*1024));
+    DEBUG_PRINT(DEBUG_DETAILED, "Guest memory size: %s", size_str);
     
     // Clear page table regions
     memset((char *)guest_mem + GUEST_64_PML4_ADDR, 0, 0x4000); // Clear 16KB for all tables

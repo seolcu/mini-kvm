@@ -7,21 +7,32 @@ use it.
 
 ## The most valuable thing you can do
 
-**Try to boot your own kernel and tell us what broke.** Mini-KVM cannot yet load
-ELF or Multiboot images, has no VGA text buffer, and emulates no interrupt
-controller. Those gaps are known (see the roadmap in the README), but a concrete
-report — *"here is my kernel, here is what it needs, here is where it died"* —
-is worth more than a guess about what people want. Attach the kernel if you can.
+**Try to boot your own kernel and tell us what broke.** Mini-KVM loads ELF32/64
+and Multiboot 1 and 2 images, emulates a PIC, PIT, PS/2 keyboard and VGA text
+buffer, and boots a stock Linux kernel to a shell. What it still cannot do is
+listed under "Not working yet" in the README — no a.out kludge, no virtio, and
+no live framebuffer display. A concrete report — *"here is my kernel, here is
+what it needs, here is where it died"* — is worth more than a guess about what
+people want. Attach the kernel if you can.
 
 ## Before you open a pull request
 
 ```bash
 make clean && make all      # must build with zero warnings
-make test                   # 14 cases, must stay green
+make test                   # 30 cases, must stay green
 ```
 
 `make test` runs `tools/smoke.sh`, which boots every supported guest path and
 diffs the output against stored baselines in `tools/baseline/`.
+
+Four of the 30 cases need inputs that do not belong in the repository, and skip
+loudly rather than failing if you have not set them up. To run the whole suite:
+
+```bash
+./tools/third-party.sh                       # the three third-party kernels
+cp /boot/vmlinuz-$(uname -r) bzImage         # the Linux boot case
+./tools/mkinitramfs.sh initramfs.cpio
+```
 
 If your change **intentionally** alters guest-visible output, re-baseline it
 deliberately and say so in the commit message:

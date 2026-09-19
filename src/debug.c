@@ -23,6 +23,16 @@ __attribute__((unused)) static const char *seg_names[] = {
     "CS", "DS", "ES", "FS", "GS", "SS"
 };
 
+void format_mem_size(char *buf, size_t buflen, size_t bytes) {
+    if (bytes >= 1024 * 1024) {
+        snprintf(buf, buflen, "%zu MB", bytes / (1024 * 1024));
+    } else if (bytes >= 1024) {
+        snprintf(buf, buflen, "%zu KB", bytes / 1024);
+    } else {
+        snprintf(buf, buflen, "%zu bytes", bytes);
+    }
+}
+
 // VM exit reason strings
 const char *get_exit_reason_string(uint32_t exit_reason) {
     switch (exit_reason) {

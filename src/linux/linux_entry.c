@@ -1,11 +1,12 @@
 /*
- * linux_entry.c - experimental Linux boot support
+ * linux_entry.c - Linux bzImage entry
  *
  * QUARANTINED. This path implements enough of the Linux x86 boot protocol to
- * load a bzImage and jump to it, but it does not boot to a shell. It lives
- * here so that the core VMM (real mode, protected mode, long mode) stays free
- * of Linux-specific branches. No core source file outside this one should
- * grow a `linux_guest` special case.
+ * load a bzImage, jump to it, and reach an interactive shell on an initramfs
+ * (pinned by the `linux_shell` case in tools/smoke.sh). It lives here so that
+ * the core VMM (real mode, protected mode, long mode) stays free of
+ * Linux-specific branches; the handful of `linux_guest` checks in vcpu.c and
+ * vm.c are the agreed boundary and should not grow.
  *
  * The single-step machinery also lives here: it exists solely to produce an
  * instruction trace for this bring-up work.

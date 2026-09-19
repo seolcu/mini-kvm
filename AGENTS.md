@@ -23,13 +23,25 @@ The university reports and the long-form build investigations this project began
 | `ps2.c` | i8042 keyboard: characters → set 1 scancodes |
 | `vga.c` | the 0xB8000 text buffer, rendered under `--vga` |
 | `console.c` | terminal, keyboard ring, vCPU-tagged output |
-| `debug.c` | register/memory dumps behind `--dump-regs` / `--dump-mem` |
+| `debug.c` | register/memory dumps behind `--dump-regs` / `--dump-mem`; `format_mem_size()` |
 | `loader.c` | format detection; ELF, Multiboot 1 and 2, modules |
 | `explain.c` | `--explain`: why a guest triple-faulted |
 | `inspect.c` | `--inspect`, `--trace-modes`, and pre-boot image checks |
-| `linux/` | **quarantined** bzImage boot; reaches a shell with an initramfs |
+| `cpuid.c` | `KVM_SET_CPUID2` from the host's supported leaves |
+| `msr.c` | the MSRs long mode needs (EFER, STAR/LSTAR, FS/GS base) |
+| `paging_64.c` | 4-level PML4→PDPT→PD→PT tables for long mode |
+| `linux_boot.c` | the Linux boot protocol: bzImage layout, `boot_params`, e820, initrd |
+| `linux/linux_entry.c` | the three bzImage entry strategies (`--linux-entry setup\|code32\|boot64`) |
 
-Keep it that way: no `linux_guest` special cases outside `src/linux/`, and no new globals shared across modules.
+Keep it that way, and add no new globals shared across modules.
+
+**The Linux quarantine is a boundary, not a single directory.** `linux_boot.c`
+holds the boot-protocol *data* (structures, loading, e820) and sits at the top
+level because it is a file-format concern like `loader.c`; `src/linux/` holds
+the *entry* strategies. What the rule actually forbids is spreading Linux
+knowledge further: `vcpu.c` and `vm.c` branch on `ctx->linux_guest` in a handful
+of places to pick memory size, entry mode and IRQCHIP, and that set should not
+grow. New Linux behaviour goes in `linux_boot.c` or `src/linux/`.
 
 
 ## Build and run

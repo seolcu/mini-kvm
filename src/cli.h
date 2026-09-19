@@ -17,7 +17,7 @@
 #define MAX_VCPUS 4
 #define MAX_MODULES 8
 
-/* Linux boot entry strategy (experimental; see linux_boot.h). */
+/* Linux boot entry strategy; CODE32 is the default (see linux/linux_entry.h). */
 typedef enum {
     LINUX_ENTRY_SETUP,
     LINUX_ENTRY_CODE32,

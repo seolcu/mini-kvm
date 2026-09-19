@@ -274,10 +274,11 @@ static int load_segment(void *mem, size_t mem_size, const unsigned char *file,
         return -1;
     }
     if (paddr > mem_size || memsz > mem_size - paddr) {
+        char size[32];
+        format_mem_size(size, sizeof(size), mem_size);
         fprintf(stderr,
-                "Error: segment wants physical 0x%llx..0x%llx but guest memory is only %zu MB.\n",
-                (unsigned long long)paddr, (unsigned long long)(paddr + memsz),
-                mem_size / (1024 * 1024));
+                "Error: segment wants physical 0x%llx..0x%llx but guest memory is only %s.\n",
+                (unsigned long long)paddr, (unsigned long long)(paddr + memsz), size);
         return -1;
     }
 

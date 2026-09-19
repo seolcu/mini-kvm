@@ -1,10 +1,13 @@
 /*
- * linux_entry.h - experimental Linux boot support (quarantined)
+ * linux_entry.h - Linux bzImage entry (quarantined)
  *
- * See linux_entry.c. This path is incomplete: it loads a bzImage and enters
- * it, but does not reach a shell. It is kept because the bring-up work is
- * part of the project record, and isolated so the core VMM does not carry
- * Linux-specific branches.
+ * See linux_entry.c. A stock distribution kernel boots to an interactive
+ * shell on an initramfs; the `linux_shell` case in tools/smoke.sh pins that.
+ * The module stays isolated so the core VMM does not carry Linux-specific
+ * branches, not because the path is unfinished.
+ *
+ * Three entry strategies are selectable with --linux-entry; code32 is the
+ * default and the one the smoke test covers.
  */
 
 #ifndef LINUX_ENTRY_H

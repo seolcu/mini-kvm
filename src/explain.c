@@ -9,6 +9,7 @@
 
 #include "explain.h"
 #include "console.h"
+#include "debug.h"
 #include "protected_mode.h"
 
 /* CR0 bits we care about. */
@@ -193,8 +194,10 @@ bool guest_translate(vcpu_context_t *ctx, const struct kvm_sregs *s,
 
     if (!(s->cr0 & CR0_PG)) {
         if (va >= ctx->mem_size) {
-            snprintf(why, why_len, "0x%llx is beyond the %zu MB of guest memory",
-                     (unsigned long long)va, ctx->mem_size / (1024 * 1024));
+            char size[32];
+            format_mem_size(size, sizeof(size), ctx->mem_size);
+            snprintf(why, why_len, "0x%llx is beyond the %s of guest memory",
+                     (unsigned long long)va, size);
             return false;
         }
         *pa_out = va;

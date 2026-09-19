@@ -54,6 +54,14 @@ static inline bool verbose_enabled(void)
 #define DEBUG_IO(vcpu_id, fmt, ...) \
     DEBUG_PRINT(DEBUG_ALL, "[vCPU %d] I/O: " fmt, vcpu_id, ##__VA_ARGS__)
 
+/*
+ * Format a guest memory size for a human. Real-mode guests get 256KB, which
+ * integer-divides to "0 MB" and makes a diagnostic read like a bug in the
+ * VMM, so sizes below 1MB are reported in KB. The caller owns the buffer:
+ * these messages are built on vCPU threads, so there is no shared scratch.
+ */
+void format_mem_size(char *buf, size_t buflen, size_t bytes);
+
 // Register dump functions
 void dump_general_registers(int vcpu_fd, int vcpu_id);
 void dump_special_registers(int vcpu_fd, int vcpu_id);
